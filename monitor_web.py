@@ -318,13 +318,31 @@ with h1:
 with h2:
     with st.container(border=True):
         st.markdown("<div class='hunt-title'>📋 Principais motivos das CNP — semana ⓘ</div>",unsafe_allow_html=True)
+        if "motivo_cnp_aberto" not in st.session_state:
+            st.session_state["motivo_cnp_aberto"] = None
+
         for cat,qa,dif in mot[:4]:
             seta="↑" if dif>0 else "↓" if dif<0 else "→"
-            if st.button(f"{cat}     {qa}     {seta} {abs(dif)}  ›",key=f"m_{cat}",use_container_width=True):
+            aberto = st.session_state["motivo_cnp_aberto"] == cat
+            indicador = "⌃" if aberto else "›"
+
+            if st.button(
+                f"{cat}     {qa}     {seta} {abs(dif)}  {indicador}",
+                key=f"m_{cat}",
+                use_container_width=True
+            ):
+                # Mesmo motivo: recolhe. Outro motivo: fecha o anterior e abre este.
+                st.session_state["motivo_cnp_aberto"] = None if aberto else cat
+                st.rerun()
+
+            if st.session_state["motivo_cnp_aberto"] == cat:
                 termos=familias[cat]
-                rel=atual[atual["desc_norm"].apply(lambda z:any(t in z for t in termos))][["frota","os_id","evento","descricao","ref","status"]].copy()
+                rel=atual[
+                    atual["desc_norm"].apply(lambda z:any(t in z for t in termos))
+                ][["frota","os_id","evento","descricao","ref","status"]].copy()
                 st.dataframe(rel,use_container_width=True,hide_index=True)
-        st.info("Clique em um motivo para ver as OS relacionadas, com frotas, datas, tempos e descrições.")
+
+        st.info("Clique em um motivo para abrir ou recolher as OS relacionadas, com frotas, datas, tempos e descrições.")
 with h3:
     with st.container(border=True):
         crescem=[x for x in mot if x[2]>0 and x[1]>0]
