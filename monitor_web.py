@@ -443,3 +443,21 @@ with h3:
         else: st.caption("Sem dados suficientes para identificar reincidências.")
 
 st.caption("Atualização automática a cada 60 segundos.")
+
+# Crédito discreto no rodapé
+st.markdown(
+    """
+    <div style="
+        margin-top: 26px;
+        padding: 14px 0 8px 0;
+        text-align: center;
+        color: #98A2B3;
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: 0.1px;
+    ">
+        Desenvolvido por Evandro dos Santos Oliveira Junior
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
