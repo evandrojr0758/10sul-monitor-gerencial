@@ -63,16 +63,49 @@ def api_get(table, params=None):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar():
-    # Range evita limite padrão de 1000 linhas do PostgREST.
+    # O Supabase/PostgREST limita cada resposta a ~1000 linhas.
+    # Portanto buscamos em páginas para trazer TODO o histórico,
+    # inclusive revisões antigas usadas na Consulta Rápida.
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("SUPABASE_URL/SUPABASE_KEY não configurados nos Secrets.")
+
     url=f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
-    headers={
-        "apikey":SUPABASE_KEY, "Authorization":f"Bearer {SUPABASE_KEY}",
-        "Range":"0-49999", "Prefer":"count=none"
+    base_headers={
+        "apikey":SUPABASE_KEY,
+        "Authorization":f"Bearer {SUPABASE_KEY}",
     }
-    r=requests.get(url,headers=headers,params={"select":"*","order":"inicio.desc"},timeout=60)
-    if not r.ok:
-        raise RuntimeError(f"Supabase HTTP {r.status_code}: {r.text[:800]}")
-    return pd.DataFrame(r.json())
+
+    todos=[]
+    pagina=1000
+    inicio_range=0
+
+    while True:
+        fim_range=inicio_range + pagina - 1
+        headers=dict(base_headers)
+        headers["Range"]=f"{inicio_range}-{fim_range}"
+        headers["Prefer"]="count=none"
+
+        r=requests.get(
+            url,
+            headers=headers,
+            params={"select":"*","order":"inicio.desc"},
+            timeout=60
+        )
+        if not r.ok:
+            raise RuntimeError(f"Supabase HTTP {r.status_code}: {r.text[:800]}")
+
+        lote=r.json()
+        if not lote:
+            break
+
+        todos.extend(lote)
+
+        if len(lote) < pagina:
+            break
+
+        inicio_range += pagina
+
+    return pd.DataFrame(todos)
 
 def norm_frota(v):
     s=str(v or "").strip()
