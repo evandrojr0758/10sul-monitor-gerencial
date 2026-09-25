@@ -156,8 +156,11 @@ def base_media(tipo):
     fim=b["fim"]
     stt=b["status"].fillna("").astype(str).str.upper()
     aberto=stt.str.contains("MANUT",na=False)|fim.isna()
+    # Compatibilidade com pandas/Streamlit Cloud: preserva o mesmo dtype datetime64[ns]
+    # ao preencher atendimentos ainda abertos com o horário atual.
     fimcalc=fim.copy()
-    fimcalc.loc[aberto]=agora
+    agora_dt=pd.Timestamp(agora).to_datetime64()
+    fimcalc=fimcalc.mask(aberto, agora_dt)
     horas=(fimcalc-ini).dt.total_seconds()/3600
     sla=12 if tipo=="ITR" else 24
     valid=(~aberto)|(horas>=sla)
