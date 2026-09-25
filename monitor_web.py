@@ -236,39 +236,61 @@ with c3:
         st.markdown("<div class='card-title'>📈 MTBF</div><div class='card-center'>Aguardando definição das regras</div>",unsafe_allow_html=True)
 
 st.markdown("#### 🔎 Consulta rápida de frota")
-q1,q2=st.columns([5,1])
-with q1: frota_q=st.text_input("Frota",placeholder="Ex.: 13725",label_visibility="collapsed")
-with q2: pesquisar=st.button("🔎 Pesquisar",use_container_width=True)
-if pesquisar and frota_q.strip():
-    fq=norm_frota(frota_q)
+
+@st.dialog("🔎 Histórico da frota", width="large")
+def modal_historico_frota(fq):
     hist=df[df["frota"].eq(fq)].copy().sort_values("inicio",ascending=False)
+    st.markdown(f"### Frota {fq}")
     if hist.empty:
-        st.info("Nenhum atendimento encontrado para esta frota.")
-    else:
-        # Destaques: última ITR e última REVISÃO encontradas no histórico sincronizado.
-        hev=hist["evento"].fillna("").astype(str).str.upper().str.strip()
-        ultima_itr=hist[hev.eq("ITR")].sort_values("inicio",ascending=False).head(1)
-        ultima_rev=hist[hev.str.contains("REVIS",na=False)].sort_values("inicio",ascending=False).head(1)
+        st.warning("Frota não encontrada na base sincronizada.")
+        return
 
-        a,b=st.columns(2)
-        with a:
-            if not ultima_itr.empty:
-                r=ultima_itr.iloc[0]
-                data_ref=r["fim"] if pd.notna(r["fim"]) else r["inicio"]
-                st.info(f"**Última ITR:** {data_ref.strftime('%d/%m/%Y %H:%M') if pd.notna(data_ref) else '--'}  •  OS/ID {r['os_id']}")
-            else:
-                st.info("**Última ITR:** não encontrada na base sincronizada.")
-        with b:
-            if not ultima_rev.empty:
-                r=ultima_rev.iloc[0]
-                data_ref=r["fim"] if pd.notna(r["fim"]) else r["inicio"]
-                st.info(f"**Última REVISÃO:** {data_ref.strftime('%d/%m/%Y %H:%M') if pd.notna(data_ref) else '--'}  •  OS/ID {r['os_id']}")
-            else:
-                st.info("**Última REVISÃO:** não encontrada na base sincronizada.")
+    hev=hist["evento"].fillna("").astype(str).str.upper().str.strip()
+    # No monitor original, a preventiva é referenciada pela liberação.
+    itr=hist[hev.eq("ITR")].copy()
+    rev=hist[hev.str.contains("REVIS",na=False)].copy()
 
-        show=hist[["os_id","evento","descricao","parada","inicio","fim","status"]].copy()
-        show.columns=["OS/ID","EVENTO","DESCRIÇÃO","PARADA","INÍCIO","FIM","STATUS"]
-        st.dataframe(show,use_container_width=True,hide_index=True)
+    def ultima_liberada(x):
+        if x.empty: return None
+        x=x.copy()
+        x["_lib"]=x["fim"]
+        x=x[x["_lib"].notna()].sort_values("_lib",ascending=False)
+        return None if x.empty else x.iloc[0]
+
+    r_itr=ultima_liberada(itr)
+    r_rev=ultima_liberada(rev)
+
+    c1,c2=st.columns(2)
+    def preventiva_card(col, titulo, row, cor, intervalo):
+        with col:
+            with st.container(border=True):
+                st.markdown(f"<div style='font-size:13px;font-weight:800;color:#667085'>{cor} {titulo}</div>",unsafe_allow_html=True)
+                if row is None:
+                    st.markdown("<div style='font-size:24px;font-weight:900'>Não encontrada</div>",unsafe_allow_html=True)
+                    st.caption("Sem preventiva liberada na base sincronizada.")
+                    return
+                lib=pd.Timestamp(row["_lib"])
+                dias=max(0,(agora.normalize()-lib.normalize()).days)
+                prox=lib.normalize()+pd.Timedelta(days=intervalo)
+                st.markdown(f"<div style='font-size:27px;font-weight:900'>{lib.strftime('%d/%m/%Y')}</div>",unsafe_allow_html=True)
+                st.markdown(f"Há **{dias} dia(s)** • Próxima por tempo: **{prox.strftime('%d/%m/%Y')}**")
+                st.caption(f"Liberação: {lib.strftime('%d/%m/%Y %H:%M')}")
+
+    preventiva_card(c1,"ÚLTIMA ITR",r_itr,"🔵",30)
+    preventiva_card(c2,"ÚLTIMA REVISÃO",r_rev,"🟣",120)
+
+    st.markdown("#### Histórico de atendimentos")
+    show=hist[["os_id","evento","descricao","parada","inicio","fim","status"]].copy()
+    show.columns=["OS/ID","EVENTO","DESCRIÇÃO","PARADA","INÍCIO","FIM","STATUS"]
+    st.dataframe(show,use_container_width=True,hide_index=True)
+
+q1,q2=st.columns([5,1])
+with q1:
+    frota_q=st.text_input("Frota",placeholder="Ex.: 13725",label_visibility="collapsed")
+with q2:
+    pesquisar=st.button("🔎 Pesquisar",use_container_width=True)
+if pesquisar and frota_q.strip():
+    modal_historico_frota(norm_frota(frota_q))
 
 # MAIORES TEMPOS
 st.markdown("### 🚨 Maiores tempos em manutenção por evento")
