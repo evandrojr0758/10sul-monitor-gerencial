@@ -242,8 +242,30 @@ with q2: pesquisar=st.button("🔎 Pesquisar",use_container_width=True)
 if pesquisar and frota_q.strip():
     fq=norm_frota(frota_q)
     hist=df[df["frota"].eq(fq)].copy().sort_values("inicio",ascending=False)
-    if hist.empty: st.info("Nenhum atendimento encontrado para esta frota.")
+    if hist.empty:
+        st.info("Nenhum atendimento encontrado para esta frota.")
     else:
+        # Destaques: última ITR e última REVISÃO encontradas no histórico sincronizado.
+        hev=hist["evento"].fillna("").astype(str).str.upper().str.strip()
+        ultima_itr=hist[hev.eq("ITR")].sort_values("inicio",ascending=False).head(1)
+        ultima_rev=hist[hev.str.contains("REVIS",na=False)].sort_values("inicio",ascending=False).head(1)
+
+        a,b=st.columns(2)
+        with a:
+            if not ultima_itr.empty:
+                r=ultima_itr.iloc[0]
+                data_ref=r["fim"] if pd.notna(r["fim"]) else r["inicio"]
+                st.info(f"**Última ITR:** {data_ref.strftime('%d/%m/%Y %H:%M') if pd.notna(data_ref) else '--'}  •  OS/ID {r['os_id']}")
+            else:
+                st.info("**Última ITR:** não encontrada na base sincronizada.")
+        with b:
+            if not ultima_rev.empty:
+                r=ultima_rev.iloc[0]
+                data_ref=r["fim"] if pd.notna(r["fim"]) else r["inicio"]
+                st.info(f"**Última REVISÃO:** {data_ref.strftime('%d/%m/%Y %H:%M') if pd.notna(data_ref) else '--'}  •  OS/ID {r['os_id']}")
+            else:
+                st.info("**Última REVISÃO:** não encontrada na base sincronizada.")
+
         show=hist[["os_id","evento","descricao","parada","inicio","fim","status"]].copy()
         show.columns=["OS/ID","EVENTO","DESCRIÇÃO","PARADA","INÍCIO","FIM","STATUS"]
         st.dataframe(show,use_container_width=True,hide_index=True)
