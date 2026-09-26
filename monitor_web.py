@@ -226,6 +226,85 @@ mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_html=True)
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
+
+# ============================================================
+# DESTAQUE DO SUPERVISOR — MÉDIAS DIÁRIAS
+# Regra: cada OS impacta todos os dias em que permanece em
+# manutenção; abertas entram ao atingir o SLA.
+# ============================================================
+_media_itr_supervisor = media_periodo("ITR", "DIA")
+_media_rev_supervisor = media_periodo("REVISÃO", "DIA")
+
+st.markdown("""
+<style>
+.supervisor-media-wrap{
+    margin: 8px 0 18px 0;
+    padding: 16px 18px;
+    border: 1px solid #d8e1ea;
+    border-radius: 16px;
+    background: linear-gradient(135deg,#f8fbff 0%,#ffffff 70%);
+    box-shadow: 0 3px 12px rgba(16,24,40,.06);
+}
+.supervisor-media-title{
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: .45px;
+    color: #344054;
+    margin-bottom: 10px;
+}
+.supervisor-media-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+}
+.supervisor-media-card{
+    text-align:center;
+    padding:12px 10px;
+    border-radius:12px;
+    background:#fff;
+    border:1px solid #e4e7ec;
+}
+.supervisor-media-label{font-size:12px;font-weight:800;color:#475467;}
+.supervisor-media-value{font-size:32px;line-height:1.08;font-weight:900;color:#101828;margin:5px 0 2px;}
+.supervisor-media-sla{font-size:11px;color:#667085;}
+.supervisor-media-note{
+    text-align:center;
+    font-size:11px;
+    color:#667085;
+    margin-top:10px;
+}
+@media(max-width:640px){
+    .supervisor-media-grid{grid-template-columns:1fr 1fr;gap:8px}
+    .supervisor-media-value{font-size:26px}
+    .supervisor-media-wrap{padding:13px 10px}
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown(
+    f"""
+    <div class="supervisor-media-wrap">
+      <div class="supervisor-media-title">📊 MÉDIA DIÁRIA — REFERÊNCIA DO SUPERVISOR</div>
+      <div class="supervisor-media-grid">
+        <div class="supervisor-media-card">
+          <div class="supervisor-media-label">ITR • HOJE</div>
+          <div class="supervisor-media-value">{hhmm(_media_itr_supervisor)}</div>
+          <div class="supervisor-media-sla">SLA 12:00</div>
+        </div>
+        <div class="supervisor-media-card">
+          <div class="supervisor-media-label">REVISÃO • HOJE</div>
+          <div class="supervisor-media-value">{hhmm(_media_rev_supervisor)}</div>
+          <div class="supervisor-media-sla">SLA 24:00</div>
+        </div>
+      </div>
+      <div class="supervisor-media-note">
+        Cada carreta impacta a média de todos os dias em que permanece em manutenção, até a liberação.
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 st.markdown("<div class='mon-section'><div class='mon-section-title'>1. OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 @st.dialog("Relação de carretas", width="large")
 def modal_os_abertas(titulo, dados):
