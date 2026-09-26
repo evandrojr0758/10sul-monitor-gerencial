@@ -121,244 +121,64 @@ def hhmm(h):
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar_laudos_manuais_web():
     import json
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return pd.DataFrame()
+    if not SUPABASE_URL or not SUPABASE_KEY: return pd.DataFrame()
     try:
         url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/monitor/laudos_manuais.json"
         h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
         r=requests.get(url,headers=h,timeout=45)
-        if not r.ok:
-            return pd.DataFrame()
+        if not r.ok:return pd.DataFrame()
         return pd.DataFrame(json.loads(r.content.decode("utf-8")))
-    except Exception:
-        return pd.DataFrame()
+    except Exception:return pd.DataFrame()
 
-@st.cache_data(ttl=60, show_spinner=False)
-def carregar_justificativas_web():
-    """Evidências do Monitor Web vêm das justificativas/desvios, nunca do laudo."""
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return pd.DataFrame()
+def baixar_evidencia_laudo_web(path):
     try:
-        url=f"{SUPABASE_URL}/rest/v1/desvios"
-        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
-        todos=[]
-        ini=0
-        pagina=1000
-        while True:
-            hh=dict(h)
-            hh["Range"]=f"{ini}-{ini+pagina-1}"
-            r=requests.get(
-                url,headers=hh,
-                params={"select":"os_id,frota,evento,desvio_tipo,motivo,observacao,anexos,criado_em","order":"criado_em.desc"},
-                timeout=45
-            )
-            if not r.ok:
-                return pd.DataFrame()
-            lote=r.json()
-            if not lote:
-                break
-            todos.extend(lote)
-            if len(lote)<pagina:
-                break
-            ini+=pagina
-        return pd.DataFrame(todos)
-    except Exception:
-        return pd.DataFrame()
-
-def baixar_evidencia_justificativa_web(path):
-    try:
-        p=str(path or "").strip().lstrip("/")
-        if not p:
-            return None,""
-        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/{p}"
+        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/{path}"
         h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
         r=requests.get(url,headers=h,timeout=45)
         return (r.content,r.headers.get("content-type","")) if r.ok else (None,"")
-    except Exception:
-        return None,""
-
-def _lista_anexos_web(v):
-    import json
-    if isinstance(v,list):
-        return v
-    if isinstance(v,dict):
-        return [v]
-    if v is None or (isinstance(v,float) and pd.isna(v)):
-        return []
-    try:
-        x=json.loads(str(v))
-        return x if isinstance(x,list) else ([x] if isinstance(x,dict) else [])
-    except Exception:
-        return []
-
-def _path_anexo_web(a):
-    if isinstance(a,str):
-        return a
-    if isinstance(a,dict):
-        for k in ["path","storage_path","arquivo","url","nome"]:
-            if a.get(k):
-                return str(a[k])
-    return ""
+    except Exception:return None,""
 
 def render_laudos_web():
+    import json
     d=carregar_laudos_manuais_web()
     if d.empty:
-        st.caption("Ainda não há laudos manuais publicados.")
-        return
-
-    for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","ATIVIDADE","EXECUTANTE",
-              "INICIO_ATIVIDADE","FIM_ATIVIDADE","INICIO_MANUTENCAO","FIM_MANUTENCAO",
-              "ATIVIDADE_ID","HORAS"]:
-        if c not in d.columns:
-            d[c]=""
-
-    d["HORAS"]=pd.to_numeric(d["HORAS"],errors="coerce").fillna(0.0)
-    d["CLASSIFICACAO"]=d["CLASSIFICACAO"].fillna("OUTROS").astype(str).str.upper().str.strip()
-    d["OS_ID"]=d["OS_ID"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
-    d["FROTA"]=d["FROTA"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
-
-    pv=d.pivot_table(
-        index=["REGISTRO","OS_ID","FROTA"],columns="CLASSIFICACAO",
-        values="HORAS",aggfunc="sum",fill_value=0
-    ).reset_index()
+        st.caption("Ainda não há laudos manuais publicados."); return
+    for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","ATIVIDADE","EXECUTANTE","INICIO_ATIVIDADE","FIM_ATIVIDADE","INICIO_MANUTENCAO","FIM_MANUTENCAO","EVIDENCIAS","ATIVIDADE_ID","HORAS"]:
+        if c not in d.columns:d[c]=""
+    d["HORAS"]=pd.to_numeric(d["HORAS"],errors="coerce").fillna(0.0); d["CLASSIFICACAO"]=d["CLASSIFICACAO"].fillna("OUTROS").astype(str).str.upper()
+    pv=d.pivot_table(index=["REGISTRO","OS_ID","FROTA"],columns="CLASSIFICACAO",values="HORAS",aggfunc="sum",fill_value=0).reset_index()
     for c in ["ITR","CNP","GM","OUTROS"]:
-        if c not in pv.columns:
-            pv[c]=0.0
-
-    m=d.groupby(["REGISTRO","OS_ID","FROTA"],as_index=False).agg(
-        INICIO_MANUTENCAO=("INICIO_MANUTENCAO","first"),
-        FIM_MANUTENCAO=("FIM_MANUTENCAO","first")
-    )
-    m["INICIO_MANUTENCAO"]=pd.to_datetime(m["INICIO_MANUTENCAO"],errors="coerce")
-    m["FIM_MANUTENCAO"]=pd.to_datetime(m["FIM_MANUTENCAO"],errors="coerce")
+        if c not in pv.columns:pv[c]=0.0
+    m=d.groupby(["REGISTRO","OS_ID","FROTA"],as_index=False).agg(INICIO_MANUTENCAO=("INICIO_MANUTENCAO","first"),FIM_MANUTENCAO=("FIM_MANUTENCAO","first"))
+    m["INICIO_MANUTENCAO"]=pd.to_datetime(m["INICIO_MANUTENCAO"],errors="coerce");m["FIM_MANUTENCAO"]=pd.to_datetime(m["FIM_MANUTENCAO"],errors="coerce")
     m["TEMPO_MANUT"]=(m["FIM_MANUTENCAO"]-m["INICIO_MANUTENCAO"]).dt.total_seconds()/3600
-    pv=pv.merge(m,on=["REGISTRO","OS_ID","FROTA"],how="left")
-    pv["TEMPO_APONTADO"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1)
-    pv["SEM"]=(pv["TEMPO_MANUT"].fillna(0)-pv["TEMPO_APONTADO"]).clip(lower=0)
-
-    just=carregar_justificativas_web()
-    if not just.empty:
-        if "os_id" not in just.columns: just["os_id"]=""
-        just["os_id"]=just["os_id"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
-
-    # Mesmo resumo visual do sistema principal
-    k1,k2,k3,k4,k5=st.columns(5)
-    cards=[
-        (k1,"📄 Total de Frotas",str(pv["FROTA"].nunique()),"com laudos registrados"),
-        (k2,"🔧 Total de Atividades",str(len(d)),"itens lançados"),
-        (k3,"🕒 Tempo Apontado",hhmm(pv["TEMPO_APONTADO"].sum()),"horas apontadas"),
-        (k4,"⏱️ Tempo em Manutenção",hhmm(pv["TEMPO_MANUT"].fillna(0).sum()),"tempo das OS"),
-        (k5,"⌛ Tempo sem Apontamento",hhmm(pv["SEM"].sum()),"horas sem apontamento"),
-    ]
-    for col,tit,val,sub in cards:
-        with col:
-            st.markdown(
-                f"<div class='kpi-card'><div style='font-size:12px;font-weight:800;color:#667085'>{tit}</div>"
-                f"<div style='font-size:25px;font-weight:900;margin-top:8px'>{val}</div>"
-                f"<div style='font-size:11px;color:#98a2b3;margin-top:6px'>{sub}</div></div>",
-                unsafe_allow_html=True
-            )
-
-    st.caption("Clique na frota para abrir o detalhamento. No detalhamento, clique na atividade para consultar as evidências das justificativas.")
-
-    @st.dialog("🚛 Detalhamento da Frota", width="large")
-    def modal_laudo_web(reg):
-        det=d[d["REGISTRO"].astype(str).eq(str(reg))].copy()
-        if det.empty:
-            st.info("Laudo não localizado.")
-            return
-        frota=str(det.iloc[0]["FROTA"])
-        osid=str(det.iloc[0]["OS_ID"])
-        st.markdown(f"## 🚛 Frota {frota}")
-        st.markdown(f"**OS/ID:** {osid}")
-
-        c1,c2,c3,c4=st.columns(4)
-        for cc,evt,klass in zip([c1,c2,c3,c4],["ITR","CNP","GM","OUTROS"],["#e8f7ed","#fff3d8","#eaf2ff","#f0eafe"]):
-            val=float(det.loc[det["CLASSIFICACAO"].eq(evt),"HORAS"].sum())
-            with cc:
-                st.markdown(
-                    f"<div style='border:1px solid #e5eaf1;border-radius:14px;padding:13px 15px'>"
-                    f"<div style='font-size:12px;font-weight:800;color:#667085'>{evt}</div>"
-                    f"<span style='display:inline-block;margin-top:8px;background:{klass};padding:6px 10px;"
-                    f"border-radius:8px;font-weight:850'>{hhmm(val)}</span></div>",
-                    unsafe_allow_html=True
-                )
-
-        st.markdown("### Atividades da OS")
-        st.caption("Clique na atividade para consultar a evidência da justificativa.")
-
-        hdr=st.columns([3.0,1.45,1.0,1.45,1.45,.75])
-        for cc,txt in zip(hdr,["ATIVIDADE / DESCRIÇÃO","EXECUTANTE","EVENTO","INÍCIO","FIM","TEMPO"]):
-            cc.markdown(f"**{txt}**")
-
-        just_os=just[just["os_id"].eq(osid)].copy() if not just.empty else pd.DataFrame()
-
-        for i,row in det.iterrows():
-            ini=pd.to_datetime(row.get("INICIO_ATIVIDADE"),errors="coerce")
-            fim=pd.to_datetime(row.get("FIM_ATIVIDADE"),errors="coerce")
-            cols=st.columns([3.0,1.45,1.0,1.45,1.45,.75])
-            atividade=str(row.get("ATIVIDADE") or "Atividade")
-
-            with cols[0]:
-                with st.popover(atividade,use_container_width=True):
-                    st.markdown(f"### 📎 {atividade}")
-                    st.caption(f"Frota {frota} | OS/ID {osid} | {str(row.get('CLASSIFICACAO') or '—')}")
-
-                    anexos=[]
-                    if not just_os.empty:
-                        for _,jr in just_os.iterrows():
-                            for a in _lista_anexos_web(jr.get("anexos")):
-                                pth=_path_anexo_web(a)
-                                if pth:
-                                    anexos.append((pth,jr))
-
-                    if not anexos:
-                        st.info("📭 Não há evidência.")
-                    else:
-                        for n,(ep,jr) in enumerate(anexos,1):
-                            motivo=str(jr.get("motivo") or jr.get("desvio_tipo") or "Justificativa")
-                            obs=str(jr.get("observacao") or "").strip()
-                            st.markdown(f"**{motivo}**")
-                            if obs:
-                                st.caption(obs)
-                            b,ct=baixar_evidencia_justificativa_web(ep)
-                            if b:
-                                if ct.startswith("image/"):
-                                    st.image(b,use_container_width=True)
-                                elif ct.startswith("video/"):
-                                    st.video(b)
-                                else:
-                                    st.download_button(
-                                        "📄 Abrir evidência",b,
-                                        file_name=ep.split("/")[-1],
-                                        key=f"web_ev_{reg}_{i}_{n}",
-                                        use_container_width=True
-                                    )
-                            else:
-                                st.caption("Evidência registrada, mas o arquivo não pôde ser carregado.")
-
-            cols[1].write(str(row.get("EXECUTANTE") or "—"))
-            cols[2].write(str(row.get("CLASSIFICACAO") or "—"))
-            cols[3].write(ini.strftime("%d/%m %H:%M") if pd.notna(ini) else "—")
-            cols[4].write(fim.strftime("%d/%m %H:%M") if pd.notna(fim) else "—")
-            cols[5].write(hhmm(row.get("HORAS",0)))
-            st.markdown("<div style='border-bottom:1px solid #edf0f4;margin:3px 0 5px'></div>",unsafe_allow_html=True)
-
-    # Tabela nativa: sem links/URL, portanto não dispara login nem troca de página.
-    hdr=st.columns([.8,.8,.7,.7,.7,.8,1.6,1.8,2.1])
-    for cc,txt in zip(hdr,["FROTA","OS/ID","ITR","CNP","GM","OUTROS","TEMPO APONTADO","TEMPO MANUTENÇÃO","TEMPO SEM APONTAMENTO"]):
-        cc.markdown(f"<div style='text-align:center;font-size:11px;font-weight:850'>{txt}</div>",unsafe_allow_html=True)
-
-    for idx,r in pv.iloc[::-1].iterrows():
-        cs=st.columns([.8,.8,.7,.7,.7,.8,1.6,1.8,2.1])
-        with cs[0]:
-            if st.button(str(r["FROTA"]),key=f"web_frota_{r['REGISTRO']}_{idx}",use_container_width=True):
-                modal_laudo_web(str(r["REGISTRO"]))
-        vals=[str(r["OS_ID"]),hhmm(r["ITR"]),hhmm(r["CNP"]),hhmm(r["GM"]),hhmm(r["OUTROS"]),
-              hhmm(r["TEMPO_APONTADO"]),hhmm(r["TEMPO_MANUT"]),hhmm(r["SEM"])]
-        for cc,v in zip(cs[1:],vals):
-            cc.markdown(f"<div style='text-align:center;padding-top:9px'><b>{v}</b></div>",unsafe_allow_html=True)
-        st.markdown("<div style='border-bottom:1px solid #edf0f4;margin:2px 0 4px'></div>",unsafe_allow_html=True)
+    pv=pv.merge(m,on=["REGISTRO","OS_ID","FROTA"],how="left");pv["TEMPO_APONTADO"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1);pv["SEM"]=(pv["TEMPO_MANUT"].fillna(0)-pv["TEMPO_APONTADO"]).clip(lower=0)
+    st.caption("Clique na frota para abrir o detalhamento do laudo.")
+    for _,r in pv.iloc[::-1].iterrows():
+        cs=st.columns([1,1,1,1,1,1,1.2,1.2,1.2])
+        if cs[0].button(str(r.FROTA),key=f"wfr_{r.REGISTRO}",use_container_width=True):st.session_state["wreg"]=str(r.REGISTRO)
+        vals=[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]
+        for c,v in zip(cs[1:],vals):c.markdown(f"**{v}**")
+    reg=st.session_state.get("wreg")
+    if reg:
+        det=d[d["REGISTRO"].astype(str).eq(str(reg))]
+        if not det.empty:
+            st.markdown(f"#### Frota {det.iloc[0]['FROTA']} • OS {det.iloc[0]['OS_ID']}")
+            for i,row in det.iterrows():
+                aid=str(row.get("ATIVIDADE_ID") or f"{reg}_{i}")
+                if st.button(f"{row.get('ATIVIDADE','')} • {row.get('CLASSIFICACAO','')} • {hhmm(row.get('HORAS',0))}",key=f"wat_{aid}",use_container_width=True):st.session_state["waid"]=aid
+            aid=st.session_state.get("waid");rr=det[det["ATIVIDADE_ID"].astype(str).eq(str(aid))]
+            if not rr.empty:
+                row=rr.iloc[0];st.markdown(f"##### {row.get('ATIVIDADE','Atividade')}");st.write(f"Executante: **{row.get('EXECUTANTE','') or 'Não informado'}** • Classificação: **{row.get('CLASSIFICACAO','')}**")
+                try:evs=json.loads(row.get("EVIDENCIAS") or "[]")
+                except Exception:evs=[]
+                if not evs:st.info("Nenhuma evidência anexada a esta atividade.")
+                for ep in evs:
+                    b,ct=baixar_evidencia_laudo_web(ep)
+                    if b:
+                        if ct.startswith("image/"):st.image(b,use_container_width=True)
+                        elif ct.startswith("video/"):st.video(b)
+                        else:st.download_button("📄 Abrir/baixar evidência",b,file_name=ep.split("/")[-1],key=f"wdl_{ep}")
 
 def evento_flags(s):
     e=s.fillna("").astype(str).str.upper().str.strip()
@@ -459,14 +279,37 @@ def base_media(tipo):
     horas=(fimcalc-ini).dt.total_seconds()/3600
     sla=12 if tipo=="ITR" else 24
     valid=(~aberto)|(horas>=sla)
-    out=pd.DataFrame({"inicio":ini,"fim":fim,"horas":horas,"aberto":aberto})
+    out=pd.DataFrame({"inicio":ini,"fim":fim,"fim_calc":fimcalc,"horas":horas,"aberto":aberto})
     return out[valid & ini.notna() & horas.notna() & (horas>=0)].copy()
+
+def quebrar_media_por_dia_web(b):
+    """Quebra cada manutenção válida por dia, até a liberação ou até agora se aberta."""
+    if b.empty:
+        return pd.DataFrame(columns=["DIA_DT","HORAS_DIA"])
+    linhas=[]
+    for _,r in b.iterrows():
+        a=r.get("inicio"); z=r.get("fim_calc")
+        if pd.isna(a) or pd.isna(z) or z < a:
+            continue
+        dia=pd.Timestamp(a).normalize()
+        ultimo=pd.Timestamp(z).normalize()
+        while dia <= ultimo:
+            ti=max(pd.Timestamp(a),dia)
+            tf=min(pd.Timestamp(z),dia+pd.Timedelta(days=1))
+            h=(tf-ti).total_seconds()/3600
+            if h>0:
+                linhas.append({"DIA_DT":dia,"HORAS_DIA":h})
+            dia+=pd.Timedelta(days=1)
+    return pd.DataFrame(linhas,columns=["DIA_DT","HORAS_DIA"])
 
 def media_periodo(tipo, periodo):
     b=base_media(tipo)
     if b.empty:return None
     ini=b["inicio"]; hoje=agora.normalize()
-    if periodo=="DIA": m=ini.dt.normalize().eq(hoje)
+    if periodo=="DIA":
+        fatias=quebrar_media_por_dia_web(b)
+        x=fatias.loc[fatias["DIA_DT"].eq(hoje),"HORAS_DIA"] if not fatias.empty else pd.Series(dtype=float)
+        return float(x.mean()) if len(x) else None
     elif periodo=="MES": m=(ini.dt.year==agora.year)&(ini.dt.month==agora.month)
     else:
         iso=ini.dt.isocalendar(); ino=agora.isocalendar()
@@ -493,10 +336,10 @@ def resumo(tipo):
         x=b[b["inicio"].dt.to_period("M").eq(p)]["horas"]
         v=float(x.mean()) if len(x) else None
         meses.append((p.strftime("%b/%y").replace("Sep","Set").replace("Aug","Ago").replace("Jul","Jul"),hhmm(v)))
-    bm=b[(b["inicio"].dt.year==agora.year)&(b["inicio"].dt.month==agora.month)].copy()
-    if not bm.empty:
-        bm["DIA_DT"]=bm["inicio"].dt.normalize()
-        diaria=bm.groupby("DIA_DT")["horas"].mean().reset_index(name="MEDIA_H")
+    fatias=quebrar_media_por_dia_web(b)
+    if not fatias.empty:
+        fatias=fatias[(fatias["DIA_DT"].dt.year==agora.year)&(fatias["DIA_DT"].dt.month==agora.month)].copy()
+        diaria=fatias.groupby("DIA_DT")["HORAS_DIA"].mean().reset_index(name="MEDIA_H")
         diaria["DIA"]=diaria["DIA_DT"].dt.strftime("%d/%m")
     else: diaria=pd.DataFrame(columns=["DIA","MEDIA_H"])
     return sems,meses,pd.DataFrame(semanal),diaria,sla
@@ -518,7 +361,7 @@ def card_media(tipo):
         ch=alt.Chart(diaria).mark_line(point=True).encode(x=alt.X("DIA:N",title=None,axis=alt.Axis(labelAngle=0,labelFontSize=9)),y=alt.Y("MEDIA_H:Q",title=None,axis=None),tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")]).properties(height=75)
         rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[4,3]).encode(y="SLA:Q")
         st.altair_chart(ch+rule,use_container_width=True)
-    st.markdown("<div class='caption'>Média diária do mês corrente • linha tracejada = SLA</div>",unsafe_allow_html=True)
+    st.markdown("<div class='caption'>Média diária por permanência na manutenção • impacta cada dia até a liberação • linha tracejada = SLA</div>",unsafe_allow_html=True)
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>2. DESEMPENHO</div><div class='mon-section-sub'>Indicadores principais da oficina e evolução do SLA</div></div>",unsafe_allow_html=True)
 c1,c2,c3=st.columns(3)
@@ -600,10 +443,46 @@ for col,(mask,t) in zip(st.columns(4),[(mcnp,"CORRETIVA Ñ PROG."),(mitr,"ITR"),
     with col: topcard(mask,t)
 
 # ALERTAS & HUNT
-hunt=df[is_cnp_all].copy()
+# Universo operacional fixo do HUNT:
+# - somente os modais válidos do contrato/operação;
+# - carretas especiais ficam fora por padrão.
+MODAIS_HUNT_VALIDOS = {
+    "QUADRITREM",
+    "KNNAR",
+    "SUPER BITREM",
+    "DEPÓSITO",
+    "DEPOSITO",
+    "TRITREM",
+    "BITREM",
+    "PENTATREM",
+}
+FROTAS_HUNT_ESPECIAIS = {"13169","13241","11003","11001","11007","11009"}
+
+_modal_hunt = df["modal"].fillna("").astype(str).str.strip().str.upper()
+_frota_hunt = df["frota"].fillna("").astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+
+_mask_modal_hunt = _modal_hunt.isin(MODAIS_HUNT_VALIDOS)
+_mask_frota_hunt = ~_frota_hunt.isin(FROTAS_HUNT_ESPECIAIS)
+
+# CNP: o filtro de modal/especiais é aplicado AQUI, independentemente
+# de qualquer filtro anterior feito no dataframe principal.
+hunt=df[is_cnp_all & _mask_modal_hunt & _mask_frota_hunt].copy()
 hunt["ref"]=hunt["inicio"].fillna(hunt["parada"])
 hunt=hunt[hunt["ref"].notna()].copy()
 hunt["desc_norm"]=hunt["descricao"].fillna("").astype(str).str.upper()
+
+# Bases separadas para as próximas visões do HUNT, obedecendo ao mesmo universo.
+_evt_hunt = df["evento"].fillna("").astype(str).str.upper().str.strip()
+_desc_hunt_all = df["descricao"].fillna("").astype(str).str.upper()
+
+_mask_sos_pneu = _evt_hunt.str.contains("SOS", na=False) & (
+    _evt_hunt.str.contains("PNEU", na=False) |
+    _desc_hunt_all.str.contains("PNEU|BORRACH", regex=True, na=False)
+)
+_mask_sos = _evt_hunt.str.contains("SOS", na=False) & ~_mask_sos_pneu
+
+hunt_sos = df[_mask_sos & _mask_modal_hunt & _mask_frota_hunt].copy()
+hunt_sos_pneu = df[_mask_sos_pneu & _mask_modal_hunt & _mask_frota_hunt].copy()
 hoje=agora.normalize()
 mes_ini=hoje.replace(day=1)
 mes_ant_fim=mes_ini
