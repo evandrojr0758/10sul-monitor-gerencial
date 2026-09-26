@@ -116,6 +116,69 @@ def hhmm(h):
     m=max(0,int(round(float(h)*60)))
     return f"{m//60:02d}:{m%60:02d}"
 
+
+@st.cache_data(ttl=60, show_spinner=False)
+def carregar_laudos_manuais_web():
+    import json
+    if not SUPABASE_URL or not SUPABASE_KEY: return pd.DataFrame()
+    try:
+        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/monitor/laudos_manuais.json"
+        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
+        r=requests.get(url,headers=h,timeout=45)
+        if not r.ok:return pd.DataFrame()
+        return pd.DataFrame(json.loads(r.content.decode("utf-8")))
+    except Exception:return pd.DataFrame()
+
+def baixar_evidencia_laudo_web(path):
+    try:
+        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/{path}"
+        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
+        r=requests.get(url,headers=h,timeout=45)
+        return (r.content,r.headers.get("content-type","")) if r.ok else (None,"")
+    except Exception:return None,""
+
+def render_laudos_web():
+    import json
+    d=carregar_laudos_manuais_web()
+    if d.empty:
+        st.caption("Ainda não há laudos manuais publicados."); return
+    for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","ATIVIDADE","EXECUTANTE","INICIO_ATIVIDADE","FIM_ATIVIDADE","INICIO_MANUTENCAO","FIM_MANUTENCAO","EVIDENCIAS","ATIVIDADE_ID","HORAS"]:
+        if c not in d.columns:d[c]=""
+    d["HORAS"]=pd.to_numeric(d["HORAS"],errors="coerce").fillna(0.0); d["CLASSIFICACAO"]=d["CLASSIFICACAO"].fillna("OUTROS").astype(str).str.upper()
+    pv=d.pivot_table(index=["REGISTRO","OS_ID","FROTA"],columns="CLASSIFICACAO",values="HORAS",aggfunc="sum",fill_value=0).reset_index()
+    for c in ["ITR","CNP","GM","OUTROS"]:
+        if c not in pv.columns:pv[c]=0.0
+    m=d.groupby(["REGISTRO","OS_ID","FROTA"],as_index=False).agg(INICIO_MANUTENCAO=("INICIO_MANUTENCAO","first"),FIM_MANUTENCAO=("FIM_MANUTENCAO","first"))
+    m["INICIO_MANUTENCAO"]=pd.to_datetime(m["INICIO_MANUTENCAO"],errors="coerce");m["FIM_MANUTENCAO"]=pd.to_datetime(m["FIM_MANUTENCAO"],errors="coerce")
+    m["TEMPO_MANUT"]=(m["FIM_MANUTENCAO"]-m["INICIO_MANUTENCAO"]).dt.total_seconds()/3600
+    pv=pv.merge(m,on=["REGISTRO","OS_ID","FROTA"],how="left");pv["TEMPO_APONTADO"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1);pv["SEM"]=(pv["TEMPO_MANUT"].fillna(0)-pv["TEMPO_APONTADO"]).clip(lower=0)
+    st.caption("Clique na frota para abrir o detalhamento do laudo.")
+    for _,r in pv.iloc[::-1].iterrows():
+        cs=st.columns([1,1,1,1,1,1,1.2,1.2,1.2])
+        if cs[0].button(str(r.FROTA),key=f"wfr_{r.REGISTRO}",use_container_width=True):st.session_state["wreg"]=str(r.REGISTRO)
+        vals=[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]
+        for c,v in zip(cs[1:],vals):c.markdown(f"**{v}**")
+    reg=st.session_state.get("wreg")
+    if reg:
+        det=d[d["REGISTRO"].astype(str).eq(str(reg))]
+        if not det.empty:
+            st.markdown(f"#### Frota {det.iloc[0]['FROTA']} • OS {det.iloc[0]['OS_ID']}")
+            for i,row in det.iterrows():
+                aid=str(row.get("ATIVIDADE_ID") or f"{reg}_{i}")
+                if st.button(f"{row.get('ATIVIDADE','')} • {row.get('CLASSIFICACAO','')} • {hhmm(row.get('HORAS',0))}",key=f"wat_{aid}",use_container_width=True):st.session_state["waid"]=aid
+            aid=st.session_state.get("waid");rr=det[det["ATIVIDADE_ID"].astype(str).eq(str(aid))]
+            if not rr.empty:
+                row=rr.iloc[0];st.markdown(f"##### {row.get('ATIVIDADE','Atividade')}");st.write(f"Executante: **{row.get('EXECUTANTE','') or 'Não informado'}** • Classificação: **{row.get('CLASSIFICACAO','')}**")
+                try:evs=json.loads(row.get("EVIDENCIAS") or "[]")
+                except Exception:evs=[]
+                if not evs:st.info("Nenhuma evidência anexada a esta atividade.")
+                for ep in evs:
+                    b,ct=baixar_evidencia_laudo_web(ep)
+                    if b:
+                        if ct.startswith("image/"):st.image(b,use_container_width=True)
+                        elif ct.startswith("video/"):st.video(b)
+                        else:st.download_button("📄 Abrir/baixar evidência",b,file_name=ep.split("/")[-1],key=f"wdl_{ep}")
+
 def evento_flags(s):
     e=s.fillna("").astype(str).str.upper().str.strip()
     itr=e.eq("ITR")
@@ -177,6 +240,9 @@ for col,(n,lab,kind) in zip(cols,cards):
     cls="kpi "+("kpi-red" if kind=="red" else "kpi-orange" if kind=="orange" else "")
     with col:
         st.markdown(f"<div class='{cls}'><div class='kpi-n'>{n}</div><div class='kpi-l'>{lab}</div></div>",unsafe_allow_html=True)
+
+st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
+render_laudos_web()
 
 # MÉDIAS
 def base_media(tipo):
