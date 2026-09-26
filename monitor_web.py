@@ -118,17 +118,27 @@ def hhmm(h):
     return f"{m//60:02d}:{m%60:02d}"
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def carregar_laudos_manuais_web():
     import json
-    if not SUPABASE_URL or not SUPABASE_KEY: return pd.DataFrame()
-    try:
-        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/monitor/laudos_manuais.json"
-        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
-        r=requests.get(url,headers=h,timeout=45)
-        if not r.ok:return pd.DataFrame()
-        return pd.DataFrame(json.loads(r.content.decode("utf-8")))
-    except Exception:return pd.DataFrame()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return pd.DataFrame()
+    h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
+    # Tenta as formas suportadas pelo Storage. A primeira que responder 200 vence.
+    urls=[
+        f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/monitor/laudos_manuais.json",
+        f"{SUPABASE_URL}/storage/v1/object/evidencias-desvios/monitor/laudos_manuais.json",
+        f"{SUPABASE_URL}/storage/v1/object/public/evidencias-desvios/monitor/laudos_manuais.json",
+    ]
+    for url in urls:
+        try:
+            r=requests.get(url,headers=h,timeout=45)
+            if r.ok:
+                dados=json.loads(r.content.decode("utf-8"))
+                return pd.DataFrame(dados)
+        except Exception:
+            pass
+    return pd.DataFrame()
 
 def baixar_evidencia_laudo_web(path):
     try:
@@ -226,220 +236,6 @@ mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_html=True)
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
-
-def base_media(tipo):
-    b=df.copy()
-    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
-    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
-    b=b[mask].copy()
-    b=b[~b["frota"].isin(ESPECIAIS)].copy()
-    ini=b["inicio"]
-    fim=b["fim"]
-    stt=b["status"].fillna("").astype(str).str.upper()
-    aberto=stt.str.contains("MANUT",na=False)|fim.isna()
-    # Compatibilidade com pandas/Streamlit Cloud: preserva o mesmo dtype datetime64[ns]
-    # ao preencher atendimentos ainda abertos com o horário atual.
-    fimcalc=fim.copy()
-    agora_dt=pd.Timestamp(agora).to_datetime64()
-    fimcalc=fimcalc.mask(aberto, agora_dt)
-    horas=(fimcalc-ini).dt.total_seconds()/3600
-    sla=12 if tipo=="ITR" else 24
-    valid=(~aberto)|(horas>=sla)
-    out=pd.DataFrame({"inicio":ini,"fim":fim,"fim_calc":fimcalc,"horas":horas,"aberto":aberto})
-    return out[valid & ini.notna() & horas.notna() & (horas>=0)].copy()
-
-def quebrar_media_por_dia_web(b):
-    """Quebra cada manutenção válida por dia, até a liberação ou até agora se aberta."""
-    if b.empty:
-        return pd.DataFrame(columns=["DIA_DT","HORAS_DIA"])
-    linhas=[]
-    for _,r in b.iterrows():
-        a=r.get("inicio"); z=r.get("fim_calc")
-        if pd.isna(a) or pd.isna(z) or z < a:
-            continue
-        dia=pd.Timestamp(a).normalize()
-        ultimo=pd.Timestamp(z).normalize()
-        while dia <= ultimo:
-            ti=max(pd.Timestamp(a),dia)
-            tf=min(pd.Timestamp(z),dia+pd.Timedelta(days=1))
-            h=(tf-ti).total_seconds()/3600
-            if h>0:
-                linhas.append({"DIA_DT":dia,"HORAS_DIA":h})
-            dia+=pd.Timedelta(days=1)
-    return pd.DataFrame(linhas,columns=["DIA_DT","HORAS_DIA"])
-
-def media_periodo(tipo, periodo):
-    b=base_media(tipo)
-    if b.empty:return None
-    ini=b["inicio"]; hoje=agora.normalize()
-    if periodo=="DIA":
-        fatias=quebrar_media_por_dia_web(b)
-        x=fatias.loc[fatias["DIA_DT"].eq(hoje),"HORAS_DIA"] if not fatias.empty else pd.Series(dtype=float)
-        return float(x.mean()) if len(x) else None
-    elif periodo=="MES": m=(ini.dt.year==agora.year)&(ini.dt.month==agora.month)
-    else:
-        iso=ini.dt.isocalendar(); ino=agora.isocalendar()
-        m=(iso.week==ino.week)&(iso.year==ino.year)
-    x=b.loc[m,"horas"]
-    return float(x.mean()) if len(x) else None
-
-
-# ============================================================
-# DESTAQUE DO SUPERVISOR — MÉDIAS DIÁRIAS
-# Cada OS impacta todos os dias em que permanece em manutenção.
-# ITR > 12h e REVISÃO > 24h são destacados em vermelho.
-# ============================================================
-_media_itr_supervisor = media_periodo("ITR", "DIA")
-_media_rev_supervisor = media_periodo("REVISÃO", "DIA")
-
-def _serie_diaria_supervisor(tipo, dias=7):
-    b = base_media(tipo)
-    fatias = quebrar_media_por_dia_web(b)
-    if fatias.empty:
-        return pd.DataFrame(columns=["DIA_DT","DIA","MEDIA_H","ROTULO","ACIMA_SLA"])
-    limite = agora.normalize() - pd.Timedelta(days=dias-1)
-    fatias = fatias[
-        (fatias["DIA_DT"] >= limite) &
-        (fatias["DIA_DT"] <= agora.normalize())
-    ].copy()
-    if fatias.empty:
-        return pd.DataFrame(columns=["DIA_DT","DIA","MEDIA_H","ROTULO","ACIMA_SLA"])
-    g = fatias.groupby("DIA_DT", as_index=False)["HORAS_DIA"].mean().rename(columns={"HORAS_DIA":"MEDIA_H"})
-    g["DIA"] = g["DIA_DT"].dt.strftime("%d/%m")
-    g["ROTULO"] = g["MEDIA_H"].apply(hhmm)
-    sla = 12 if tipo == "ITR" else 24
-    g["ACIMA_SLA"] = g["MEDIA_H"] > sla
-    return g
-
-def _grafico_diario_supervisor(tipo, sla):
-    g = _serie_diaria_supervisor(tipo, 7)
-    if g.empty:
-        st.caption(f"Sem média diária de {tipo} nos últimos dias.")
-        return
-
-    base = alt.Chart(g).encode(
-        x=alt.X("DIA:N", title=None, sort=None, axis=alt.Axis(labelAngle=0, labelFontSize=11)),
-        y=alt.Y("MEDIA_H:Q", title=None, axis=alt.Axis(labelFontSize=10)),
-        tooltip=[
-            alt.Tooltip("DIA:N", title="Dia"),
-            alt.Tooltip("ROTULO:N", title="Média")
-        ]
-    )
-
-    linha = base.mark_line(strokeWidth=2).encode(
-        color=alt.value("#344054")
-    )
-
-    pontos = base.mark_point(size=95, filled=True).encode(
-        color=alt.condition(
-            alt.datum.ACIMA_SLA,
-            alt.value("#d92d20"),
-            alt.value("#344054")
-        )
-    )
-
-    rotulos = base.mark_text(
-        dy=-13,
-        fontSize=12,
-        fontWeight="bold"
-    ).encode(
-        text="ROTULO:N",
-        color=alt.condition(
-            alt.datum.ACIMA_SLA,
-            alt.value("#d92d20"),
-            alt.value("#344054")
-        )
-    )
-
-    regra = alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(
-        strokeDash=[5,4],
-        strokeWidth=1.5,
-        color="#d92d20"
-    ).encode(y="SLA:Q")
-
-    st.altair_chart(
-        (linha + pontos + rotulos + regra).properties(height=180),
-        use_container_width=True
-    )
-
-st.markdown("""
-<style>
-.supervisor-media-wrap{
-    margin: 8px 0 18px 0;
-    padding: 16px 18px;
-    border: 1px solid #d8e1ea;
-    border-radius: 16px;
-    background: linear-gradient(135deg,#f8fbff 0%,#ffffff 70%);
-    box-shadow: 0 3px 12px rgba(16,24,40,.06);
-}
-.supervisor-media-title{
-    font-size: 13px;
-    font-weight: 800;
-    letter-spacing: .45px;
-    color: #344054;
-    margin-bottom: 10px;
-}
-.supervisor-media-grid{
-    display:grid;
-    grid-template-columns:1fr 1fr;
-    gap:12px;
-}
-.supervisor-media-card{
-    text-align:center;
-    padding:12px 10px;
-    border-radius:12px;
-    background:#fff;
-    border:1px solid #e4e7ec;
-}
-.supervisor-media-label{font-size:12px;font-weight:800;color:#475467;}
-.supervisor-media-value{font-size:32px;line-height:1.08;font-weight:900;color:#101828;margin:5px 0 2px;}
-.supervisor-media-value.estouro{color:#d92d20;}
-.supervisor-media-sla{font-size:11px;color:#667085;}
-.supervisor-media-note{text-align:center;font-size:11px;color:#667085;margin-top:10px;}
-@media(max-width:640px){
-    .supervisor-media-grid{grid-template-columns:1fr 1fr;gap:8px}
-    .supervisor-media-value{font-size:26px}
-    .supervisor-media-wrap{padding:13px 10px}
-}
-</style>
-""", unsafe_allow_html=True)
-
-_itr_class = "estouro" if (_media_itr_supervisor is not None and _media_itr_supervisor > 12) else ""
-_rev_class = "estouro" if (_media_rev_supervisor is not None and _media_rev_supervisor > 24) else ""
-
-st.markdown(
-    f"""
-    <div class="supervisor-media-wrap">
-      <div class="supervisor-media-title">📊 MÉDIA DIÁRIA — REFERÊNCIA DO SUPERVISOR</div>
-      <div class="supervisor-media-grid">
-        <div class="supervisor-media-card">
-          <div class="supervisor-media-label">ITR • HOJE</div>
-          <div class="supervisor-media-value {_itr_class}">{hhmm(_media_itr_supervisor)}</div>
-          <div class="supervisor-media-sla">SLA 12:00</div>
-        </div>
-        <div class="supervisor-media-card">
-          <div class="supervisor-media-label">REVISÃO • HOJE</div>
-          <div class="supervisor-media-value {_rev_class}">{hhmm(_media_rev_supervisor)}</div>
-          <div class="supervisor-media-sla">SLA 24:00</div>
-        </div>
-      </div>
-      <div class="supervisor-media-note">
-        Cada carreta impacta a média de todos os dias em que permanece em manutenção, até a liberação.
-        Valores acima do SLA ficam destacados em vermelho.
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-_g1, _g2 = st.columns(2)
-with _g1:
-    st.markdown("##### ITR — Média diária")
-    _grafico_diario_supervisor("ITR", 12)
-with _g2:
-    st.markdown("##### REVISÃO — Média diária")
-    _grafico_diario_supervisor("REVISÃO", 24)
-
 st.markdown("<div class='mon-section'><div class='mon-section-title'>1. OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 @st.dialog("Relação de carretas", width="large")
 def modal_os_abertas(titulo, dados):
@@ -471,10 +267,50 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
             modal_os_abertas(lab,dados_card)
 
-st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
-render_laudos_web()
+st.markdown("<div class='mon-section'><div class='mon-section-title'>📋 APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Consulte o resumo dos tempos apontados por frota, atividades e evidências</div></div>",unsafe_allow_html=True)
+if "abrir_laudos_web" not in st.session_state:
+    st.session_state["abrir_laudos_web"] = False
+_rotulo_laudos = "✖ FECHAR APURAÇÃO DOS LAUDOS" if st.session_state["abrir_laudos_web"] else "📋 VISUALIZAR APURAÇÃO DOS LAUDOS"
+if st.button(_rotulo_laudos, use_container_width=True, key="btn_apuracao_laudos_web", type="primary"):
+    st.session_state["abrir_laudos_web"] = not st.session_state["abrir_laudos_web"]
+    st.rerun()
+if st.session_state["abrir_laudos_web"]:
+    render_laudos_web()
 
 # MÉDIAS
+def base_media(tipo):
+    b=df.copy()
+    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
+    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
+    b=b[mask].copy()
+    b=b[~b["frota"].isin(ESPECIAIS)].copy()
+    ini=b["inicio"]
+    fim=b["fim"]
+    stt=b["status"].fillna("").astype(str).str.upper()
+    aberto=stt.str.contains("MANUT",na=False)|fim.isna()
+    # Compatibilidade com pandas/Streamlit Cloud: preserva o mesmo dtype datetime64[ns]
+    # ao preencher atendimentos ainda abertos com o horário atual.
+    fimcalc=fim.copy()
+    agora_dt=pd.Timestamp(agora).to_datetime64()
+    fimcalc=fimcalc.mask(aberto, agora_dt)
+    horas=(fimcalc-ini).dt.total_seconds()/3600
+    sla=12 if tipo=="ITR" else 24
+    valid=(~aberto)|(horas>=sla)
+    out=pd.DataFrame({"inicio":ini,"fim":fim,"horas":horas,"aberto":aberto})
+    return out[valid & ini.notna() & horas.notna() & (horas>=0)].copy()
+
+def media_periodo(tipo, periodo):
+    b=base_media(tipo)
+    if b.empty:return None
+    ini=b["inicio"]; hoje=agora.normalize()
+    if periodo=="DIA": m=ini.dt.normalize().eq(hoje)
+    elif periodo=="MES": m=(ini.dt.year==agora.year)&(ini.dt.month==agora.month)
+    else:
+        iso=ini.dt.isocalendar(); ino=agora.isocalendar()
+        m=(iso.week==ino.week)&(iso.year==ino.year)
+    x=b.loc[m,"horas"]
+    return float(x.mean()) if len(x) else None
+
 def resumo(tipo):
     b=base_media(tipo)
     sla=12 if tipo=="ITR" else 24
@@ -494,10 +330,10 @@ def resumo(tipo):
         x=b[b["inicio"].dt.to_period("M").eq(p)]["horas"]
         v=float(x.mean()) if len(x) else None
         meses.append((p.strftime("%b/%y").replace("Sep","Set").replace("Aug","Ago").replace("Jul","Jul"),hhmm(v)))
-    fatias=quebrar_media_por_dia_web(b)
-    if not fatias.empty:
-        fatias=fatias[(fatias["DIA_DT"].dt.year==agora.year)&(fatias["DIA_DT"].dt.month==agora.month)].copy()
-        diaria=fatias.groupby("DIA_DT")["HORAS_DIA"].mean().reset_index(name="MEDIA_H")
+    bm=b[(b["inicio"].dt.year==agora.year)&(b["inicio"].dt.month==agora.month)].copy()
+    if not bm.empty:
+        bm["DIA_DT"]=bm["inicio"].dt.normalize()
+        diaria=bm.groupby("DIA_DT")["horas"].mean().reset_index(name="MEDIA_H")
         diaria["DIA"]=diaria["DIA_DT"].dt.strftime("%d/%m")
     else: diaria=pd.DataFrame(columns=["DIA","MEDIA_H"])
     return sems,meses,pd.DataFrame(semanal),diaria,sla
@@ -519,7 +355,7 @@ def card_media(tipo):
         ch=alt.Chart(diaria).mark_line(point=True).encode(x=alt.X("DIA:N",title=None,axis=alt.Axis(labelAngle=0,labelFontSize=9)),y=alt.Y("MEDIA_H:Q",title=None,axis=None),tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")]).properties(height=75)
         rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[4,3]).encode(y="SLA:Q")
         st.altair_chart(ch+rule,use_container_width=True)
-    st.markdown("<div class='caption'>Média diária por permanência na manutenção • impacta cada dia até a liberação • linha tracejada = SLA</div>",unsafe_allow_html=True)
+    st.markdown("<div class='caption'>Média diária do mês corrente • linha tracejada = SLA</div>",unsafe_allow_html=True)
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>2. DESEMPENHO</div><div class='mon-section-sub'>Indicadores principais da oficina e evolução do SLA</div></div>",unsafe_allow_html=True)
 c1,c2,c3=st.columns(3)
@@ -601,46 +437,10 @@ for col,(mask,t) in zip(st.columns(4),[(mcnp,"CORRETIVA Ñ PROG."),(mitr,"ITR"),
     with col: topcard(mask,t)
 
 # ALERTAS & HUNT
-# Universo operacional fixo do HUNT:
-# - somente os modais válidos do contrato/operação;
-# - carretas especiais ficam fora por padrão.
-MODAIS_HUNT_VALIDOS = {
-    "QUADRITREM",
-    "KNNAR",
-    "SUPER BITREM",
-    "DEPÓSITO",
-    "DEPOSITO",
-    "TRITREM",
-    "BITREM",
-    "PENTATREM",
-}
-FROTAS_HUNT_ESPECIAIS = {"13169","13241","11003","11001","11007","11009"}
-
-_modal_hunt = df["modal"].fillna("").astype(str).str.strip().str.upper()
-_frota_hunt = df["frota"].fillna("").astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-
-_mask_modal_hunt = _modal_hunt.isin(MODAIS_HUNT_VALIDOS)
-_mask_frota_hunt = ~_frota_hunt.isin(FROTAS_HUNT_ESPECIAIS)
-
-# CNP: o filtro de modal/especiais é aplicado AQUI, independentemente
-# de qualquer filtro anterior feito no dataframe principal.
-hunt=df[is_cnp_all & _mask_modal_hunt & _mask_frota_hunt].copy()
+hunt=df[is_cnp_all].copy()
 hunt["ref"]=hunt["inicio"].fillna(hunt["parada"])
 hunt=hunt[hunt["ref"].notna()].copy()
 hunt["desc_norm"]=hunt["descricao"].fillna("").astype(str).str.upper()
-
-# Bases separadas para as próximas visões do HUNT, obedecendo ao mesmo universo.
-_evt_hunt = df["evento"].fillna("").astype(str).str.upper().str.strip()
-_desc_hunt_all = df["descricao"].fillna("").astype(str).str.upper()
-
-_mask_sos_pneu = _evt_hunt.str.contains("SOS", na=False) & (
-    _evt_hunt.str.contains("PNEU", na=False) |
-    _desc_hunt_all.str.contains("PNEU|BORRACH", regex=True, na=False)
-)
-_mask_sos = _evt_hunt.str.contains("SOS", na=False) & ~_mask_sos_pneu
-
-hunt_sos = df[_mask_sos & _mask_modal_hunt & _mask_frota_hunt].copy()
-hunt_sos_pneu = df[_mask_sos_pneu & _mask_modal_hunt & _mask_frota_hunt].copy()
 hoje=agora.normalize()
 mes_ini=hoje.replace(day=1)
 mes_ant_fim=mes_ini
