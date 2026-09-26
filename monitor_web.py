@@ -210,9 +210,10 @@ df["frota"]=df["frota"].apply(norm_frota)
 agora=pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
 ev, is_itr_all,is_rev_all,is_sos_all,is_cnp_all=evento_flags(df["evento"])
 
-# OFICINA AGORA: mesma lógica-base do app principal: status manutenção + sem fim.
-status=df["status"].fillna("").astype(str).str.upper()
-mon=df[status.str.contains("MANUT",na=False)&df["fim"].isna()].copy()
+# OFICINA AGORA: STATUS = Manutenção é a fonte da situação operacional.
+# A Lista ASN pode conter FIM técnico/placeholder em OS ainda abertas.
+status=df["status"].fillna("").astype(str).str.upper().str.strip()
+mon=df[status.str.contains("MANUT",na=False)].copy()
 mon["inicio_mon"]=mon["inicio"].fillna(mon["parada"])
 mon["horas_aberto"]=((agora-mon["inicio_mon"]).dt.total_seconds()/3600).clip(lower=0)
 mon=mon.sort_values("inicio_mon",ascending=False).drop_duplicates("os_id",keep="first")
@@ -270,7 +271,7 @@ def base_media(tipo):
     ini=b["inicio"]
     fim=b["fim"]
     stt=b["status"].fillna("").astype(str).str.upper()
-    aberto=stt.str.contains("MANUT",na=False)|fim.isna()
+    aberto=stt.str.contains("MANUT",na=False) | (stt.str.strip().eq("") & fim.isna())
     # Compatibilidade com pandas/Streamlit Cloud: preserva o mesmo dtype datetime64[ns]
     # ao preencher atendimentos ainda abertos com o horário atual.
     fimcalc=fim.copy()
@@ -423,7 +424,7 @@ for col,(mask,t) in zip(st.columns(4),[(mcnp,"CORRETIVA Ñ PROG."),(mitr,"ITR"),
 hunt=df[is_cnp_all].copy()
 hunt["ref"]=hunt["inicio"].fillna(hunt["parada"])
 hunt=hunt[hunt["ref"].notna()].copy()
-hunt["desc_norm"]=hunt["descricao"].fillna("").astype(str).str.upper()
+hunt["desc_norm"]=hunt["descricao"].fillna("").astype(str).str.upper().fillna("")
 hoje=agora.normalize()
 mes_ini=hoje.replace(day=1)
 mes_ant_fim=mes_ini
@@ -455,8 +456,8 @@ atual=hunt[(hunt["ref"]>=sem_ini)&(hunt["ref"]<=agora)].copy()
 anterior=hunt[(hunt["ref"]>=sem_ant_ini)&(hunt["ref"]<sem_ant_fim)].copy()
 mot=[]
 for cat,termos in familias.items():
-    qa=int(atual["desc_norm"].apply(lambda z:any(t in z for t in termos)).sum())
-    qb=int(anterior["desc_norm"].apply(lambda z:any(t in z for t in termos)).sum())
+    qa=int(atual["desc_norm"].apply(lambda z:any(t in str(z) for t in termos)).fillna(False).sum())
+    qb=int(anterior["desc_norm"].apply(lambda z:any(t in str(z) for t in termos)).fillna(False).sum())
     mot.append((cat,qa,qa-qb))
 mot=sorted(mot,key=lambda x:(x[1],x[2]),reverse=True)
 
@@ -497,7 +498,7 @@ with h2:
             if st.session_state["motivo_cnp_aberto"] == cat:
                 termos=familias[cat]
                 rel=atual[
-                    atual["desc_norm"].apply(lambda z:any(t in z for t in termos))
+                    atual["desc_norm"].apply(lambda z:any(t in str(z) for t in termos)).fillna(False)
                 ][["frota","os_id","evento","descricao","ref","status"]].copy()
                 st.dataframe(rel,use_container_width=True,hide_index=True)
 
