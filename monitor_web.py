@@ -227,6 +227,63 @@ st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
 
+def base_media(tipo):
+    b=df.copy()
+    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
+    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
+    b=b[mask].copy()
+    b=b[~b["frota"].isin(ESPECIAIS)].copy()
+    ini=b["inicio"]
+    fim=b["fim"]
+    stt=b["status"].fillna("").astype(str).str.upper()
+    aberto=stt.str.contains("MANUT",na=False)|fim.isna()
+    # Compatibilidade com pandas/Streamlit Cloud: preserva o mesmo dtype datetime64[ns]
+    # ao preencher atendimentos ainda abertos com o horário atual.
+    fimcalc=fim.copy()
+    agora_dt=pd.Timestamp(agora).to_datetime64()
+    fimcalc=fimcalc.mask(aberto, agora_dt)
+    horas=(fimcalc-ini).dt.total_seconds()/3600
+    sla=12 if tipo=="ITR" else 24
+    valid=(~aberto)|(horas>=sla)
+    out=pd.DataFrame({"inicio":ini,"fim":fim,"fim_calc":fimcalc,"horas":horas,"aberto":aberto})
+    return out[valid & ini.notna() & horas.notna() & (horas>=0)].copy()
+
+def quebrar_media_por_dia_web(b):
+    """Quebra cada manutenção válida por dia, até a liberação ou até agora se aberta."""
+    if b.empty:
+        return pd.DataFrame(columns=["DIA_DT","HORAS_DIA"])
+    linhas=[]
+    for _,r in b.iterrows():
+        a=r.get("inicio"); z=r.get("fim_calc")
+        if pd.isna(a) or pd.isna(z) or z < a:
+            continue
+        dia=pd.Timestamp(a).normalize()
+        ultimo=pd.Timestamp(z).normalize()
+        while dia <= ultimo:
+            ti=max(pd.Timestamp(a),dia)
+            tf=min(pd.Timestamp(z),dia+pd.Timedelta(days=1))
+            h=(tf-ti).total_seconds()/3600
+            if h>0:
+                linhas.append({"DIA_DT":dia,"HORAS_DIA":h})
+            dia+=pd.Timedelta(days=1)
+    return pd.DataFrame(linhas,columns=["DIA_DT","HORAS_DIA"])
+
+def media_periodo(tipo, periodo):
+    b=base_media(tipo)
+    if b.empty:return None
+    ini=b["inicio"]; hoje=agora.normalize()
+    if periodo=="DIA":
+        fatias=quebrar_media_por_dia_web(b)
+        x=fatias.loc[fatias["DIA_DT"].eq(hoje),"HORAS_DIA"] if not fatias.empty else pd.Series(dtype=float)
+        return float(x.mean()) if len(x) else None
+    elif periodo=="MES": m=(ini.dt.year==agora.year)&(ini.dt.month==agora.month)
+    else:
+        iso=ini.dt.isocalendar(); ino=agora.isocalendar()
+        m=(iso.week==ino.week)&(iso.year==ino.year)
+    x=b.loc[m,"horas"]
+    return float(x.mean()) if len(x) else None
+
+
 # ============================================================
 # DESTAQUE DO SUPERVISOR — MÉDIAS DIÁRIAS
 # Regra: cada OS impacta todos os dias em que permanece em
@@ -340,62 +397,6 @@ st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO 
 render_laudos_web()
 
 # MÉDIAS
-def base_media(tipo):
-    b=df.copy()
-    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
-    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
-    b=b[mask].copy()
-    b=b[~b["frota"].isin(ESPECIAIS)].copy()
-    ini=b["inicio"]
-    fim=b["fim"]
-    stt=b["status"].fillna("").astype(str).str.upper()
-    aberto=stt.str.contains("MANUT",na=False)|fim.isna()
-    # Compatibilidade com pandas/Streamlit Cloud: preserva o mesmo dtype datetime64[ns]
-    # ao preencher atendimentos ainda abertos com o horário atual.
-    fimcalc=fim.copy()
-    agora_dt=pd.Timestamp(agora).to_datetime64()
-    fimcalc=fimcalc.mask(aberto, agora_dt)
-    horas=(fimcalc-ini).dt.total_seconds()/3600
-    sla=12 if tipo=="ITR" else 24
-    valid=(~aberto)|(horas>=sla)
-    out=pd.DataFrame({"inicio":ini,"fim":fim,"fim_calc":fimcalc,"horas":horas,"aberto":aberto})
-    return out[valid & ini.notna() & horas.notna() & (horas>=0)].copy()
-
-def quebrar_media_por_dia_web(b):
-    """Quebra cada manutenção válida por dia, até a liberação ou até agora se aberta."""
-    if b.empty:
-        return pd.DataFrame(columns=["DIA_DT","HORAS_DIA"])
-    linhas=[]
-    for _,r in b.iterrows():
-        a=r.get("inicio"); z=r.get("fim_calc")
-        if pd.isna(a) or pd.isna(z) or z < a:
-            continue
-        dia=pd.Timestamp(a).normalize()
-        ultimo=pd.Timestamp(z).normalize()
-        while dia <= ultimo:
-            ti=max(pd.Timestamp(a),dia)
-            tf=min(pd.Timestamp(z),dia+pd.Timedelta(days=1))
-            h=(tf-ti).total_seconds()/3600
-            if h>0:
-                linhas.append({"DIA_DT":dia,"HORAS_DIA":h})
-            dia+=pd.Timedelta(days=1)
-    return pd.DataFrame(linhas,columns=["DIA_DT","HORAS_DIA"])
-
-def media_periodo(tipo, periodo):
-    b=base_media(tipo)
-    if b.empty:return None
-    ini=b["inicio"]; hoje=agora.normalize()
-    if periodo=="DIA":
-        fatias=quebrar_media_por_dia_web(b)
-        x=fatias.loc[fatias["DIA_DT"].eq(hoje),"HORAS_DIA"] if not fatias.empty else pd.Series(dtype=float)
-        return float(x.mean()) if len(x) else None
-    elif periodo=="MES": m=(ini.dt.year==agora.year)&(ini.dt.month==agora.month)
-    else:
-        iso=ini.dt.isocalendar(); ino=agora.isocalendar()
-        m=(iso.week==ino.week)&(iso.year==ino.year)
-    x=b.loc[m,"horas"]
-    return float(x.mean()) if len(x) else None
-
 def resumo(tipo):
     b=base_media(tipo)
     sla=12 if tipo=="ITR" else 24
