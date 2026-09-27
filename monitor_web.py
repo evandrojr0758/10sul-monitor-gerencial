@@ -192,16 +192,22 @@ def render_laudos_web():
 
 def evento_flags(s):
     e=s.fillna("").astype(str).str.upper().str.strip()
+
     itr=e.eq("ITR")
     rev=e.str.contains("REVIS",na=False)
-    sos=e.str.startswith("SOS",na=False)
-    pneu = evt.str.contains("PNEU", na=False)
-    sos = sos & ~pneu
-    cnp = cnp & ~pneu
-    cnp=e.str.contains("CORRETIVA",na=False)&(
-        e.str.contains("Ñ PROG",na=False)|e.str.contains("NÃO PROG",na=False)|e.str.contains("NAO PROG",na=False)
-    )
+
+    pneu=e.str.contains("PNEU",na=False)
+
+    sos=e.str.contains("SOS",na=False) & ~e.str.contains("SOS CAVALO",na=False) & ~pneu
+
+    cnp=e.str.contains("CORRETIVA",na=False) & (
+        e.str.contains("Ñ PROG",na=False) |
+        e.str.contains("NÃO PROG",na=False) |
+        e.str.contains("NAO PROG",na=False)
+    ) & ~pneu
+
     return e,itr,rev,sos,cnp
+
 
 try:
     df=carregar()
