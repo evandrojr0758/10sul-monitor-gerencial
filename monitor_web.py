@@ -195,6 +195,9 @@ def evento_flags(s):
     itr=e.eq("ITR")
     rev=e.str.contains("REVIS",na=False)
     sos=e.str.startswith("SOS",na=False)
+    pneu = evt.str.contains("PNEU", na=False)
+    sos = sos & ~pneu
+    cnp = cnp & ~pneu
     cnp=e.str.contains("CORRETIVA",na=False)&(
         e.str.contains("Ñ PROG",na=False)|e.str.contains("NÃO PROG",na=False)|e.str.contains("NAO PROG",na=False)
     )
@@ -541,7 +544,7 @@ def card_media(tipo):
 
 
 # ============================================================
-# MTBF — MÊS CORRENTE PELA DATA DA PARADA
+# MTBF — MÊS CORRENTE ATÉ HOJE PELA DATA DA PARADA
 # Falhas: CORRETIVA Ñ/NÃO/NAO PROG. (inclui PNEU) + tudo que contém SOS,
 # exceto SOS CAVALO. Modais válidos; carretas especiais ENTRAM.
 # O intervalo é PARADA atual - PARADA anterior da mesma frota.
@@ -562,6 +565,9 @@ def calcular_mtbf_mes(base):
         evt.str.contains("NAO PROG",na=False)
     )
     falha_sos=evt.str.contains("SOS",na=False) & ~evt.str.contains("SOS CAVALO",na=False)
+    falha_pneu = evt.str.contains("PNEU", na=False)
+    falha_sos = falha_sos & ~falha_pneu
+    falha_cnp = falha_cnp & ~falha_pneu
     mask=(falha_cnp | falha_sos) & modal_norm.isin(modais_validos)
 
     f=x.loc[mask,["frota","evento","parada","modal"]].copy()
@@ -579,7 +585,7 @@ def calcular_mtbf_mes(base):
     mes_ini=agora.normalize().replace(day=1)
     mes_fim=(mes_ini+pd.offsets.MonthBegin(1))
     atual=f[
-        (f["parada"]>=mes_ini) & (f["parada"]<mes_fim) &
+        (f["parada"]>=mes_ini) & (f["parada"]<=agora) & (f["parada"]<mes_fim) &
         f["PARADA_ANTERIOR"].notna() & f["MTBF_DIAS"].notna() &
         (f["MTBF_DIAS"]>=0)
     ].copy()
@@ -602,7 +608,7 @@ def card_mtbf():
         classe="color:#d92d20;" if mtbf_mes < meta else ""
         status_txt="ABAIXO DA META" if mtbf_mes < meta else "META ATINGIDA"
 
-    st.markdown("<div class='card-title'>📈 MTBF DO MÊS</div>",unsafe_allow_html=True)
+    st.markdown("<div class='card-title'>📈 MTBF DO MÊS (ATÉ HOJE)</div>",unsafe_allow_html=True)
     st.markdown(
         f"<div class='card-center' style='font-size:30px;font-weight:900;{classe}'>{valor}</div>"
         f"<div class='card-center'>Meta: <b>≥ 10 dias</b> • {status_txt}</div>",
