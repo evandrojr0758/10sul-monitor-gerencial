@@ -539,6 +539,100 @@ def card_media(tipo):
         st.altair_chart(ch+rule,use_container_width=True)
     st.markdown("<div class='caption'>Média diária do mês corrente • linha tracejada = SLA</div>",unsafe_allow_html=True)
 
+
+# ============================================================
+# MTBF — MÊS CORRENTE PELA DATA DA PARADA
+# Falhas: CORRETIVA Ñ/NÃO/NAO PROG. (inclui PNEU) + tudo que contém SOS,
+# exceto SOS CAVALO. Modais válidos; carretas especiais ENTRAM.
+# O intervalo é PARADA atual - PARADA anterior da mesma frota.
+# A ocorrência pertence ao mês da PARADA atual. Resultado em dias.
+# ============================================================
+def calcular_mtbf_mes(base):
+    x=base.copy()
+    evt=x["evento"].fillna("").astype(str).str.upper().str.strip()
+    modal_norm=x["modal"].fillna("").astype(str).str.upper().str.strip()
+
+    modais_validos={
+        "QUADRITREM","KNNAR","SUPER BITREM","DEPÓSITO","DEPOSITO",
+        "TRITREM","BITREM","PENTATREM"
+    }
+    falha_cnp=evt.str.contains("CORRETIVA",na=False) & (
+        evt.str.contains("Ñ PROG",na=False) |
+        evt.str.contains("NÃO PROG",na=False) |
+        evt.str.contains("NAO PROG",na=False)
+    )
+    falha_sos=evt.str.contains("SOS",na=False) & ~evt.str.contains("SOS CAVALO",na=False)
+    mask=(falha_cnp | falha_sos) & modal_norm.isin(modais_validos)
+
+    f=x.loc[mask,["frota","evento","parada","modal"]].copy()
+    f=f[f["parada"].notna() & f["frota"].astype(str).str.strip().ne("")].copy()
+    if f.empty:
+        return None,pd.DataFrame()
+
+    # Deduplica a mesma OS lógica apenas pelo conjunto disponível no monitor,
+    # sem excluir carretas especiais.
+    f=f.sort_values(["frota","parada"])
+    f["PARADA_ANTERIOR"]=f.groupby("frota")["parada"].shift(1)
+    f["EVENTO_ANTERIOR"]=f.groupby("frota")["evento"].shift(1)
+    f["MTBF_DIAS"]=(f["parada"]-f["PARADA_ANTERIOR"]).dt.total_seconds()/86400.0
+
+    mes_ini=agora.normalize().replace(day=1)
+    mes_fim=(mes_ini+pd.offsets.MonthBegin(1))
+    atual=f[
+        (f["parada"]>=mes_ini) & (f["parada"]<mes_fim) &
+        f["PARADA_ANTERIOR"].notna() & f["MTBF_DIAS"].notna() &
+        (f["MTBF_DIAS"]>=0)
+    ].copy()
+
+    if atual.empty:
+        return None,atual
+
+    return float(atual["MTBF_DIAS"].mean()),atual
+
+mtbf_mes,mtbf_detalhe=calcular_mtbf_mes(df)
+
+def card_mtbf():
+    meta=10.0
+    if mtbf_mes is None:
+        valor="—"
+        classe=""
+        status_txt="Sem intervalos válidos no mês"
+    else:
+        valor=f"{mtbf_mes:.1f}".replace(".",",")+" dias"
+        classe="color:#d92d20;" if mtbf_mes < meta else ""
+        status_txt="ABAIXO DA META" if mtbf_mes < meta else "META ATINGIDA"
+
+    st.markdown("<div class='card-title'>📈 MTBF DO MÊS</div>",unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='card-center' style='font-size:30px;font-weight:900;{classe}'>{valor}</div>"
+        f"<div class='card-center'>Meta: <b>≥ 10 dias</b> • {status_txt}</div>",
+        unsafe_allow_html=True
+    )
+
+    if not mtbf_detalhe.empty:
+        abaixo=mtbf_detalhe[mtbf_detalhe["MTBF_DIAS"]<meta].copy().sort_values("MTBF_DIAS")
+        st.markdown(
+            f"<div class='caption'>{len(mtbf_detalhe)} retorno(s) com intervalo calculado no mês • "
+            f"{len(abaixo)} abaixo de 10 dias</div>",
+            unsafe_allow_html=True
+        )
+        with st.expander("🚨 Frotas com retorno < 10 dias", expanded=False):
+            if abaixo.empty:
+                st.success("Nenhuma frota retornou com menos de 10 dias.")
+            else:
+                z=abaixo[["frota","EVENTO_ANTERIOR","PARADA_ANTERIOR","evento","parada","MTBF_DIAS"]].copy()
+                z["PARADA ANTERIOR"]=pd.to_datetime(z["PARADA_ANTERIOR"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+                z["NOVA PARADA"]=pd.to_datetime(z["parada"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+                z["INTERVALO"]=z["MTBF_DIAS"].map(lambda v:f"{v:.1f} dias".replace(".",","))
+                z=z.rename(columns={
+                    "frota":"FROTA","EVENTO_ANTERIOR":"FALHA ANTERIOR",
+                    "evento":"NOVA FALHA"
+                })
+                st.dataframe(
+                    z[["FROTA","FALHA ANTERIOR","PARADA ANTERIOR","NOVA FALHA","NOVA PARADA","INTERVALO"]],
+                    use_container_width=True,hide_index=True
+                )
+
 st.markdown("<div class='mon-section'><div class='mon-section-title'>2. DESEMPENHO</div><div class='mon-section-sub'>Indicadores principais da oficina e evolução do SLA</div></div>",unsafe_allow_html=True)
 c1,c2,c3=st.columns(3)
 with c1:
@@ -547,7 +641,7 @@ with c2:
     with st.container(border=True): card_media("REVISÃO")
 with c3:
     with st.container(border=True):
-        st.markdown("<div class='card-title'>📈 MTBF</div><div class='card-center'>Aguardando definição das regras</div>",unsafe_allow_html=True)
+        card_mtbf()
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
