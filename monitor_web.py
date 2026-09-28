@@ -377,7 +377,7 @@ def _medias_laudos_por_dia(classificacao, dias=7):
         return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
     for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","HORAS"]:
         if c not in d.columns: d[c]=""
-    col_ini=_coluna_laudo(d,["INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL"])
+    col_ini=_coluna_laudo(d,["INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL","INICIO_MANUTENCAO"])
     if not col_ini:
         return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
     d["_INI10"]=pd.to_datetime(d[col_ini],errors="coerce",dayfirst=True)
