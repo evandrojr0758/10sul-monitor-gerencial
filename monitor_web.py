@@ -227,14 +227,32 @@ def render_laudos_web():
     det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower()!="nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
 
     st.markdown(f"**Frota {det.iloc[0]['FROTA']} — detalhamento**")
+
+    def _tem_evidencia_atual(v):
+        try:
+            if v is None or (isinstance(v,float) and pd.isna(v)): return False
+            txt=str(v).strip()
+            if not txt or txt.lower() in ("nan","none","null","[]","{}"): return False
+            obj=json.loads(txt)
+            return isinstance(obj,list) and any(str(x).strip() for x in obj if x is not None)
+        except Exception:
+            return False
+
+    det["_TEM_EVIDENCIA"]=det["EVIDENCIAS"].apply(_tem_evidencia_atual)
     detalhes=pd.DataFrame({
-        "ATIVIDADE":det["ATIVIDADE"].fillna("Atividade").astype(str)+"  ›",
+        "ATIVIDADE":[("📎 "+str(a)+"  ›") if tem else (str(a)+"  ›")
+                     for a,tem in zip(det["ATIVIDADE"].fillna("Atividade"),det["_TEM_EVIDENCIA"])],
         "INÍCIO":det["INICIO_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
         "FIM":det["FIM_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
         "TEMPO TOTAL":det["HORAS"].apply(hhmm),
     }).reset_index(drop=True)
+    _styler=detalhes.style.apply(
+        lambda row: ["background-color:#e8f5e9;color:#174d2a;font-weight:600;"]*len(row)
+        if bool(det.reset_index(drop=True).loc[row.name,"_TEM_EVIDENCIA"]) else [""]*len(row),
+        axis=1,
+    )
     ev2=st.dataframe(
-        detalhes,
+        _styler,
         use_container_width=True,
         hide_index=True,
         height=min(260, 38+35*max(1,len(detalhes))),
