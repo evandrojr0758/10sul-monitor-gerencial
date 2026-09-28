@@ -728,7 +728,7 @@ for col,(mask,t) in zip(st.columns(4),[(mcnp,"CORRETIVA Ñ PROG."),(mitr,"ITR"),
 hunt=df[is_cnp_all].copy()
 hunt["ref"]=hunt["inicio"].fillna(hunt["parada"])
 hunt=hunt[hunt["ref"].notna()].copy()
-hunt["desc_norm"]=hunt["descricao"].fillna("").astype(str).str.upper()
+hunt["desc_norm"]=hunt["descricao"].fillna("").astype(str).str.upper().fillna("")
 hoje=agora.normalize()
 mes_ini=hoje.replace(day=1)
 mes_ant_fim=mes_ini
@@ -760,8 +760,8 @@ atual=hunt[(hunt["ref"]>=sem_ini)&(hunt["ref"]<=agora)].copy()
 anterior=hunt[(hunt["ref"]>=sem_ant_ini)&(hunt["ref"]<sem_ant_fim)].copy()
 mot=[]
 for cat,termos in familias.items():
-    qa=int(atual["desc_norm"].apply(lambda z:any(t in z for t in termos)).sum())
-    qb=int(anterior["desc_norm"].apply(lambda z:any(t in z for t in termos)).sum())
+    qa=int(atual["desc_norm"].apply(lambda z:any(t in str(z) for t in termos)).fillna(False).sum())
+    qb=int(anterior["desc_norm"].apply(lambda z:any(t in str(z) for t in termos)).fillna(False).sum())
     mot.append((cat,qa,qa-qb))
 mot=sorted(mot,key=lambda x:(x[1],x[2]),reverse=True)
 
