@@ -206,50 +206,46 @@ def render_laudos_web():
     m["INICIO_MANUTENCAO"]=pd.to_datetime(m["INICIO_MANUTENCAO"],errors="coerce");m["FIM_MANUTENCAO"]=pd.to_datetime(m["FIM_MANUTENCAO"],errors="coerce")
     m["TEMPO_MANUT"]=(m["FIM_MANUTENCAO"]-m["INICIO_MANUTENCAO"]).dt.total_seconds()/3600
     pv=pv.merge(m,on=["REGISTRO","OS_ID","FROTA"],how="left");pv["TEMPO_APONTADO"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1);pv["SEM"]=(pv["TEMPO_MANUT"].fillna(0)-pv["TEMPO_APONTADO"]).clip(lower=0)
-    st.caption("Clique na frota para abrir o detalhamento do laudo.")
-
-    # Tabela compacta. A frota é o único elemento clicável da linha.
-    st.markdown("""
-    <style>
-    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) {
-        align-items:center;
-    }
-    div[data-testid="stButton"] > button {
-        min-height: 0 !important;
-    }
-    button[kind="secondary"] {
-        padding: .22rem .35rem !important;
-        line-height: 1.05 !important;
-        min-height: 1.85rem !important;
-        border-radius: 5px !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    hdr=st.columns([1.0,1.0,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
-    titulos=["FROTA","OS/ID","ITR","CNP","GM","OUTROS","APONTADO","MANUTENÇÃO","SEM APONT."]
-    for c,t in zip(hdr,titulos):
-        c.markdown(
-            f"<div style='background:#eef3f8;border:1px solid #d8e0e8;padding:7px 4px;"
-            f"text-align:center;font-size:11px;font-weight:800;color:#25364a'>{t}</div>",
-            unsafe_allow_html=True,
-        )
-
-    for _,r in pv.iloc[::-1].iterrows():
-        cs=st.columns([1.0,1.0,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
-        if cs[0].button(f"{r.FROTA}  ↗", key=f"wfr_{r.REGISTRO}", use_container_width=True):
-            st.session_state["wreg"]=str(r.REGISTRO)
-            st.session_state.pop("waid",None)
-        vals=[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),
-              hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]
-        for c,v in zip(cs[1:],vals):
-            c.markdown(
-                f"<div style='border-bottom:1px solid #e4e9ef;padding:7px 3px;"
-                f"text-align:center;font-size:12px;font-weight:600;min-height:31px;"
-                f"line-height:17px'>{v}</div>",
-                unsafe_allow_html=True,
-            )
     reg=st.session_state.get("wreg")
+    if not reg:
+        st.caption("Clique/toque na frota para abrir o detalhamento do laudo.")
+        st.markdown("""
+        <style>
+        .laudo-mobile{display:none}
+        @media(max-width:768px){
+          .laudo-desktop{display:none!important}.laudo-mobile{display:block!important}
+          .lm-card{border:1px solid #dfe7ef;border-radius:12px;padding:11px;margin-bottom:8px;background:white}
+          .lm-head{font-size:18px;font-weight:800;color:#0878e8}.lm-os{font-size:12px;color:#667085}
+          .lm-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin:8px 0}
+          .lm-mini{background:#f3f6fa;border-radius:7px;padding:5px 2px;text-align:center;font-size:10px}
+          .lm-mini b{display:block;font-size:12px;color:#101828;margin-top:2px}
+          .lm-total{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #edf1f5;padding-top:7px;text-align:center;font-size:10px;color:#667085}
+          .lm-total b{display:block;color:#101828;font-size:12px}
+        }
+        </style>""",unsafe_allow_html=True)
+
+        st.markdown("<div class='laudo-desktop'>",unsafe_allow_html=True)
+        hdr=st.columns([1,1,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
+        for c,t in zip(hdr,["FROTA","OS/ID","ITR","CNP","GM","OUTROS","APONTADO","MANUTENÇÃO","SEM APONT."]):
+            c.markdown(f"<div style='background:#eef3f8;border:1px solid #d8e0e8;padding:7px 4px;text-align:center;font-size:11px;font-weight:800'>{t}</div>",unsafe_allow_html=True)
+        for _,r in pv.iloc[::-1].iterrows():
+            cs=st.columns([1,1,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
+            if cs[0].button(f"{r.FROTA} ›",key=f"wfr_d_{r.REGISTRO}",use_container_width=True):
+                st.session_state["wreg"]=str(r.REGISTRO);st.rerun()
+            for c,v in zip(cs[1:],[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]):
+                c.markdown(f"<div style='border-bottom:1px solid #e4e9ef;padding:7px 3px;text-align:center;font-size:12px;font-weight:600'>{v}</div>",unsafe_allow_html=True)
+        st.markdown("</div>",unsafe_allow_html=True)
+
+        st.markdown("<div class='laudo-mobile'>",unsafe_allow_html=True)
+        for _,r in pv.iloc[::-1].iterrows():
+            st.markdown(f"""<div class='lm-card'><div class='lm-head'>🚚 {r.FROTA} <span style='float:right'>›</span></div><div class='lm-os'>OS {r.OS_ID}</div>
+            <div class='lm-grid'><div class='lm-mini'>ITR<b>{hhmm(r.ITR)}</b></div><div class='lm-mini'>CNP<b>{hhmm(r.CNP)}</b></div><div class='lm-mini'>GM<b>{hhmm(r.GM)}</b></div><div class='lm-mini'>OUTROS<b>{hhmm(r.OUTROS)}</b></div></div>
+            <div class='lm-total'><div>Apontado<b>{hhmm(r.TEMPO_APONTADO)}</b></div><div>Manutenção<b>{hhmm(r.TEMPO_MANUT)}</b></div><div>Sem apont.<b>{hhmm(r.SEM)}</b></div></div></div>""",unsafe_allow_html=True)
+            if st.button(f"Abrir {r.FROTA}",key=f"wfr_m_{r.REGISTRO}",use_container_width=True):
+                st.session_state["wreg"]=str(r.REGISTRO);st.rerun()
+        st.markdown("</div>",unsafe_allow_html=True)
+        return
+
     if reg:
         det=d[d["REGISTRO"].astype(str).eq(str(reg))]
         if not det.empty:
