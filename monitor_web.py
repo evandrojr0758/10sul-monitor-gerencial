@@ -377,7 +377,7 @@ def _medias_laudos_por_dia(classificacao, dias=7):
         return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
     for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","HORAS"]:
         if c not in d.columns: d[c]=""
-    col_ini=_coluna_laudo(d,["INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL","INICIO_MANUTENCAO"])
+    col_ini=_coluna_laudo(d,["INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL"])
     if not col_ini:
         return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
     d["_INI10"]=pd.to_datetime(d[col_ini],errors="coerce",dayfirst=True)
@@ -483,6 +483,21 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
 
 with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
     st.caption("Médias calculadas pelos tempos apontados nos laudos, agrupadas pela data de INÍCIO 10 SUL.")
+    # Diagnóstico temporário: mostra exatamente o que chegou no JSON publicado.
+    _diag = carregar_laudos_manuais_web().copy()
+    if _diag.empty:
+        st.warning("DIAGNÓSTICO: o arquivo laudos_manuais.json chegou vazio ao Monitor.")
+    else:
+        _ci = _coluna_laudo(_diag,["INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL","INICIO_MANUTENCAO"])
+        _cl = _diag.get("CLASSIFICACAO", pd.Series(index=_diag.index, dtype=object)).fillna("").astype(str).str.upper().str.strip()
+        _dt = pd.to_datetime(_diag[_ci],errors="coerce",dayfirst=True) if _ci else pd.Series(pd.NaT,index=_diag.index)
+        st.info(
+            f"DIAGNÓSTICO • registros={len(_diag)} | coluna_data={_ci or 'NÃO ENCONTRADA'} | "
+            f"datas_válidas={int(_dt.notna().sum())} | ITR={int(_cl.eq('ITR').sum())} | CNP={int(_cl.eq('CNP').sum())}"
+        )
+        st.caption("Colunas recebidas no JSON: " + " | ".join(map(str,_diag.columns)))
+        if _dt.notna().any():
+            st.caption(f"Período das datas recebidas: {_dt.min().strftime('%d/%m/%Y %H:%M')} até {_dt.max().strftime('%d/%m/%Y %H:%M')}")
     render_medias_laudos()
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
