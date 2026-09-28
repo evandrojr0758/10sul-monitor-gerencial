@@ -343,6 +343,39 @@ def card_media(tipo):
         st.altair_chart(ch+rule,use_container_width=True)
     st.markdown("<div class='caption'>Média diária do mês corrente • linha tracejada = SLA</div>",unsafe_allow_html=True)
 
+# MTBF — mês corrente até hoje, em dias.
+# Eventos: CORRETIVA Ñ/NÃO/NAO PROG. e SOS.
+# Exclui PNEU e SOS CAVALO. Especiais entram.
+def calcular_mtbf_monitor(base):
+    if base is None or base.empty:
+        return None, pd.DataFrame()
+    b=base.copy()
+    for c in ["frota","evento","modal","parada"]:
+        if c not in b.columns:
+            return None, pd.DataFrame()
+    b["parada_mtbf"]=pd.to_datetime(b["parada"],errors="coerce")
+    evm=b["evento"].fillna("").astype(str).str.upper().str.strip()
+    modm=b["modal"].fillna("").astype(str).str.upper().str.strip()
+    modais={"QUADRITREM","KNNAR","SUPER BITREM","DEPÓSITO","DEPOSITO","TRITREM","BITREM","PENTATREM"}
+    cnp=evm.str.contains("CORRETIVA",na=False)&(evm.str.contains("Ñ PROG",na=False)|evm.str.contains("NÃO PROG",na=False)|evm.str.contains("NAO PROG",na=False))
+    sos=evm.str.contains("SOS",na=False)&~evm.str.contains("SOS CAVALO",na=False)
+    pneu=evm.str.contains("PNEU",na=False)
+    b=b[(cnp|sos)&~pneu&modm.isin(modais)&b["parada_mtbf"].notna()].copy()
+    if b.empty: return None,b
+    b["frota_mtbf"]=b["frota"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
+    b=b.sort_values(["frota_mtbf","parada_mtbf"])
+    b["parada_anterior"]=b.groupby("frota_mtbf")["parada_mtbf"].shift(1)
+    b["mtbf_dias"]=(b["parada_mtbf"]-b["parada_anterior"]).dt.total_seconds()/86400
+    agora_mtbf=pd.Timestamp.now()
+    inicio_mes=agora_mtbf.replace(day=1).normalize()
+    b=b[(b["parada_mtbf"]>=inicio_mes)&(b["parada_mtbf"]<=agora_mtbf)&b["parada_anterior"].notna()&(b["mtbf_dias"]>=0)].copy()
+    if b.empty: return None,b
+    return float(b["mtbf_dias"].mean()),b
+
+_mtbf_valor,_mtbf_detalhes=calcular_mtbf_monitor(df)
+_mtbf_texto="Sem dados válidos" if _mtbf_valor is None else f"{_mtbf_valor:.1f} dias".replace(".",",")
+_mtbf_cor="#dc2626" if (_mtbf_valor is not None and _mtbf_valor<10) else "#111827"
+
 st.markdown("<div class='mon-section'><div class='mon-section-title'>2. DESEMPENHO</div><div class='mon-section-sub'>Indicadores principais da oficina e evolução do SLA</div></div>",unsafe_allow_html=True)
 c1,c2,c3=st.columns(3)
 with c1:
@@ -351,7 +384,7 @@ with c2:
     with st.container(border=True): card_media("REVISÃO")
 with c3:
     with st.container(border=True):
-        st.markdown("<div class='card-title'>📈 MTBF</div><div class='card-center'>Aguardando definição das regras</div>",unsafe_allow_html=True)
+        st.markdown(f"<div class='card-title'>📈 MTBF — MÊS ATÉ HOJE</div><div class='card-center' style='font-size:1.55rem;font-weight:800;color:{_mtbf_cor}'>{_mtbf_texto}</div><div class='caption' style='text-align:center'>Meta ≥ 10 dias</div>",unsafe_allow_html=True)
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
