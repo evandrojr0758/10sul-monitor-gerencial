@@ -172,7 +172,7 @@ def render_laudos_web():
                 row=rr.iloc[0];st.markdown(f"##### {row.get('ATIVIDADE','Atividade')}");st.write(f"Executante: **{row.get('EXECUTANTE','') or 'Não informado'}** • Classificação: **{row.get('CLASSIFICACAO','')}**")
                 try:evs=json.loads(row.get("EVIDENCIAS") or "[]")
                 except Exception:evs=[]
-                if not evs:st.info("Nenhuma evidência anexada a esta atividade.")
+                if not evs:st.info("📭 Não há evidência para esta atividade.")
                 for ep in evs:
                     b,ct=baixar_evidencia_laudo_web(ep)
                     if b:
@@ -260,8 +260,22 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
             modal_os_abertas(lab,dados_card)
 
-st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
-render_laudos_web()
+st.markdown("<div class='mon-section'><div class='mon-section-title'>📋 APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Consultar resumo, atividades e evidências</div></div>",unsafe_allow_html=True)
+
+if "laudos_aberto" not in st.session_state:
+    st.session_state["laudos_aberto"] = False
+
+if not st.session_state["laudos_aberto"]:
+    if st.button("VISUALIZAR APURAÇÃO DOS LAUDOS →", key="abrir_apuracao_laudos", use_container_width=True):
+        st.session_state["laudos_aberto"] = True
+        st.rerun()
+else:
+    if st.button("FECHAR APURAÇÃO DOS LAUDOS", key="fechar_apuracao_laudos", use_container_width=True):
+        st.session_state["laudos_aberto"] = False
+        st.session_state.pop("wreg", None)
+        st.session_state.pop("waid", None)
+        st.rerun()
+    render_laudos_web()
 
 # MÉDIAS
 def base_media(tipo):
