@@ -322,31 +322,14 @@ def _quebrar_por_dia(tipo, dias=7):
 def _grafico_media_diaria(g,sla):
     if g.empty:
         st.info("Sem dados para o período."); return
-    g=g.copy()
-    g["ACIMA_SLA"]=g["MEDIA_H"]>float(sla)
     base=alt.Chart(g).encode(
         x=alt.X("DIA:N",title=None,sort=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
         y=alt.Y("MEDIA_H:Q",title="Horas")
     )
-    # Linha-base mais forte para leitura rápida.
-    linha=base.mark_line(strokeWidth=3,color="#0b74de").encode(
-        tooltip=["DIA",alt.Tooltip("ROTULO:N",title="Média")]
-    )
-    # Pontos e rótulos mudam para vermelho quando ultrapassam o SLA.
-    pontos=base.mark_point(filled=True,size=95,strokeWidth=2).encode(
-        color=alt.condition(alt.datum.ACIMA_SLA,alt.value("#dc2626"),alt.value("#0b74de")),
-        tooltip=["DIA",alt.Tooltip("ROTULO:N",title="Média")]
-    )
-    rot=base.mark_text(dy=-14,fontSize=12,fontWeight="bold").encode(
-        text=alt.Text("ROTULO:N"),
-        color=alt.condition(alt.datum.ACIMA_SLA,alt.value("#dc2626"),alt.value("#111827"))
-    )
-    sla_df=pd.DataFrame({"SLA":[float(sla)],"ROTULO_SLA":[f"SLA {int(sla):02d}:00"]})
-    rule=alt.Chart(sla_df).mark_rule(color="#dc2626",strokeDash=[6,4],strokeWidth=2).encode(y="SLA:Q")
-    sla_txt=alt.Chart(sla_df).mark_text(align="right",dx=-4,dy=-7,fontSize=10,fontWeight="bold",color="#dc2626").encode(
-        x=alt.value("width"),y="SLA:Q",text="ROTULO_SLA:N"
-    )
-    st.altair_chart((linha+pontos+rot+rule+sla_txt).properties(height=145),use_container_width=True)
+    linha=base.mark_line(point=alt.OverlayMarkDef(size=55)).encode(tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")])
+    rot=base.mark_text(dy=-12,fontSize=11,fontWeight="bold").encode(text=alt.Text("ROTULO:N"))
+    rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[5,4]).encode(y="SLA:Q")
+    st.altair_chart((linha+rot+rule).properties(height=135),use_container_width=True)
 
 def _quadro_supervisor(tipo,icone):
     g,hoje,sla=_quebrar_por_dia(tipo,7)
