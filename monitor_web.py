@@ -49,34 +49,13 @@ div[data-testid="stButton"] > button[kind="secondary"]{min-height:90px;border-ra
 .reinc-head,.reinc-row{display:grid;grid-template-columns:1fr 90px 125px;gap:8px;padding:7px 8px}
 .reinc-head{background:#eef1f5;font-size:12px;font-weight:700;color:#667085}
 .reinc-row{border-bottom:1px solid #e8edf2;font-size:13px}
-.compact-media{padding:10px 14px;margin:12px 0 8px}
-.media-diaria-title{font-size:13px;font-weight:900;color:#10284a;margin:10px 0 2px}
 
-/* Responsividade mobile aprovada */
-html, body, [data-testid="stAppViewContainer"]{max-width:100%;overflow-x:hidden}
-img,video{max-width:100%!important;height:auto!important}
-@media (max-width:768px){
-.block-container{padding-left:.65rem!important;padding-right:.65rem!important;padding-top:.65rem!important;max-width:100%!important}
-.mon-title{font-size:1.35rem!important;line-height:1.15!important}.mon-sub{font-size:.78rem!important}
-.mon-section{padding:12px!important;margin-top:12px!important}.mon-section-title{font-size:.95rem!important}.mon-section-sub{font-size:.72rem!important}
-div[data-testid="stMetric"]{padding:.55rem .45rem!important;min-height:74px!important} div[data-testid="stMetricValue"]{font-size:1.25rem!important} div[data-testid="stMetricLabel"]{font-size:.70rem!important}
-div[data-testid="stButton"]>button{min-height:2.15rem!important;padding:.32rem .45rem!important;font-size:.76rem!important;line-height:1.05!important}
-div[data-testid="stDataFrame"]{max-width:100%!important;overflow-x:auto!important}
-div[data-testid="stPlotlyChart"],div[data-testid="stVegaLiteChart"],div[data-testid="stPyplotGlobalUse"]{width:100%!important;max-width:100%!important}
-div[role="dialog"]{width:calc(100vw - 18px)!important;max-width:calc(100vw - 18px)!important;margin:9px!important}
-}
-
-@media (max-width:768px){
-  .block-container{padding:.65rem .65rem 1.2rem!important;max-width:100%!important}
-  .mon-title{font-size:1.35rem!important;line-height:1.15!important}
-  .mon-sub{font-size:.78rem!important;margin-bottom:8px!important}
-  .mon-section{padding:10px 12px!important;margin:10px 0 8px!important}
-  .mon-section-title{font-size:.95rem!important}
-  .mon-section-sub{font-size:.72rem!important}
-  div[data-testid="stMetric"]{padding:.45rem .4rem!important;min-height:66px!important}
-  div[data-testid="stMetricValue"]{font-size:1.2rem!important}
-  div[data-testid="stMetricLabel"]{font-size:.68rem!important}
-  div[data-testid="stButton"]>button{min-height:2.1rem!important;padding:.3rem .4rem!important;font-size:.74rem!important;line-height:1.05!important}
+@media (max-width: 768px) {
+  .block-container{padding-left:.65rem!important;padding-right:.65rem!important;padding-top:.65rem!important;max-width:100%!important}
+  .mon-title{font-size:1.35rem!important}.mon-sub{font-size:.78rem!important}
+  .mon-section{padding:12px!important;margin-top:12px!important}.mon-section-title{font-size:.95rem!important}
+  div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}
+  div[data-testid="column"]{min-width:100%!important;width:100%!important;flex:1 1 100%!important}
   div[data-testid="stDataFrame"]{max-width:100%!important;overflow-x:auto!important}
   div[role="dialog"]{width:calc(100vw - 18px)!important;max-width:calc(100vw - 18px)!important;margin:9px!important}
 }
@@ -288,134 +267,72 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
             modal_os_abertas(lab,dados_card)
 
-# MÉDIAS
-def base_media(tipo):
-    b=df.copy()
-    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
-    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
-    b=b[mask].copy()
-    b=b[~b["frota"].isin(ESPECIAIS)].copy()
-    ini=b["inicio"]
-    fim=b["fim"]
-    stt=b["status"].fillna("").astype(str).str.upper()
-    aberto=stt.str.contains("MANUT",na=False)|fim.isna()
-    # Compatibilidade com pandas/Streamlit Cloud: preserva o mesmo dtype datetime64[ns]
-    # ao preencher atendimentos ainda abertos com o horário atual.
-    fimcalc=fim.copy()
-    agora_dt=pd.Timestamp(agora).to_datetime64()
-    fimcalc=fimcalc.mask(aberto, agora_dt)
-    horas=(fimcalc-ini).dt.total_seconds()/3600
-    sla=12 if tipo=="ITR" else 24
-    valid=(~aberto)|(horas>=sla)
-    out=pd.DataFrame({"inicio":ini,"fim":fim,"horas":horas,"aberto":aberto})
-    return out[valid & ini.notna() & horas.notna() & (horas>=0)].copy()
-
-def media_periodo(tipo, periodo):
-    b=base_media(tipo)
-    if b.empty:return None
-    ini=b["inicio"]; hoje=agora.normalize()
-    if periodo=="DIA": m=ini.dt.normalize().eq(hoje)
-    elif periodo=="MES": m=(ini.dt.year==agora.year)&(ini.dt.month==agora.month)
-    else:
-        iso=ini.dt.isocalendar(); ino=agora.isocalendar()
-        m=(iso.week==ino.week)&(iso.year==ino.year)
-    x=b.loc[m,"horas"]
-    return float(x.mean()) if len(x) else None
-
-# MÉDIAS DO SUPERVISOR — compactas, como no Monitor Web aprovado
-st.markdown("<div class='mon-section compact-media'><div class='mon-section-title'>MÉDIA DO DIA</div><div class='mon-section-sub'>Tempo médio das manutenções consideradas hoje</div></div>",unsafe_allow_html=True)
-mc1,mc2=st.columns(2,gap="small")
-with mc1:
-    st.metric("ITR", hhmm(media_periodo("ITR","DIA")), help="ITR do dia; em manutenção entra ao atingir 12h.")
-with mc2:
-    st.metric("REVISÃO", hhmm(media_periodo("REVISÃO","DIA")), help="Revisão do dia; em manutenção entra ao atingir 24h.")
-
-# Logo abaixo: evolução da média diária no mês corrente.
-def _media_diaria_monitor(tipo):
-    b=base_media(tipo)
-    if b.empty:
-        return pd.DataFrame(columns=["DATA","MÉDIA","EVENTO"])
-    m=(b["inicio"].dt.year==agora.year)&(b["inicio"].dt.month==agora.month)
-    x=b.loc[m].copy()
-    if x.empty:
-        return pd.DataFrame(columns=["DATA","MÉDIA","EVENTO"])
-    x["DATA_DT"]=x["inicio"].dt.normalize()
-    x=x.groupby("DATA_DT",as_index=False)["horas"].mean().rename(columns={"horas":"MÉDIA"})
-    x["DATA"]=x["DATA_DT"].dt.strftime("%d/%m")
-    x["EVENTO"]=tipo
-    return x[["DATA","MÉDIA","EVENTO"]]
-
-st.markdown("<div class='media-diaria-title'>MÉDIA DIÁRIA</div>",unsafe_allow_html=True)
-md_plot=pd.concat([_media_diaria_monitor("ITR"),_media_diaria_monitor("REVISÃO")],ignore_index=True)
-if md_plot.empty:
-    st.caption("Sem dados no mês corrente para formar a média diária.")
-else:
-    ch=(alt.Chart(md_plot).mark_line(point=True).encode(
-        x=alt.X("DATA:N",title=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
-        y=alt.Y("MÉDIA:Q",title="Horas"),
-        color=alt.Color("EVENTO:N",title=None),
-        tooltip=["EVENTO","DATA",alt.Tooltip("MÉDIA:Q",format=".2f")]
-    ).properties(height=150))
-    st.altair_chart(ch,use_container_width=True)
-
 st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
 render_laudos_web()
 
-def resumo(tipo):
-    b=base_media(tipo)
+# MÉDIAS DO SUPERVISOR — ITR e REVISÃO separadas
+def _base_evento(tipo):
+    b=df.copy()
+    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
+    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
+    b=b[mask & ~b["frota"].isin(ESPECIAIS)].copy()
+    b["ini_calc"]=b["inicio"].fillna(b["parada"])
+    b["fim_calc"]=b["fim"].fillna(agora)
+    b=b[b["ini_calc"].notna() & (b["fim_calc"]>=b["ini_calc"])].copy()
+    # Em manutenção só entra após atingir o SLA; liberadas entram normalmente.
+    aberto=b["fim"].isna() | b["status"].fillna("").astype(str).str.upper().str.contains("MANUT",na=False)
+    total=(b["fim_calc"]-b["ini_calc"]).dt.total_seconds()/3600
     sla=12 if tipo=="ITR" else 24
-    hoje=agora.normalize()
-    seg=hoje-pd.Timedelta(days=hoje.weekday())
-    sems=[]
-    semanal=[]
-    for k in [2,1,0]:
-        s=seg-pd.Timedelta(days=7*k); f=s+pd.Timedelta(days=7)
-        x=b[(b["inicio"]>=s)&(b["inicio"]<f)]["horas"]
-        v=float(x.mean()) if len(x) else None
-        lab=f"S{s.isocalendar().week:02d}"
-        sems.append((lab,hhmm(v))); semanal.append({"SEMANA":lab,"MEDIA_H":v})
-    meses=[]; cur=pd.Period(agora,freq="M")
-    for k in [2,1,0]:
-        p=cur-k
-        x=b[b["inicio"].dt.to_period("M").eq(p)]["horas"]
-        v=float(x.mean()) if len(x) else None
-        meses.append((p.strftime("%b/%y").replace("Sep","Set").replace("Aug","Ago").replace("Jul","Jul"),hhmm(v)))
-    bm=b[(b["inicio"].dt.year==agora.year)&(b["inicio"].dt.month==agora.month)].copy()
-    if not bm.empty:
-        bm["DIA_DT"]=bm["inicio"].dt.normalize()
-        diaria=bm.groupby("DIA_DT")["horas"].mean().reset_index(name="MEDIA_H")
-        diaria["DIA"]=diaria["DIA_DT"].dt.strftime("%d/%m")
-    else: diaria=pd.DataFrame(columns=["DIA","MEDIA_H"])
-    return sems,meses,pd.DataFrame(semanal),diaria,sla
+    return b[(~aberto)|(total>=sla)].copy(), sla
 
-def card_media(tipo):
-    md=media_periodo(tipo,"DIA"); mm=media_periodo(tipo,"MES")
-    sems,meses,semanal,diaria,sla=resumo(tipo)
-    st.markdown(f"<div class='card-title'>⏱️ MÉDIA {tipo}</div>",unsafe_allow_html=True)
-    st.markdown(f"<div class='card-center'>Hoje: <b>{hhmm(md)}</b> &nbsp;•&nbsp; Mês até hoje: <b>{hhmm(mm)}</b> &nbsp;•&nbsp; SLA: <b>{sla:02d}:00</b></div>",unsafe_allow_html=True)
-    st.markdown("<div class='card-center' style='margin-top:8px'><b>Últimas 3 semanas</b><br>"+" &nbsp; | &nbsp; ".join(f"{a}: <b>{b}</b>" for a,b in sems)+"</div>",unsafe_allow_html=True)
-    p=semanal.dropna()
-    if not p.empty:
-        ch=alt.Chart(p).mark_line(point=True).encode(x=alt.X("SEMANA:N",title=None,axis=alt.Axis(labelAngle=0)),y=alt.Y("MEDIA_H:Q",title=None,axis=None),tooltip=["SEMANA",alt.Tooltip("MEDIA_H:Q",format=".2f")]).properties(height=65)
-        rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[4,3]).encode(y="SLA:Q")
-        st.altair_chart(ch+rule,use_container_width=True)
-    st.markdown("<div class='caption'>Média semanal por INÍCIO • abertas entram ao atingir o SLA</div>",unsafe_allow_html=True)
-    st.markdown("<div class='card-center' style='margin-top:14px'><b>Últimos 3 meses</b><br>"+" &nbsp; | &nbsp; ".join(f"{a}: <b>{b}</b>" for a,b in meses)+"</div>",unsafe_allow_html=True)
-    if not diaria.empty:
-        ch=alt.Chart(diaria).mark_line(point=True).encode(x=alt.X("DIA:N",title=None,axis=alt.Axis(labelAngle=0,labelFontSize=9)),y=alt.Y("MEDIA_H:Q",title=None,axis=None),tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")]).properties(height=75)
-        rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[4,3]).encode(y="SLA:Q")
-        st.altair_chart(ch+rule,use_container_width=True)
-    st.markdown("<div class='caption'>Média diária do mês corrente • linha tracejada = SLA</div>",unsafe_allow_html=True)
+def _quebrar_por_dia(tipo, dias=14):
+    b,sla=_base_evento(tipo)
+    ini_janela=agora.normalize()-pd.Timedelta(days=dias-1)
+    rows=[]
+    for _,r in b.iterrows():
+        ini=pd.Timestamp(r["ini_calc"]); fim=min(pd.Timestamp(r["fim_calc"]),agora)
+        d=max(ini.normalize(),ini_janela)
+        while d<=fim.normalize():
+            a=max(ini,d)
+            z=min(fim,d+pd.Timedelta(days=1))
+            h=max(0,(z-a).total_seconds()/3600)
+            if h>0: rows.append({"DIA_DT":d,"HORAS":h})
+            d+=pd.Timedelta(days=1)
+    if not rows:return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA"]),None,sla
+    q=pd.DataFrame(rows)
+    g=q.groupby("DIA_DT",as_index=False)["HORAS"].mean().rename(columns={"HORAS":"MEDIA_H"})
+    g["DIA"]=g["DIA_DT"].dt.strftime("%d/%m")
+    hoje=g.loc[g["DIA_DT"].eq(agora.normalize()),"MEDIA_H"]
+    return g,(float(hoje.iloc[0]) if len(hoje) else None),sla
 
-st.markdown("<div class='mon-section'><div class='mon-section-title'>2. DESEMPENHO</div><div class='mon-section-sub'>Indicadores principais da oficina e evolução do SLA</div></div>",unsafe_allow_html=True)
-c1,c2,c3=st.columns(3)
+def _grafico_media_diaria(g,sla):
+    if g.empty:
+        st.info("Sem dados para o período."); return
+    base=alt.Chart(g).encode(
+        x=alt.X("DIA:N",title=None,sort=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
+        y=alt.Y("MEDIA_H:Q",title="Horas")
+    )
+    linha=base.mark_line(point=alt.OverlayMarkDef(size=55)).encode(tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")])
+    rot=base.mark_text(dy=-12,fontSize=11,fontWeight="bold").encode(text=alt.Text("ROTULO:N"))
+    rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[5,4]).encode(y="SLA:Q")
+    st.altair_chart((linha+rot+rule).properties(height=230),use_container_width=True)
+
+def _quadro_supervisor(tipo,icone):
+    g,hoje,sla=_quebrar_por_dia(tipo,14)
+    if not g.empty:g["ROTULO"]=g["MEDIA_H"].apply(hhmm)
+    st.markdown(f"### {icone} {tipo}")
+    st.markdown("**MÉDIA DO DIA**")
+    st.markdown(f"<div style='font-size:34px;font-weight:900;color:#10284a;margin:-6px 0 10px'>{hhmm(hoje)}</div>",unsafe_allow_html=True)
+    st.caption(f"SLA: {sla:02d}:00")
+    st.markdown("**MÉDIA DIÁRIA**")
+    _grafico_media_diaria(g,sla)
+
+st.markdown("<div class='mon-section'><div class='mon-section-title'>2. MÉDIAS DA OPERAÇÃO</div><div class='mon-section-sub'>Leitura rápida do supervisor • cada manutenção impacta todos os dias em que permaneceu aberta</div></div>",unsafe_allow_html=True)
+c1,c2=st.columns(2,gap="large")
 with c1:
-    with st.container(border=True): card_media("ITR")
+    with st.container(border=True): _quadro_supervisor("ITR","🔧")
 with c2:
-    with st.container(border=True): card_media("REVISÃO")
-with c3:
-    with st.container(border=True):
-        st.markdown("<div class='card-title'>📈 MTBF</div><div class='card-center'>Aguardando definição das regras</div>",unsafe_allow_html=True)
+    with st.container(border=True): _quadro_supervisor("REVISÃO","🛠️")
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
