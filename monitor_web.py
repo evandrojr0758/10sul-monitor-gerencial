@@ -163,7 +163,7 @@ def render_laudos_web():
 
     for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","ATIVIDADE","EXECUTANTE",
               "INICIO_ATIVIDADE","FIM_ATIVIDADE","INICIO_MANUTENCAO","FIM_MANUTENCAO",
-              "EVIDENCIAS","ATIVIDADE_ID","HORAS"]:
+              "EVIDENCIAS","ATIVIDADE_ID","HORAS","INICIO 10 SUL","INICIO_10_SUL","INICIO 10SUL","INICIO SUZANO","INICIO_SUZANO"]:
         if c not in d.columns:
             d[c]=""
 
@@ -173,86 +173,84 @@ def render_laudos_web():
     d["INICIO_ATIVIDADE_DT"]=pd.to_datetime(d["INICIO_ATIVIDADE"],errors="coerce")
     d["FIM_ATIVIDADE_DT"]=pd.to_datetime(d["FIM_ATIVIDADE"],errors="coerce")
 
-    # 1) RESUMO: somente FROTA | ITR | CNP | GM | OUTROS | TEMPO TOTAL
-    pv=d.pivot_table(
-        index=["REGISTRO","FROTA"], columns="CLASSIFICACAO", values="HORAS",
-        aggfunc="sum", fill_value=0
-    ).reset_index()
+    # 1) RESUMO COMPACTO — uma linha por frota. Nada de botões gigantes.
+    pv=d.pivot_table(index=["REGISTRO","FROTA"],columns="CLASSIFICACAO",values="HORAS",aggfunc="sum",fill_value=0).reset_index()
     for c in ["ITR","CNP","GM","OUTROS"]:
-        if c not in pv.columns:
-            pv[c]=0.0
+        if c not in pv.columns: pv[c]=0.0
     pv["TEMPO_TOTAL"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1)
+    # Laudos sem qualquer tempo apontado não poluem o resumo.
+    pv=pv[pv["TEMPO_TOTAL"] > 0].copy()
+    pv=pv.iloc[::-1].reset_index(drop=True)
 
-    st.caption("Clique na frota para abrir o detalhamento do laudo.")
-    h=st.columns([1.15,1,1,1,1,1.2])
-    for c,t in zip(h,["FROTA","ITR","CNP","GM","OUTROS","TEMPO TOTAL"]):
-        c.markdown(f"<div style='font-size:11px;font-weight:900;color:#667085;padding:0 4px 5px'>{t}</div>",unsafe_allow_html=True)
+    resumo=pd.DataFrame({
+        "FROTA":pv["FROTA"].astype(str)+"  ›",
+        "ITR":pv["ITR"].apply(hhmm),
+        "CNP":pv["CNP"].apply(hhmm),
+        "GM":pv["GM"].apply(hhmm),
+        "OUTROS":pv["OUTROS"].apply(hhmm),
+        "TEMPO TOTAL":pv["TEMPO_TOTAL"].apply(hhmm),
+    })
+    st.caption("Selecione uma frota para abrir o detalhamento.")
+    ev=st.dataframe(
+        resumo,
+        use_container_width=True,
+        hide_index=True,
+        height=min(310, 38+35*max(1,len(resumo))),
+        on_select="rerun",
+        selection_mode="single-row",
+        key="laudos_resumo_tabela",
+    )
+    rows=list(ev.selection.rows) if hasattr(ev,"selection") else []
+    if rows:
+        pos=int(rows[0])
+        st.session_state["wreg"]=str(pv.iloc[pos]["REGISTRO"])
+        st.session_state["waid"]=None
 
-    for pos,(_,r) in enumerate(pv.iloc[::-1].iterrows()):
-        reg=str(r["REGISTRO"])
-        frota=str(r["FROTA"])
-        cs=st.columns([1.15,1,1,1,1,1.2])
-        if cs[0].button(frota,key=f"wfr_{reg}_{frota}_{pos}",use_container_width=True):
-            st.session_state["wreg"]=reg
-            st.session_state["waid"]=None
-        vals=[hhmm(r["ITR"]),hhmm(r["CNP"]),hhmm(r["GM"]),hhmm(r["OUTROS"]),hhmm(r["TEMPO_TOTAL"])]
-        for c,v in zip(cs[1:],vals):
-            c.markdown(f"<div style='font-weight:800;padding-top:10px'>{v}</div>",unsafe_allow_html=True)
-
-    # 2) CLICOU NA FROTA: tabelinha ATIVIDADE | INÍCIO | FIM | TEMPO TOTAL
+    # 2) FROTA SELECIONADA — somente atividades daquela frota.
     reg=st.session_state.get("wreg")
-    if not reg:
-        return
+    if not reg: return
     det=d[d["REGISTRO"].astype(str).eq(str(reg))].copy()
-    det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower() != "nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
-    if det.empty:
-        return
+    if det.empty: return
+    det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower()!="nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
 
-    st.markdown(f"#### Frota {det.iloc[0]['FROTA']}")
-    dh=st.columns([3.4,1.25,1.25,1.1])
-    for c,t in zip(dh,["ATIVIDADE","INÍCIO","FIM","TEMPO TOTAL"]):
-        c.markdown(f"<div style='font-size:11px;font-weight:900;color:#667085;padding:0 4px 5px'>{t}</div>",unsafe_allow_html=True)
+    st.markdown(f"**Frota {det.iloc[0]['FROTA']} — detalhamento**")
+    detalhes=pd.DataFrame({
+        "ATIVIDADE":det["ATIVIDADE"].fillna("Atividade").astype(str)+"  ›",
+        "INÍCIO":det["INICIO_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
+        "FIM":det["FIM_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
+        "TEMPO TOTAL":det["HORAS"].apply(hhmm),
+    }).reset_index(drop=True)
+    ev2=st.dataframe(
+        detalhes,
+        use_container_width=True,
+        hide_index=True,
+        height=min(260, 38+35*max(1,len(detalhes))),
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"laudos_detalhe_{reg}",
+    )
+    rows2=list(ev2.selection.rows) if hasattr(ev2,"selection") else []
+    if rows2:
+        st.session_state["waid"]=str(det.reset_index(drop=True).iloc[int(rows2[0])]["_AID_SEL"])
 
-    for pos,(idx,row) in enumerate(det.iterrows()):
-        aid=str(row["_AID_SEL"])
-        inicio=row.get("INICIO_ATIVIDADE_DT")
-        fim=row.get("FIM_ATIVIDADE_DT")
-        ini_txt="--:--" if pd.isna(inicio) else inicio.strftime("%H:%M")
-        fim_txt="--:--" if pd.isna(fim) else fim.strftime("%H:%M")
-        tempo=row.get("HORAS",0)
-        cs=st.columns([3.4,1.25,1.25,1.1])
-        atividade=str(row.get("ATIVIDADE","") or "Atividade")
-        if cs[0].button(atividade,key=f"wat_{reg}_{aid}_{pos}",use_container_width=True):
-            st.session_state["waid"]=aid
-        for c,v in zip(cs[1:],[ini_txt,fim_txt,hhmm(tempo)]):
-            c.markdown(f"<div style='font-weight:800;padding-top:10px'>{v}</div>",unsafe_allow_html=True)
-
-    # 3) CLICOU NA ATIVIDADE: abre somente a evidência daquela atividade
+    # 3) ATIVIDADE SELECIONADA — evidencia somente desta atividade.
     aid=st.session_state.get("waid")
-    if not aid:
-        return
+    if not aid: return
     rr=det[det["_AID_SEL"].astype(str).eq(str(aid))]
-    if rr.empty:
-        return
+    if rr.empty: return
     row=rr.iloc[0]
-    st.markdown(f"##### Evidência • {row.get('ATIVIDADE','Atividade')}")
-    try:
-        evs=json.loads(row.get("EVIDENCIAS") or "[]")
-    except Exception:
-        evs=[]
+    st.markdown(f"**Evidência — {row.get('ATIVIDADE','Atividade')}**")
+    try: evs=json.loads(row.get("EVIDENCIAS") or "[]")
+    except Exception: evs=[]
     if not evs:
         st.info("Nenhuma evidência anexada a esta atividade.")
         return
-    for n,ep in enumerate(evs):
+    for j,ep in enumerate(evs):
         b,ct=baixar_evidencia_laudo_web(ep)
-        if not b:
-            continue
-        if ct.startswith("image/"):
-            st.image(b,use_container_width=True)
-        elif ct.startswith("video/"):
-            st.video(b)
-        else:
-            st.download_button("📄 Abrir/baixar evidência",b,file_name=ep.split("/")[-1],key=f"wdl_{reg}_{aid}_{n}")
+        if not b: continue
+        if ct.startswith("image/"): st.image(b,use_container_width=True)
+        elif ct.startswith("video/"): st.video(b)
+        else: st.download_button("📄 Abrir/baixar evidência",b,file_name=ep.split("/")[-1],key=f"wdl_{reg}_{aid}_{j}")
 
 def evento_flags(s):
     e=s.fillna("").astype(str).str.upper().str.strip()
@@ -322,14 +320,21 @@ def _quebrar_por_dia(tipo, dias=7):
 def _grafico_media_diaria(g,sla):
     if g.empty:
         st.info("Sem dados para o período."); return
-    base=alt.Chart(g).encode(
+    gg=g.copy()
+    gg["COR"] = gg["MEDIA_H"].apply(lambda v: "#dc2626" if float(v) >= float(sla) else "#0874d1")
+    base=alt.Chart(gg).encode(
         x=alt.X("DIA:N",title=None,sort=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
         y=alt.Y("MEDIA_H:Q",title="Horas")
     )
-    linha=base.mark_line(point=alt.OverlayMarkDef(size=55)).encode(tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")])
-    rot=base.mark_text(dy=-12,fontSize=11,fontWeight="bold").encode(text=alt.Text("ROTULO:N"))
-    rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[5,4]).encode(y="SLA:Q")
-    st.altair_chart((linha+rot+rule).properties(height=135),use_container_width=True)
+    linha=base.mark_line(color="#0874d1",strokeWidth=3).encode(tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")])
+    pts=base.mark_point(filled=True,size=80).encode(color=alt.Color("COR:N",scale=None,legend=None))
+    rot=base.mark_text(dy=-12,fontSize=11,fontWeight="bold").encode(
+        text=alt.Text("ROTULO:N"), color=alt.Color("COR:N",scale=None,legend=None))
+    rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(color="#dc2626",strokeDash=[5,4],strokeWidth=2).encode(y="SLA:Q")
+    lab=alt.Chart(pd.DataFrame({"SLA":[sla],"TXT":[f"SLA {int(sla):02d}:00"]})).mark_text(
+        align="right",dx=-4,dy=-7,color="#dc2626",fontSize=10,fontWeight="bold").encode(
+        x=alt.value("width"),y="SLA:Q",text="TXT:N")
+    st.altair_chart((linha+pts+rot+rule+lab).properties(height=135),use_container_width=True)
 
 def _quadro_supervisor(tipo,icone):
     g,hoje,sla=_quebrar_por_dia(tipo,7)
@@ -347,7 +352,7 @@ def _quadro_supervisor(tipo,icone):
         f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA DO DIA</span>"
         f"<span style='font-size:28px;line-height:1;font-weight:900;color:#10284a'>{hhmm(hoje)}</span>"
         f"<span style='font-size:11px;color:#98a2b3'>SLA {sla:02d}:00</span></div>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:4px 0 -4px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS</div>",unsafe_allow_html=True)
+    st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:10px 0 4px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS</div>",unsafe_allow_html=True)
     _grafico_media_diaria(g,sla)
 
 def render_medias_supervisor():
@@ -356,6 +361,75 @@ def render_medias_supervisor():
         with st.container(border=True): _quadro_supervisor("ITR","🔧")
     with c2:
         with st.container(border=True): _quadro_supervisor("REVISÃO","🛠️")
+
+
+def _coluna_laudo(d, nomes):
+    """Localiza coluna mesmo que o importador use espaço ou underscore."""
+    mapa={re.sub(r"[^A-Z0-9]","",str(c).upper()):c for c in d.columns}
+    for nome in nomes:
+        k=re.sub(r"[^A-Z0-9]","",str(nome).upper())
+        if k in mapa: return mapa[k]
+    return None
+
+def _medias_laudos_por_dia(classificacao, dias=7):
+    d=carregar_laudos_manuais_web().copy()
+    if d.empty:
+        return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
+    for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","HORAS"]:
+        if c not in d.columns: d[c]=""
+    col_ini=_coluna_laudo(d,["INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL"])
+    if not col_ini:
+        return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
+    d["_INI10"]=pd.to_datetime(d[col_ini],errors="coerce",dayfirst=True)
+    d["HORAS"]=pd.to_numeric(d["HORAS"],errors="coerce").fillna(0.0)
+    d["CLASSIFICACAO"]=d["CLASSIFICACAO"].fillna("OUTROS").astype(str).str.upper().str.strip()
+    d=d[d["_INI10"].notna()].copy()
+    if d.empty:
+        return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
+    # Primeiro soma todas as atividades da OS/frota; só depois calcula a média das OS do dia.
+    osd=(d[d["CLASSIFICACAO"].eq(classificacao)]
+         .groupby(["REGISTRO","OS_ID","FROTA"],as_index=False)
+         .agg(HORAS=("HORAS","sum"), INICIO_10_SUL=("_INI10","first")))
+    osd=osd[osd["HORAS"]>0].copy()  # 00:00 não derruba a média
+    if osd.empty:
+        return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
+    osd["DIA_DT"]=osd["INICIO_10_SUL"].dt.normalize()
+    ini=agora.normalize()-pd.Timedelta(days=dias-1)
+    osd=osd[(osd["DIA_DT"]>=ini)&(osd["DIA_DT"]<=agora.normalize())]
+    g=osd.groupby("DIA_DT",as_index=False)["HORAS"].mean().rename(columns={"HORAS":"MEDIA_H"})
+    g["DIA"]=g["DIA_DT"].dt.strftime("%d/%m")
+    g["ROTULO"]=g["MEDIA_H"].apply(hhmm)
+    hj=g.loc[g["DIA_DT"].eq(agora.normalize()),"MEDIA_H"]
+    return g,(float(hj.iloc[0]) if len(hj) else None)
+
+def _grafico_laudos(g, classificacao):
+    if g.empty:
+        st.info("Sem dados de laudos para o período."); return
+    cor="#0874d1" if classificacao=="ITR" else "#b42318"
+    base=alt.Chart(g).encode(
+        x=alt.X("DIA:N",title=None,sort=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
+        y=alt.Y("MEDIA_H:Q",title="Horas")
+    )
+    linha=base.mark_line(point=alt.OverlayMarkDef(size=65),color=cor,strokeWidth=3)
+    rot=base.mark_text(dy=-12,fontSize=11,fontWeight="bold",color=cor).encode(text=alt.Text("ROTULO:N"))
+    st.altair_chart((linha+rot).properties(height=135),use_container_width=True)
+
+def _quadro_media_laudo(classificacao, icone):
+    g,hoje=_medias_laudos_por_dia(classificacao,7)
+    st.markdown(f"<div style='font-size:20px;font-weight:900;color:#10284a'>{icone} {classificacao} — LAUDOS</div>",unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='display:flex;align-items:end;gap:10px;margin:6px 0 6px'>"
+        f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA DO DIA</span>"
+        f"<span style='font-size:28px;line-height:1;font-weight:900;color:#10284a'>{hhmm(hoje)}</span></div>",unsafe_allow_html=True)
+    st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:4px 0 2px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS • DATA = INÍCIO 10 SUL</div>",unsafe_allow_html=True)
+    _grafico_laudos(g,classificacao)
+
+def render_medias_laudos():
+    c1,c2=st.columns(2,gap="small")
+    with c1:
+        with st.container(border=True): _quadro_media_laudo("ITR","🔧")
+    with c2:
+        with st.container(border=True): _quadro_media_laudo("CNP","🚨")
 
 
 # OFICINA AGORA: mesma lógica-base do app principal: status manutenção + sem fim.
@@ -406,6 +480,10 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         # Botão real: funciona por toque no celular e clique no computador.
         if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
             modal_os_abertas(lab,dados_card)
+
+with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
+    st.caption("Médias calculadas pelos tempos apontados nos laudos, agrupadas pela data de INÍCIO 10 SUL.")
+    render_medias_laudos()
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
 render_laudos_web()
@@ -515,7 +593,7 @@ atual=hunt[(hunt["ref"]>=sem_ini)&(hunt["ref"]<=agora)].copy()
 anterior=hunt[(hunt["ref"]>=sem_ant_ini)&(hunt["ref"]<sem_ant_fim)].copy()
 mot=[]
 for cat,termos in familias.items():
-    qa=int(atual["desc_norm"].apply(lambda z:any(t in z for t in termos)).sum())
+    qa=int(atual["desc_norm"].fillna("").astype(str).apply(lambda z:any(str(t) in z for t in termos)).sum())
     qb=int(anterior["desc_norm"].apply(lambda z:any(t in z for t in termos)).sum())
     mot.append((cat,qa,qa-qb))
 mot=sorted(mot,key=lambda x:(x[1],x[2]),reverse=True)
