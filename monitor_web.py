@@ -49,6 +49,8 @@ div[data-testid="stButton"] > button[kind="secondary"]{min-height:90px;border-ra
 .reinc-head,.reinc-row{display:grid;grid-template-columns:1fr 90px 125px;gap:8px;padding:7px 8px}
 .reinc-head{background:#eef1f5;font-size:12px;font-weight:700;color:#667085}
 .reinc-row{border-bottom:1px solid #e8edf2;font-size:13px}
+.compact-media{padding:10px 14px;margin:12px 0 8px}
+.media-diaria-title{font-size:13px;font-weight:900;color:#10284a;margin:10px 0 2px}
 
 /* Responsividade mobile aprovada */
 html, body, [data-testid="stAppViewContainer"]{max-width:100%;overflow-x:hidden}
@@ -62,6 +64,21 @@ div[data-testid="stButton"]>button{min-height:2.15rem!important;padding:.32rem .
 div[data-testid="stDataFrame"]{max-width:100%!important;overflow-x:auto!important}
 div[data-testid="stPlotlyChart"],div[data-testid="stVegaLiteChart"],div[data-testid="stPyplotGlobalUse"]{width:100%!important;max-width:100%!important}
 div[role="dialog"]{width:calc(100vw - 18px)!important;max-width:calc(100vw - 18px)!important;margin:9px!important}
+}
+
+@media (max-width:768px){
+  .block-container{padding:.65rem .65rem 1.2rem!important;max-width:100%!important}
+  .mon-title{font-size:1.35rem!important;line-height:1.15!important}
+  .mon-sub{font-size:.78rem!important;margin-bottom:8px!important}
+  .mon-section{padding:10px 12px!important;margin:10px 0 8px!important}
+  .mon-section-title{font-size:.95rem!important}
+  .mon-section-sub{font-size:.72rem!important}
+  div[data-testid="stMetric"]{padding:.45rem .4rem!important;min-height:66px!important}
+  div[data-testid="stMetricValue"]{font-size:1.2rem!important}
+  div[data-testid="stMetricLabel"]{font-size:.68rem!important}
+  div[data-testid="stButton"]>button{min-height:2.1rem!important;padding:.3rem .4rem!important;font-size:.74rem!important;line-height:1.05!important}
+  div[data-testid="stDataFrame"]{max-width:100%!important;overflow-x:auto!important}
+  div[role="dialog"]{width:calc(100vw - 18px)!important;max-width:calc(100vw - 18px)!important;margin:9px!important}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -305,15 +322,41 @@ def media_periodo(tipo, periodo):
     x=b.loc[m,"horas"]
     return float(x.mean()) if len(x) else None
 
-# RESUMO GERENCIAL NO TOPO
-st.markdown("<div class='mon-section'><div class='mon-section-title'>MÉDIAS DO MONITOR</div><div class='mon-section-sub'>Leitura rápida do desempenho até agora</div></div>",unsafe_allow_html=True)
-mc1,mc2,mc3=st.columns(3,gap="small")
+# MÉDIAS DO SUPERVISOR — compactas, como no Monitor Web aprovado
+st.markdown("<div class='mon-section compact-media'><div class='mon-section-title'>MÉDIA DO DIA</div><div class='mon-section-sub'>Tempo médio das manutenções consideradas hoje</div></div>",unsafe_allow_html=True)
+mc1,mc2=st.columns(2,gap="small")
 with mc1:
-    st.metric("MÉDIA ITR • MÊS ATÉ HOJE", hhmm(media_periodo("ITR","MES")), help="ITR liberadas + em manutenção ao atingir 12h.")
+    st.metric("ITR", hhmm(media_periodo("ITR","DIA")), help="ITR do dia; em manutenção entra ao atingir 12h.")
 with mc2:
-    st.metric("MÉDIA REVISÃO • MÊS ATÉ HOJE", hhmm(media_periodo("REVISÃO","MES")), help="Revisões liberadas + em manutenção ao atingir 24h.")
-with mc3:
-    st.metric("MTBF • ATÉ HOJE", "—", help="MTBF considera recorrência até hoje. SOS PNEU e CORRETIVA Ñ PROG. PNEU ficam fora da regra.")
+    st.metric("REVISÃO", hhmm(media_periodo("REVISÃO","DIA")), help="Revisão do dia; em manutenção entra ao atingir 24h.")
+
+# Logo abaixo: evolução da média diária no mês corrente.
+def _media_diaria_monitor(tipo):
+    b=base_media(tipo)
+    if b.empty:
+        return pd.DataFrame(columns=["DATA","MÉDIA","EVENTO"])
+    m=(b["inicio"].dt.year==agora.year)&(b["inicio"].dt.month==agora.month)
+    x=b.loc[m].copy()
+    if x.empty:
+        return pd.DataFrame(columns=["DATA","MÉDIA","EVENTO"])
+    x["DATA_DT"]=x["inicio"].dt.normalize()
+    x=x.groupby("DATA_DT",as_index=False)["horas"].mean().rename(columns={"horas":"MÉDIA"})
+    x["DATA"]=x["DATA_DT"].dt.strftime("%d/%m")
+    x["EVENTO"]=tipo
+    return x[["DATA","MÉDIA","EVENTO"]]
+
+st.markdown("<div class='media-diaria-title'>MÉDIA DIÁRIA</div>",unsafe_allow_html=True)
+md_plot=pd.concat([_media_diaria_monitor("ITR"),_media_diaria_monitor("REVISÃO")],ignore_index=True)
+if md_plot.empty:
+    st.caption("Sem dados no mês corrente para formar a média diária.")
+else:
+    ch=(alt.Chart(md_plot).mark_line(point=True).encode(
+        x=alt.X("DATA:N",title=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
+        y=alt.Y("MÉDIA:Q",title="Horas"),
+        color=alt.Color("EVENTO:N",title=None),
+        tooltip=["EVENTO","DATA",alt.Tooltip("MÉDIA:Q",format=".2f")]
+    ).properties(height=150))
+    st.altair_chart(ch,use_container_width=True)
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
 render_laudos_web()
