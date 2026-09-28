@@ -8,59 +8,6 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title="Monitor Gerencial 10 Sul", page_icon="📺", layout="wide")
-# Responsividade global do Monitor Web
-st.markdown("""
-<style>
-/* Desktop mantém o layout gerencial atual. */
-html, body, [data-testid="stAppViewContainer"] { max-width: 100%; overflow-x: hidden; }
-img, video { max-width: 100% !important; height: auto !important; }
-
-/* Celular */
-@media (max-width: 768px) {
-    .block-container {
-        padding-left: .65rem !important;
-        padding-right: .65rem !important;
-        padding-top: .65rem !important;
-        max-width: 100% !important;
-    }
-    .mon-title { font-size: 1.35rem !important; line-height: 1.15 !important; }
-    .mon-sub { font-size: .78rem !important; }
-    .mon-section { padding: 12px 12px !important; margin-top: 12px !important; }
-    .mon-section-title { font-size: .95rem !important; }
-    .mon-section-sub { font-size: .72rem !important; }
-
-    /* KPIs: colunas do Streamlit quebram naturalmente; reduzimos padding e tipografia. */
-    div[data-testid="stMetric"] {
-        padding: .55rem .45rem !important;
-        min-height: 74px !important;
-    }
-    div[data-testid="stMetricValue"] { font-size: 1.25rem !important; }
-    div[data-testid="stMetricLabel"] { font-size: .70rem !important; }
-
-    /* Botões próprios para toque, sem virar cards enormes. */
-    div[data-testid="stButton"] > button {
-        min-height: 2.15rem !important;
-        padding: .32rem .45rem !important;
-        font-size: .76rem !important;
-        line-height: 1.05 !important;
-    }
-
-    /* Dataframes/tabelas não estouram a página. */
-    div[data-testid="stDataFrame"] { max-width: 100% !important; overflow-x: auto !important; }
-
-    /* Gráficos e componentes ocupam a largura disponível. */
-    div[data-testid="stPlotlyChart"], div[data-testid="stVegaLiteChart"],
-    div[data-testid="stPyplotGlobalUse"] { width: 100% !important; max-width: 100% !important; }
-
-    /* Diálogos em tela quase cheia no celular. */
-    div[role="dialog"] {
-        width: calc(100vw - 18px) !important;
-        max-width: calc(100vw - 18px) !important;
-        margin: 9px !important;
-    }
-}
-</style>
-""", unsafe_allow_html=True)
 
 def _secret(nome):
     try:
@@ -102,6 +49,20 @@ div[data-testid="stButton"] > button[kind="secondary"]{min-height:90px;border-ra
 .reinc-head,.reinc-row{display:grid;grid-template-columns:1fr 90px 125px;gap:8px;padding:7px 8px}
 .reinc-head{background:#eef1f5;font-size:12px;font-weight:700;color:#667085}
 .reinc-row{border-bottom:1px solid #e8edf2;font-size:13px}
+
+/* Responsividade mobile aprovada */
+html, body, [data-testid="stAppViewContainer"]{max-width:100%;overflow-x:hidden}
+img,video{max-width:100%!important;height:auto!important}
+@media (max-width:768px){
+.block-container{padding-left:.65rem!important;padding-right:.65rem!important;padding-top:.65rem!important;max-width:100%!important}
+.mon-title{font-size:1.35rem!important;line-height:1.15!important}.mon-sub{font-size:.78rem!important}
+.mon-section{padding:12px!important;margin-top:12px!important}.mon-section-title{font-size:.95rem!important}.mon-section-sub{font-size:.72rem!important}
+div[data-testid="stMetric"]{padding:.55rem .45rem!important;min-height:74px!important} div[data-testid="stMetricValue"]{font-size:1.25rem!important} div[data-testid="stMetricLabel"]{font-size:.70rem!important}
+div[data-testid="stButton"]>button{min-height:2.15rem!important;padding:.32rem .45rem!important;font-size:.76rem!important;line-height:1.05!important}
+div[data-testid="stDataFrame"]{max-width:100%!important;overflow-x:auto!important}
+div[data-testid="stPlotlyChart"],div[data-testid="stVegaLiteChart"],div[data-testid="stPyplotGlobalUse"]{width:100%!important;max-width:100%!important}
+div[role="dialog"]{width:calc(100vw - 18px)!important;max-width:calc(100vw - 18px)!important;margin:9px!important}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -206,65 +167,32 @@ def render_laudos_web():
     m["INICIO_MANUTENCAO"]=pd.to_datetime(m["INICIO_MANUTENCAO"],errors="coerce");m["FIM_MANUTENCAO"]=pd.to_datetime(m["FIM_MANUTENCAO"],errors="coerce")
     m["TEMPO_MANUT"]=(m["FIM_MANUTENCAO"]-m["INICIO_MANUTENCAO"]).dt.total_seconds()/3600
     pv=pv.merge(m,on=["REGISTRO","OS_ID","FROTA"],how="left");pv["TEMPO_APONTADO"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1);pv["SEM"]=(pv["TEMPO_MANUT"].fillna(0)-pv["TEMPO_APONTADO"]).clip(lower=0)
+    st.caption("Clique na frota para abrir o detalhamento do laudo.")
+    for _,r in pv.iloc[::-1].iterrows():
+        cs=st.columns([1,1,1,1,1,1,1.2,1.2,1.2])
+        if cs[0].button(str(r.FROTA),key=f"wfr_{r.REGISTRO}_{r.OS_ID}_{r.FROTA}_{_}",use_container_width=True):st.session_state["wreg"]=str(r.REGISTRO)
+        vals=[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]
+        for c,v in zip(cs[1:],vals):c.markdown(f"**{v}**")
     reg=st.session_state.get("wreg")
-    if not reg:
-        st.caption("Clique/toque na frota para abrir o detalhamento do laudo.")
-        st.markdown("""
-        <style>
-        .laudo-mobile{display:none}
-        @media(max-width:768px){
-          .laudo-desktop{display:none!important}.laudo-mobile{display:block!important}
-          .lm-card{border:1px solid #dfe7ef;border-radius:12px;padding:11px;margin-bottom:8px;background:white}
-          .lm-head{font-size:18px;font-weight:800;color:#0878e8}.lm-os{font-size:12px;color:#667085}
-          .lm-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin:8px 0}
-          .lm-mini{background:#f3f6fa;border-radius:7px;padding:5px 2px;text-align:center;font-size:10px}
-          .lm-mini b{display:block;font-size:12px;color:#101828;margin-top:2px}
-          .lm-total{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #edf1f5;padding-top:7px;text-align:center;font-size:10px;color:#667085}
-          .lm-total b{display:block;color:#101828;font-size:12px}
-        }
-        </style>""",unsafe_allow_html=True)
-
-        st.markdown("<div class='laudo-desktop'>",unsafe_allow_html=True)
-        hdr=st.columns([1,1,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
-        for c,t in zip(hdr,["FROTA","OS/ID","ITR","CNP","GM","OUTROS","APONTADO","MANUTENÇÃO","SEM APONT."]):
-            c.markdown(f"<div style='background:#eef3f8;border:1px solid #d8e0e8;padding:7px 4px;text-align:center;font-size:11px;font-weight:800'>{t}</div>",unsafe_allow_html=True)
-        for _,r in pv.iloc[::-1].iterrows():
-            cs=st.columns([1,1,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
-            if cs[0].button(f"{r.FROTA} ›",key=f"wfr_d_{r.REGISTRO}",use_container_width=True):
-                st.session_state["wreg"]=str(r.REGISTRO);st.rerun()
-            for c,v in zip(cs[1:],[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]):
-                c.markdown(f"<div style='border-bottom:1px solid #e4e9ef;padding:7px 3px;text-align:center;font-size:12px;font-weight:600'>{v}</div>",unsafe_allow_html=True)
-        st.markdown("</div>",unsafe_allow_html=True)
-
-        st.markdown("<div class='laudo-mobile'>",unsafe_allow_html=True)
-        for _,r in pv.iloc[::-1].iterrows():
-            st.markdown(f"""<div class='lm-card'><div class='lm-head'>🚚 {r.FROTA} <span style='float:right'>›</span></div><div class='lm-os'>OS {r.OS_ID}</div>
-            <div class='lm-grid'><div class='lm-mini'>ITR<b>{hhmm(r.ITR)}</b></div><div class='lm-mini'>CNP<b>{hhmm(r.CNP)}</b></div><div class='lm-mini'>GM<b>{hhmm(r.GM)}</b></div><div class='lm-mini'>OUTROS<b>{hhmm(r.OUTROS)}</b></div></div>
-            <div class='lm-total'><div>Apontado<b>{hhmm(r.TEMPO_APONTADO)}</b></div><div>Manutenção<b>{hhmm(r.TEMPO_MANUT)}</b></div><div>Sem apont.<b>{hhmm(r.SEM)}</b></div></div></div>""",unsafe_allow_html=True)
-            if st.button(f"Abrir {r.FROTA}",key=f"wfr_m_{r.REGISTRO}",use_container_width=True):
-                st.session_state["wreg"]=str(r.REGISTRO);st.rerun()
-        st.markdown("</div>",unsafe_allow_html=True)
-        return
-
     if reg:
         det=d[d["REGISTRO"].astype(str).eq(str(reg))]
         if not det.empty:
             st.markdown(f"#### Frota {det.iloc[0]['FROTA']} • OS {det.iloc[0]['OS_ID']}")
             for i,row in det.iterrows():
                 aid=str(row.get("ATIVIDADE_ID") or f"{reg}_{i}")
-                if st.button(f"{row.get('ATIVIDADE','')} • {row.get('CLASSIFICACAO','')} • {hhmm(row.get('HORAS',0))}",key=f"wat_{aid}",use_container_width=True):st.session_state["waid"]=aid
+                if st.button(f"{row.get('ATIVIDADE','')} • {row.get('CLASSIFICACAO','')} • {hhmm(row.get('HORAS',0))}",key=f"wat_{reg}_{aid}_{i}",use_container_width=True):st.session_state["waid"]=aid
             aid=st.session_state.get("waid");rr=det[det["ATIVIDADE_ID"].astype(str).eq(str(aid))]
             if not rr.empty:
                 row=rr.iloc[0];st.markdown(f"##### {row.get('ATIVIDADE','Atividade')}");st.write(f"Executante: **{row.get('EXECUTANTE','') or 'Não informado'}** • Classificação: **{row.get('CLASSIFICACAO','')}**")
                 try:evs=json.loads(row.get("EVIDENCIAS") or "[]")
                 except Exception:evs=[]
-                if not evs:st.info("📭 Não há evidência para esta atividade.")
+                if not evs:st.info("Nenhuma evidência anexada a esta atividade.")
                 for ep in evs:
                     b,ct=baixar_evidencia_laudo_web(ep)
                     if b:
                         if ct.startswith("image/"):st.image(b,use_container_width=True)
                         elif ct.startswith("video/"):st.video(b)
-                        else:st.download_button("📄 Abrir/baixar evidência",b,file_name=ep.split("/")[-1],key=f"wdl_{ep}")
+                        else:st.download_button("📄 Abrir/baixar evidência",b,file_name=ep.split("/")[-1],key=f"wdl_{reg}_{aid}_{abs(hash(ep))}")
 
 def evento_flags(s):
     e=s.fillna("").astype(str).str.upper().str.strip()
@@ -296,12 +224,9 @@ df["frota"]=df["frota"].apply(norm_frota)
 agora=pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
 ev, is_itr_all,is_rev_all,is_sos_all,is_cnp_all=evento_flags(df["evento"])
 
-# OFICINA AGORA — mesma regra do Monitor local.
-# STATUS "MANUTENÇÃO" define a ocorrência aberta.
-# Não exigimos FIM vazio: o campo publicado pode conter FIM do cliente
-# enquanto a ocorrência ainda permanece aberta para a 10 Sul.
-status=df["status"].fillna("").astype(str).str.upper().str.strip()
-mon=df[status.str.contains("MANUT",na=False)].copy()
+# OFICINA AGORA: mesma lógica-base do app principal: status manutenção + sem fim.
+status=df["status"].fillna("").astype(str).str.upper()
+mon=df[status.str.contains("MANUT",na=False)&df["fim"].isna()].copy()
 mon["inicio_mon"]=mon["inicio"].fillna(mon["parada"])
 mon["horas_aberto"]=((agora-mon["inicio_mon"]).dt.total_seconds()/3600).clip(lower=0)
 mon=mon.sort_values("inicio_mon",ascending=False).drop_duplicates("os_id",keep="first")
@@ -346,26 +271,6 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
             modal_os_abertas(lab,dados_card)
 
-st.markdown("<div class='mon-section'><div class='mon-section-title'>📋 APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Consultar resumo, atividades e evidências</div></div>",unsafe_allow_html=True)
-
-if "laudos_aberto" not in st.session_state:
-    st.session_state["laudos_aberto"] = False
-
-if not st.session_state["laudos_aberto"]:
-    if st.button("VISUALIZAR APURAÇÃO DOS LAUDOS →", key="abrir_apuracao_laudos", use_container_width=True):
-        st.session_state["laudos_aberto"] = True
-        st.rerun()
-else:
-    _fc1, _fc2, _fc3 = st.columns([1, 0.42, 1])
-    with _fc2:
-        _fechar_laudos = st.button("✕ FECHAR APURAÇÃO", key="fechar_apuracao_laudos", use_container_width=True)
-    if _fechar_laudos:
-        st.session_state["laudos_aberto"] = False
-        st.session_state.pop("wreg", None)
-        st.session_state.pop("waid", None)
-        st.rerun()
-    render_laudos_web()
-
 # MÉDIAS
 def base_media(tipo):
     b=df.copy()
@@ -399,6 +304,19 @@ def media_periodo(tipo, periodo):
         m=(iso.week==ino.week)&(iso.year==ino.year)
     x=b.loc[m,"horas"]
     return float(x.mean()) if len(x) else None
+
+# RESUMO GERENCIAL NO TOPO
+st.markdown("<div class='mon-section'><div class='mon-section-title'>MÉDIAS DO MONITOR</div><div class='mon-section-sub'>Leitura rápida do desempenho até agora</div></div>",unsafe_allow_html=True)
+mc1,mc2,mc3=st.columns(3,gap="small")
+with mc1:
+    st.metric("MÉDIA ITR • MÊS ATÉ HOJE", hhmm(media_periodo("ITR","MES")), help="ITR liberadas + em manutenção ao atingir 12h.")
+with mc2:
+    st.metric("MÉDIA REVISÃO • MÊS ATÉ HOJE", hhmm(media_periodo("REVISÃO","MES")), help="Revisões liberadas + em manutenção ao atingir 24h.")
+with mc3:
+    st.metric("MTBF • ATÉ HOJE", "—", help="MTBF considera recorrência até hoje. SOS PNEU e CORRETIVA Ñ PROG. PNEU ficam fora da regra.")
+
+st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
+render_laudos_web()
 
 def resumo(tipo):
     b=base_media(tipo)
@@ -446,39 +364,6 @@ def card_media(tipo):
         st.altair_chart(ch+rule,use_container_width=True)
     st.markdown("<div class='caption'>Média diária do mês corrente • linha tracejada = SLA</div>",unsafe_allow_html=True)
 
-# MTBF — mês corrente até hoje, em dias.
-# Eventos: CORRETIVA Ñ/NÃO/NAO PROG. e SOS.
-# Exclui PNEU e SOS CAVALO. Especiais entram.
-def calcular_mtbf_monitor(base):
-    if base is None or base.empty:
-        return None, pd.DataFrame()
-    b=base.copy()
-    for c in ["frota","evento","modal","parada"]:
-        if c not in b.columns:
-            return None, pd.DataFrame()
-    b["parada_mtbf"]=pd.to_datetime(b["parada"],errors="coerce")
-    evm=b["evento"].fillna("").astype(str).str.upper().str.strip()
-    modm=b["modal"].fillna("").astype(str).str.upper().str.strip()
-    modais={"QUADRITREM","KNNAR","SUPER BITREM","DEPÓSITO","DEPOSITO","TRITREM","BITREM","PENTATREM"}
-    cnp=evm.str.contains("CORRETIVA",na=False)&(evm.str.contains("Ñ PROG",na=False)|evm.str.contains("NÃO PROG",na=False)|evm.str.contains("NAO PROG",na=False))
-    sos=evm.str.contains("SOS",na=False)&~evm.str.contains("SOS CAVALO",na=False)
-    pneu=evm.str.contains("PNEU",na=False)
-    b=b[(cnp|sos)&~pneu&modm.isin(modais)&b["parada_mtbf"].notna()].copy()
-    if b.empty: return None,b
-    b["frota_mtbf"]=b["frota"].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
-    b=b.sort_values(["frota_mtbf","parada_mtbf"])
-    b["parada_anterior"]=b.groupby("frota_mtbf")["parada_mtbf"].shift(1)
-    b["mtbf_dias"]=(b["parada_mtbf"]-b["parada_anterior"]).dt.total_seconds()/86400
-    agora_mtbf=pd.Timestamp.now()
-    inicio_mes=agora_mtbf.replace(day=1).normalize()
-    b=b[(b["parada_mtbf"]>=inicio_mes)&(b["parada_mtbf"]<=agora_mtbf)&b["parada_anterior"].notna()&(b["mtbf_dias"]>=0)].copy()
-    if b.empty: return None,b
-    return float(b["mtbf_dias"].mean()),b
-
-_mtbf_valor,_mtbf_detalhes=calcular_mtbf_monitor(df)
-_mtbf_texto="Sem dados válidos" if _mtbf_valor is None else f"{_mtbf_valor:.1f} dias".replace(".",",")
-_mtbf_cor="#dc2626" if (_mtbf_valor is not None and _mtbf_valor<10) else "#111827"
-
 st.markdown("<div class='mon-section'><div class='mon-section-title'>2. DESEMPENHO</div><div class='mon-section-sub'>Indicadores principais da oficina e evolução do SLA</div></div>",unsafe_allow_html=True)
 c1,c2,c3=st.columns(3)
 with c1:
@@ -487,7 +372,7 @@ with c2:
     with st.container(border=True): card_media("REVISÃO")
 with c3:
     with st.container(border=True):
-        st.markdown(f"<div class='card-title'>📈 MTBF — MÊS ATÉ HOJE</div><div class='card-center' style='font-size:1.55rem;font-weight:800;color:{_mtbf_cor}'>{_mtbf_texto}</div><div class='caption' style='text-align:center'>Meta ≥ 10 dias</div>",unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>📈 MTBF</div><div class='card-center'>Aguardando definição das regras</div>",unsafe_allow_html=True)
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
