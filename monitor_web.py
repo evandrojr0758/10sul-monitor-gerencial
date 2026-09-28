@@ -8,6 +8,59 @@ import requests
 import streamlit as st
 
 st.set_page_config(page_title="Monitor Gerencial 10 Sul", page_icon="📺", layout="wide")
+# Responsividade global do Monitor Web
+st.markdown("""
+<style>
+/* Desktop mantém o layout gerencial atual. */
+html, body, [data-testid="stAppViewContainer"] { max-width: 100%; overflow-x: hidden; }
+img, video { max-width: 100% !important; height: auto !important; }
+
+/* Celular */
+@media (max-width: 768px) {
+    .block-container {
+        padding-left: .65rem !important;
+        padding-right: .65rem !important;
+        padding-top: .65rem !important;
+        max-width: 100% !important;
+    }
+    .mon-title { font-size: 1.35rem !important; line-height: 1.15 !important; }
+    .mon-sub { font-size: .78rem !important; }
+    .mon-section { padding: 12px 12px !important; margin-top: 12px !important; }
+    .mon-section-title { font-size: .95rem !important; }
+    .mon-section-sub { font-size: .72rem !important; }
+
+    /* KPIs: colunas do Streamlit quebram naturalmente; reduzimos padding e tipografia. */
+    div[data-testid="stMetric"] {
+        padding: .55rem .45rem !important;
+        min-height: 74px !important;
+    }
+    div[data-testid="stMetricValue"] { font-size: 1.25rem !important; }
+    div[data-testid="stMetricLabel"] { font-size: .70rem !important; }
+
+    /* Botões próprios para toque, sem virar cards enormes. */
+    div[data-testid="stButton"] > button {
+        min-height: 2.15rem !important;
+        padding: .32rem .45rem !important;
+        font-size: .76rem !important;
+        line-height: 1.05 !important;
+    }
+
+    /* Dataframes/tabelas não estouram a página. */
+    div[data-testid="stDataFrame"] { max-width: 100% !important; overflow-x: auto !important; }
+
+    /* Gráficos e componentes ocupam a largura disponível. */
+    div[data-testid="stPlotlyChart"], div[data-testid="stVegaLiteChart"],
+    div[data-testid="stPyplotGlobalUse"] { width: 100% !important; max-width: 100% !important; }
+
+    /* Diálogos em tela quase cheia no celular. */
+    div[role="dialog"] {
+        width: calc(100vw - 18px) !important;
+        max-width: calc(100vw - 18px) !important;
+        margin: 9px !important;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
 
 def _secret(nome):
     try:
@@ -155,28 +208,45 @@ def render_laudos_web():
     pv=pv.merge(m,on=["REGISTRO","OS_ID","FROTA"],how="left");pv["TEMPO_APONTADO"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1);pv["SEM"]=(pv["TEMPO_MANUT"].fillna(0)-pv["TEMPO_APONTADO"]).clip(lower=0)
     st.caption("Clique na frota para abrir o detalhamento do laudo.")
 
-    # Cabeçalho visual de tabela
-    hdr=st.columns([1.05,1.05,.8,.8,.8,.8,1.15,1.2,1.2],gap="small")
+    # Tabela compacta. A frota é o único elemento clicável da linha.
+    st.markdown("""
+    <style>
+    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) {
+        align-items:center;
+    }
+    div[data-testid="stButton"] > button {
+        min-height: 0 !important;
+    }
+    button[kind="secondary"] {
+        padding: .22rem .35rem !important;
+        line-height: 1.05 !important;
+        min-height: 1.85rem !important;
+        border-radius: 5px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    hdr=st.columns([1.0,1.0,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
     titulos=["FROTA","OS/ID","ITR","CNP","GM","OUTROS","APONTADO","MANUTENÇÃO","SEM APONT."]
     for c,t in zip(hdr,titulos):
         c.markdown(
-            f"<div style='background:#eef3f8;border:1px solid #d8e0e8;padding:10px 6px;"
-            f"text-align:center;font-size:12px;font-weight:800;color:#25364a'>{t}</div>",
+            f"<div style='background:#eef3f8;border:1px solid #d8e0e8;padding:7px 4px;"
+            f"text-align:center;font-size:11px;font-weight:800;color:#25364a'>{t}</div>",
             unsafe_allow_html=True,
         )
 
-    # Linhas compactas, com a frota como único botão clicável
     for _,r in pv.iloc[::-1].iterrows():
-        cs=st.columns([1.05,1.05,.8,.8,.8,.8,1.15,1.2,1.2],gap="small")
-        if cs[0].button(str(r.FROTA),key=f"wfr_{r.REGISTRO}",use_container_width=True):
+        cs=st.columns([1.0,1.0,.72,.72,.72,.72,1.08,1.12,1.12],gap="small")
+        if cs[0].button(f"{r.FROTA}  ↗", key=f"wfr_{r.REGISTRO}", use_container_width=True):
             st.session_state["wreg"]=str(r.REGISTRO)
             st.session_state.pop("waid",None)
         vals=[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),
               hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]
         for c,v in zip(cs[1:],vals):
             c.markdown(
-                f"<div style='border-bottom:1px solid #e4e9ef;padding:11px 4px;"
-                f"text-align:center;font-size:13px;font-weight:600;min-height:42px'>{v}</div>",
+                f"<div style='border-bottom:1px solid #e4e9ef;padding:7px 3px;"
+                f"text-align:center;font-size:12px;font-weight:600;min-height:31px;"
+                f"line-height:17px'>{v}</div>",
                 unsafe_allow_html=True,
             )
     reg=st.session_state.get("wreg")
@@ -290,7 +360,10 @@ if not st.session_state["laudos_aberto"]:
         st.session_state["laudos_aberto"] = True
         st.rerun()
 else:
-    if st.button("FECHAR APURAÇÃO DOS LAUDOS", key="fechar_apuracao_laudos", use_container_width=True):
+    _fc1, _fc2, _fc3 = st.columns([1, 0.42, 1])
+    with _fc2:
+        _fechar_laudos = st.button("✕ FECHAR APURAÇÃO", key="fechar_apuracao_laudos", use_container_width=True)
+    if _fechar_laudos:
         st.session_state["laudos_aberto"] = False
         st.session_state.pop("wreg", None)
         st.session_state.pop("waid", None)
