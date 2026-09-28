@@ -154,11 +154,31 @@ def render_laudos_web():
     m["TEMPO_MANUT"]=(m["FIM_MANUTENCAO"]-m["INICIO_MANUTENCAO"]).dt.total_seconds()/3600
     pv=pv.merge(m,on=["REGISTRO","OS_ID","FROTA"],how="left");pv["TEMPO_APONTADO"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1);pv["SEM"]=(pv["TEMPO_MANUT"].fillna(0)-pv["TEMPO_APONTADO"]).clip(lower=0)
     st.caption("Clique na frota para abrir o detalhamento do laudo.")
+
+    # Cabeçalho visual de tabela
+    hdr=st.columns([1.05,1.05,.8,.8,.8,.8,1.15,1.2,1.2],gap="small")
+    titulos=["FROTA","OS/ID","ITR","CNP","GM","OUTROS","APONTADO","MANUTENÇÃO","SEM APONT."]
+    for c,t in zip(hdr,titulos):
+        c.markdown(
+            f"<div style='background:#eef3f8;border:1px solid #d8e0e8;padding:10px 6px;"
+            f"text-align:center;font-size:12px;font-weight:800;color:#25364a'>{t}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Linhas compactas, com a frota como único botão clicável
     for _,r in pv.iloc[::-1].iterrows():
-        cs=st.columns([1,1,1,1,1,1,1.2,1.2,1.2])
-        if cs[0].button(str(r.FROTA),key=f"wfr_{r.REGISTRO}",use_container_width=True):st.session_state["wreg"]=str(r.REGISTRO)
-        vals=[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]
-        for c,v in zip(cs[1:],vals):c.markdown(f"**{v}**")
+        cs=st.columns([1.05,1.05,.8,.8,.8,.8,1.15,1.2,1.2],gap="small")
+        if cs[0].button(str(r.FROTA),key=f"wfr_{r.REGISTRO}",use_container_width=True):
+            st.session_state["wreg"]=str(r.REGISTRO)
+            st.session_state.pop("waid",None)
+        vals=[str(r.OS_ID),hhmm(r.ITR),hhmm(r.CNP),hhmm(r.GM),hhmm(r.OUTROS),
+              hhmm(r.TEMPO_APONTADO),hhmm(r.TEMPO_MANUT),hhmm(r.SEM)]
+        for c,v in zip(cs[1:],vals):
+            c.markdown(
+                f"<div style='border-bottom:1px solid #e4e9ef;padding:11px 4px;"
+                f"text-align:center;font-size:13px;font-weight:600;min-height:42px'>{v}</div>",
+                unsafe_allow_html=True,
+            )
     reg=st.session_state.get("wreg")
     if reg:
         det=d[d["REGISTRO"].astype(str).eq(str(reg))]
