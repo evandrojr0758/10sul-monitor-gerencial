@@ -182,6 +182,17 @@ def render_laudos_web():
     pv=pv[pv["TEMPO_TOTAL"] > 0].copy()
     pv=pv.iloc[::-1].reset_index(drop=True)
 
+    # Pesquisa instantânea por frota. O filtro é aplicado no próprio resumo,
+    # preservando o vínculo posicional entre a tabela e o REGISTRO selecionado.
+    _busca_frota=st.text_input(
+        "🔎 Pesquisar frota",
+        placeholder="Digite o número da frota...",
+        key="laudos_busca_frota",
+    ).strip()
+    if _busca_frota:
+        _bf=_busca_frota.replace(".0","").strip()
+        pv=pv[pv["FROTA"].astype(str).str.contains(_bf,case=False,na=False,regex=False)].reset_index(drop=True)
+
     resumo=pd.DataFrame({
         "FROTA":pv["FROTA"].astype(str)+"  ›",
         "ITR":pv["ITR"].apply(hhmm),
@@ -190,6 +201,8 @@ def render_laudos_web():
         "OUTROS":pv["OUTROS"].apply(hhmm),
         "TEMPO TOTAL":pv["TEMPO_TOTAL"].apply(hhmm),
     })
+    if _busca_frota and resumo.empty:
+        st.info("Nenhuma frota encontrada para essa pesquisa.")
     st.caption("Selecione uma frota para abrir o detalhamento.")
     ev=st.dataframe(
         resumo,
@@ -214,45 +227,17 @@ def render_laudos_web():
     det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower()!="nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
 
     st.markdown(f"**Frota {det.iloc[0]['FROTA']} — detalhamento**")
-
-    # Marca visualmente atividades que possuem evidência anexada.
-    def _tem_evidencia_laudo(v):
-        try:
-            if v is None or (isinstance(v, float) and pd.isna(v)):
-                return False
-            txt=str(v).strip()
-            if not txt or txt.lower() in ("nan","none","[]"):
-                return False
-            obj=json.loads(txt)
-            return isinstance(obj,list) and len(obj)>0
-        except Exception:
-            return bool(str(v).strip())
-
-    det["_TEM_EVIDENCIA"]=det["EVIDENCIAS"].apply(_tem_evidencia_laudo)
     detalhes=pd.DataFrame({
-        "ATIVIDADE":det["ATIVIDADE"].fillna("Atividade").astype(str),
+        "ATIVIDADE":det["ATIVIDADE"].fillna("Atividade").astype(str)+"  ›",
         "INÍCIO":det["INICIO_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
         "FIM":det["FIM_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
         "TEMPO TOTAL":det["HORAS"].apply(hhmm),
-        "_TEM_EVIDENCIA":det["_TEM_EVIDENCIA"].values,
     }).reset_index(drop=True)
-    detalhes["ATIVIDADE"]=detalhes.apply(
-        lambda r: ("📎 "+str(r["ATIVIDADE"])+"  ›") if bool(r["_TEM_EVIDENCIA"]) else (str(r["ATIVIDADE"])+"  ›"),
-        axis=1,
-    )
-    detalhes_show=detalhes.drop(columns=["_TEM_EVIDENCIA"])
-
-    # Fundo verde-claro apenas nas linhas com evidência.
-    _styler=detalhes_show.style.apply(
-        lambda row: ["background-color: #e8f5e9; color: #174d2a; font-weight: 600;"]*len(row)
-        if bool(detalhes.loc[row.name,"_TEM_EVIDENCIA"]) else [""]*len(row),
-        axis=1,
-    )
     ev2=st.dataframe(
-        _styler,
+        detalhes,
         use_container_width=True,
         hide_index=True,
-        height=min(260, 38+35*max(1,len(detalhes_show))),
+        height=min(260, 38+35*max(1,len(detalhes))),
         on_select="rerun",
         selection_mode="single-row",
         key=f"laudos_detalhe_{reg}",
