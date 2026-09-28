@@ -59,6 +59,12 @@ div[data-testid="stButton"] > button[kind="secondary"]{min-height:90px;border-ra
   div[data-testid="stDataFrame"]{max-width:100%!important;overflow-x:auto!important}
   div[role="dialog"]{width:calc(100vw - 18px)!important;max-width:calc(100vw - 18px)!important;margin:9px!important}
 }
+
+/* Painel de desempenho do supervisor: compacto no topo */
+div[data-testid="stVegaLiteChart"]{margin-top:-4px;margin-bottom:-8px}
+@media (max-width: 768px) {
+  div[data-testid="stVegaLiteChart"]{width:100%!important;max-width:100%!important}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -220,6 +226,80 @@ df["frota"]=df["frota"].apply(norm_frota)
 agora=pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
 ev, is_itr_all,is_rev_all,is_sos_all,is_cnp_all=evento_flags(df["evento"])
 
+# MÉDIAS DO SUPERVISOR — ITR e REVISÃO separadas
+def _base_evento(tipo):
+    b=df.copy()
+    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
+    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
+    b=b[mask & ~b["frota"].isin(ESPECIAIS)].copy()
+    b["ini_calc"]=b["inicio"].fillna(b["parada"])
+    b["fim_calc"]=b["fim"].fillna(agora)
+    b=b[b["ini_calc"].notna() & (b["fim_calc"]>=b["ini_calc"])].copy()
+    # Em manutenção só entra após atingir o SLA; liberadas entram normalmente.
+    aberto=b["fim"].isna() | b["status"].fillna("").astype(str).str.upper().str.contains("MANUT",na=False)
+    total=(b["fim_calc"]-b["ini_calc"]).dt.total_seconds()/3600
+    sla=12 if tipo=="ITR" else 24
+    return b[(~aberto)|(total>=sla)].copy(), sla
+
+def _quebrar_por_dia(tipo, dias=7):
+    b,sla=_base_evento(tipo)
+    ini_janela=agora.normalize()-pd.Timedelta(days=dias-1)
+    rows=[]
+    for _,r in b.iterrows():
+        ini=pd.Timestamp(r["ini_calc"]); fim=min(pd.Timestamp(r["fim_calc"]),agora)
+        d=max(ini.normalize(),ini_janela)
+        while d<=fim.normalize():
+            a=max(ini,d)
+            z=min(fim,d+pd.Timedelta(days=1))
+            h=max(0,(z-a).total_seconds()/3600)
+            if h>0: rows.append({"DIA_DT":d,"HORAS":h})
+            d+=pd.Timedelta(days=1)
+    if not rows:return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA"]),None,sla
+    q=pd.DataFrame(rows)
+    g=q.groupby("DIA_DT",as_index=False)["HORAS"].mean().rename(columns={"HORAS":"MEDIA_H"})
+    g["DIA"]=g["DIA_DT"].dt.strftime("%d/%m")
+    hoje=g.loc[g["DIA_DT"].eq(agora.normalize()),"MEDIA_H"]
+    return g,(float(hoje.iloc[0]) if len(hoje) else None),sla
+
+def _grafico_media_diaria(g,sla):
+    if g.empty:
+        st.info("Sem dados para o período."); return
+    base=alt.Chart(g).encode(
+        x=alt.X("DIA:N",title=None,sort=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
+        y=alt.Y("MEDIA_H:Q",title="Horas")
+    )
+    linha=base.mark_line(point=alt.OverlayMarkDef(size=55)).encode(tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")])
+    rot=base.mark_text(dy=-12,fontSize=11,fontWeight="bold").encode(text=alt.Text("ROTULO:N"))
+    rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[5,4]).encode(y="SLA:Q")
+    st.altair_chart((linha+rot+rule).properties(height=135),use_container_width=True)
+
+def _quadro_supervisor(tipo,icone):
+    g,hoje,sla=_quebrar_por_dia(tipo,7)
+    if not g.empty:g["ROTULO"]=g["MEDIA_H"].apply(hhmm)
+    situacao = "SEM DADOS" if hoje is None else ("DENTRO DO SLA" if hoje < sla else "ACIMA DO SLA")
+    cor = "#667085" if hoje is None else ("#15803d" if hoje < sla else "#dc2626")
+    fundo = "#f8fafc" if hoje is None else ("#f0fdf4" if hoje < sla else "#fff1f2")
+    st.markdown(
+        f"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:2px'>"
+        f"<div style='font-size:20px;font-weight:900;color:#10284a'>{icone} {tipo}</div>"
+        f"<div style='font-size:11px;font-weight:900;color:{cor};background:{fundo};padding:4px 8px;border-radius:999px'>{situacao}</div>"
+        f"</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='display:flex;align-items:end;gap:10px;margin:0 0 3px'>"
+        f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA DO DIA</span>"
+        f"<span style='font-size:28px;line-height:1;font-weight:900;color:#10284a'>{hhmm(hoje)}</span>"
+        f"<span style='font-size:11px;color:#98a2b3'>SLA {sla:02d}:00</span></div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:4px 0 -4px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS</div>",unsafe_allow_html=True)
+    _grafico_media_diaria(g,sla)
+
+def render_medias_supervisor():
+    c1,c2=st.columns(2,gap="small")
+    with c1:
+        with st.container(border=True): _quadro_supervisor("ITR","🔧")
+    with c2:
+        with st.container(border=True): _quadro_supervisor("REVISÃO","🛠️")
+
+
 # OFICINA AGORA: mesma lógica-base do app principal: status manutenção + sem fim.
 status=df["status"].fillna("").astype(str).str.upper()
 mon=df[status.str.contains("MANUT",na=False)&df["fim"].isna()].copy()
@@ -236,7 +316,9 @@ mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_html=True)
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
-st.markdown("<div class='mon-section'><div class='mon-section-title'>1. OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
+render_medias_supervisor()
+
+st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 @st.dialog("Relação de carretas", width="large")
 def modal_os_abertas(titulo, dados):
     st.markdown(f"### {titulo}")
@@ -269,70 +351,6 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
 render_laudos_web()
-
-# MÉDIAS DO SUPERVISOR — ITR e REVISÃO separadas
-def _base_evento(tipo):
-    b=df.copy()
-    e=b["evento"].fillna("").astype(str).str.upper().str.strip()
-    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
-    b=b[mask & ~b["frota"].isin(ESPECIAIS)].copy()
-    b["ini_calc"]=b["inicio"].fillna(b["parada"])
-    b["fim_calc"]=b["fim"].fillna(agora)
-    b=b[b["ini_calc"].notna() & (b["fim_calc"]>=b["ini_calc"])].copy()
-    # Em manutenção só entra após atingir o SLA; liberadas entram normalmente.
-    aberto=b["fim"].isna() | b["status"].fillna("").astype(str).str.upper().str.contains("MANUT",na=False)
-    total=(b["fim_calc"]-b["ini_calc"]).dt.total_seconds()/3600
-    sla=12 if tipo=="ITR" else 24
-    return b[(~aberto)|(total>=sla)].copy(), sla
-
-def _quebrar_por_dia(tipo, dias=14):
-    b,sla=_base_evento(tipo)
-    ini_janela=agora.normalize()-pd.Timedelta(days=dias-1)
-    rows=[]
-    for _,r in b.iterrows():
-        ini=pd.Timestamp(r["ini_calc"]); fim=min(pd.Timestamp(r["fim_calc"]),agora)
-        d=max(ini.normalize(),ini_janela)
-        while d<=fim.normalize():
-            a=max(ini,d)
-            z=min(fim,d+pd.Timedelta(days=1))
-            h=max(0,(z-a).total_seconds()/3600)
-            if h>0: rows.append({"DIA_DT":d,"HORAS":h})
-            d+=pd.Timedelta(days=1)
-    if not rows:return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA"]),None,sla
-    q=pd.DataFrame(rows)
-    g=q.groupby("DIA_DT",as_index=False)["HORAS"].mean().rename(columns={"HORAS":"MEDIA_H"})
-    g["DIA"]=g["DIA_DT"].dt.strftime("%d/%m")
-    hoje=g.loc[g["DIA_DT"].eq(agora.normalize()),"MEDIA_H"]
-    return g,(float(hoje.iloc[0]) if len(hoje) else None),sla
-
-def _grafico_media_diaria(g,sla):
-    if g.empty:
-        st.info("Sem dados para o período."); return
-    base=alt.Chart(g).encode(
-        x=alt.X("DIA:N",title=None,sort=None,axis=alt.Axis(labelAngle=0,labelFontSize=10)),
-        y=alt.Y("MEDIA_H:Q",title="Horas")
-    )
-    linha=base.mark_line(point=alt.OverlayMarkDef(size=55)).encode(tooltip=["DIA",alt.Tooltip("MEDIA_H:Q",format=".2f")])
-    rot=base.mark_text(dy=-12,fontSize=11,fontWeight="bold").encode(text=alt.Text("ROTULO:N"))
-    rule=alt.Chart(pd.DataFrame({"SLA":[sla]})).mark_rule(strokeDash=[5,4]).encode(y="SLA:Q")
-    st.altair_chart((linha+rot+rule).properties(height=230),use_container_width=True)
-
-def _quadro_supervisor(tipo,icone):
-    g,hoje,sla=_quebrar_por_dia(tipo,14)
-    if not g.empty:g["ROTULO"]=g["MEDIA_H"].apply(hhmm)
-    st.markdown(f"### {icone} {tipo}")
-    st.markdown("**MÉDIA DO DIA**")
-    st.markdown(f"<div style='font-size:34px;font-weight:900;color:#10284a;margin:-6px 0 10px'>{hhmm(hoje)}</div>",unsafe_allow_html=True)
-    st.caption(f"SLA: {sla:02d}:00")
-    st.markdown("**MÉDIA DIÁRIA**")
-    _grafico_media_diaria(g,sla)
-
-st.markdown("<div class='mon-section'><div class='mon-section-title'>2. MÉDIAS DA OPERAÇÃO</div><div class='mon-section-sub'>Leitura rápida do supervisor • cada manutenção impacta todos os dias em que permaneceu aberta</div></div>",unsafe_allow_html=True)
-c1,c2=st.columns(2,gap="large")
-with c1:
-    with st.container(border=True): _quadro_supervisor("ITR","🔧")
-with c2:
-    with st.container(border=True): _quadro_supervisor("REVISÃO","🛠️")
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
