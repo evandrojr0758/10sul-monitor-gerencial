@@ -204,8 +204,15 @@ def render_laudos_web():
     d["INICIO_ATIVIDADE_DT"]=pd.to_datetime(d["INICIO_ATIVIDADE"],errors="coerce")
     d["FIM_ATIVIDADE_DT"]=pd.to_datetime(d["FIM_ATIVIDADE"],errors="coerce")
 
-    # 1) RESUMO COMPACTO — uma linha por frota. Nada de botões gigantes.
-    pv=d.pivot_table(index=["REGISTRO","FROTA"],columns="CLASSIFICACAO",values="HORAS",aggfunc="sum",fill_value=0).reset_index()
+    # 1) RESUMO COMPACTO — uma linha por MANUTENÇÃO (OS/ID + FROTA).
+    # Vários laudos/compartimentos da mesma OS pertencem à mesma manutenção e
+    # precisam ser consolidados em uma única linha. Se a OS estiver vazia,
+    # usamos REGISTRO apenas como fallback para não juntar atendimentos distintos.
+    _os=d["OS_ID"].fillna("").astype(str).str.strip()
+    _reg=d["REGISTRO"].fillna("").astype(str).str.strip()
+    d["_CHAVE_OS"]=_os.where(_os.ne("") & _os.str.lower().ne("nan"), _reg)
+    d["_CHAVE_OS"]=d["_CHAVE_OS"].where(d["_CHAVE_OS"].ne(""), d.index.astype(str))
+    pv=d.pivot_table(index=["_CHAVE_OS","FROTA"],columns="CLASSIFICACAO",values="HORAS",aggfunc="sum",fill_value=0).reset_index()
     for c in ["ITR","CNP","GM","OUTROS"]:
         if c not in pv.columns: pv[c]=0.0
     pv["TEMPO_TOTAL"]=pv[["ITR","CNP","GM","OUTROS"]].sum(axis=1)
@@ -253,20 +260,25 @@ def render_laudos_web():
         # O Streamlit pode manter a seleção da tabela anterior após uma busca/filtro.
         # Nunca tente acessar uma posição que já não existe no DataFrame filtrado.
         if 0 <= pos < len(pv):
-            st.session_state["wreg"]=str(pv.iloc[pos]["REGISTRO"])
+            st.session_state["wos_chave"]=str(pv.iloc[pos]["_CHAVE_OS"])
+            st.session_state["wfrota_chave"]=str(pv.iloc[pos]["FROTA"])
             st.session_state["waid"]=None
         else:
-            st.session_state["wreg"]=None
+            st.session_state["wos_chave"]=None
+            st.session_state["wfrota_chave"]=None
             st.session_state["waid"]=None
     elif resumo.empty:
-        st.session_state["wreg"]=None
+        st.session_state["wos_chave"]=None
+        st.session_state["wfrota_chave"]=None
         st.session_state["waid"]=None
 
-    # 2) FROTA SELECIONADA — somente atividades daquela frota.
-    reg=st.session_state.get("wreg")
-    if not reg: return
-    det=d[d["REGISTRO"].astype(str).eq(str(reg))].copy()
+    # 2) MANUTENÇÃO SELECIONADA — todas as atividades/compartimentos da mesma OS + frota.
+    os_chave=st.session_state.get("wos_chave")
+    frota_chave=st.session_state.get("wfrota_chave")
+    if not os_chave or not frota_chave: return
+    det=d[d["_CHAVE_OS"].astype(str).eq(str(os_chave)) & d["FROTA"].astype(str).eq(str(frota_chave))].copy()
     if det.empty: return
+    reg=str(os_chave)
     det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower()!="nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
 
     st.markdown(f"**Frota {det.iloc[0]['FROTA']} — detalhamento**")
