@@ -818,10 +818,18 @@ familias={
 }
 atual=hunt[(hunt["ref"]>=sem_ini)&(hunt["ref"]<=agora)].copy()
 anterior=hunt[(hunt["ref"]>=sem_ant_ini)&(hunt["ref"]<sem_ant_fim)].copy()
+def _descricao_contem_termo(valor, termos):
+    # Evita pd.NA/NaN gerar "boolean value of NA is ambiguous" no Streamlit Cloud.
+    if valor is None or pd.isna(valor):
+        texto = ""
+    else:
+        texto = str(valor).upper()
+    return any(str(t).upper() in texto for t in termos if t is not None)
+
 mot=[]
 for cat,termos in familias.items():
-    qa=int(atual["desc_norm"].fillna("").astype(str).apply(lambda z:any(str(t) in z for t in termos)).sum())
-    qb=int(anterior["desc_norm"].apply(lambda z:any(t in z for t in termos)).sum())
+    qa=int(atual["desc_norm"].apply(lambda z: _descricao_contem_termo(z, termos)).sum())
+    qb=int(anterior["desc_norm"].apply(lambda z: _descricao_contem_termo(z, termos)).sum())
     mot.append((cat,qa,qa-qb))
 mot=sorted(mot,key=lambda x:(x[1],x[2]),reverse=True)
 
@@ -862,7 +870,7 @@ with h2:
             if st.session_state["motivo_cnp_aberto"] == cat:
                 termos=familias[cat]
                 rel=atual[
-                    atual["desc_norm"].apply(lambda z:any(t in z for t in termos))
+                    atual["desc_norm"].apply(lambda z: _descricao_contem_termo(z, termos))
                 ][["frota","os_id","evento","descricao","ref","status"]].copy()
                 st.dataframe(rel,use_container_width=True,hide_index=True)
 
