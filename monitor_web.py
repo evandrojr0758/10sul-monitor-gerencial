@@ -136,26 +136,39 @@ def hhmm(h):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar_laudos_manuais_web():
-    import json
-    if not SUPABASE_URL or not SUPABASE_KEY: return pd.DataFrame()
+    """Lê os laudos conferidos diretamente da tabela public.laudos_monitor."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return pd.DataFrame()
     try:
-        url=f"{SUPABASE_URL}/storage/v1/object/evidencias-desvios/monitor/laudos_manuais.json"
+        url=f"{SUPABASE_URL}/rest/v1/laudos_monitor"
         h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
-        r=requests.get(url,headers=h,timeout=45)
-        if not r.ok:
-            st.session_state["_erro_laudos_web"] = f"HTTP {r.status_code}: {r.text[:300]}"
+        todos=[]; inicio=0; pagina=1000
+        while True:
+            hh=dict(h); hh["Range"]=f"{inicio}-{inicio+pagina-1}"; hh["Prefer"]="count=none"
+            r=requests.get(url,headers=hh,params={"select":"*","order":"id.asc"},timeout=45)
+            if not r.ok:
+                st.session_state["_erro_laudos_web"] = f"HTTP {r.status_code}: {r.text[:500]}"
+                return pd.DataFrame()
+            lote=r.json()
+            if not lote: break
+            todos.extend(lote)
+            if len(lote)<pagina: break
+            inicio += pagina
+        if not todos:
+            st.session_state.pop("_erro_laudos_web",None)
             return pd.DataFrame()
-        obj=json.loads(r.content.decode("utf-8"))
-        if isinstance(obj,dict):
-            for k in ("dados","data","rows","laudos"):
-                if isinstance(obj.get(k),list):
-                    obj=obj[k]
-                    break
-        if not isinstance(obj,list):
-            st.session_state["_erro_laudos_web"] = "JSON de laudos publicado em formato inesperado."
-            return pd.DataFrame()
+        d=pd.DataFrame(todos)
+        # Mantém o restante do Monitor compatível com os nomes históricos.
+        ren={
+            "registro":"REGISTRO","os_id":"OS_ID","frota":"FROTA","compartimento":"COMPARTIMENTO",
+            "status":"STATUS","inicio_manutencao":"INICIO_MANUTENCAO","fim_manutencao":"FIM_MANUTENCAO",
+            "atividade_id":"ATIVIDADE_ID","atividade":"ATIVIDADE","executante":"EXECUTANTE",
+            "classificacao":"CLASSIFICACAO","inicio_atividade":"INICIO_ATIVIDADE","fim_atividade":"FIM_ATIVIDADE",
+            "horas":"HORAS","evidencias":"EVIDENCIAS"
+        }
+        d=d.rename(columns={k:v for k,v in ren.items() if k in d.columns})
         st.session_state.pop("_erro_laudos_web",None)
-        return pd.DataFrame(obj)
+        return d
     except Exception as e:
         st.session_state["_erro_laudos_web"] = str(e)
         return pd.DataFrame()
