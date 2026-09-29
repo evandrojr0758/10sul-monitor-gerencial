@@ -526,6 +526,31 @@ def render_medias_laudos():
         with st.container(border=True): _quadro_media_laudo("CNP","🚨")
 
 
+def _normalizar_atividade_gerencial(txt):
+    """Agrupa variações de escrita dos serviços dos laudos sem alterar a descrição original."""
+    s=str(txt or "").upper().strip()
+    trans=str.maketrans("ÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ", "AAAAEEEIIIOOOOUUUC")
+    s=s.translate(trans)
+    s=re.sub(r"[^A-Z0-9 ]+", " ", s)
+    s=re.sub(r"\\s+", " ", s).strip()
+    regras=[
+        ("Regulagem de freio", ["REGULAR FREIO","REGULAGEM FREIO","REGULA FREIO","REGUL FREIO","REGULAR CATRACA","REGULAGEM CATRACA"]),
+        ("Protetor lateral", ["PROTETOR LATERAL","PROTECAO LATERAL","PROTECAO LATER","PROT LATERAL"]),
+        ("Ponta de lona", ["PONTA DE LONA","PONTA LONA","PONTA DA LONA"]),
+        ("Catraca de amarração", ["CATRACA DE AMARRACAO","CATRACA AMARRACAO","CATRACA DA AMARRACAO"]),
+        ("Troca de pneu", ["TROCA DE PNEU","TROCAR PNEU","SUBSTITUIR PNEU","SUBSTITUICAO PNEU"]),
+        ("Rodeiro travado", ["RODEIRO TRAVADO","RODEIRO PRESO","DESTRAVAR RODEIRO","DESTRAVAMENTO RODEIRO"]),
+        ("Iluminação / Corujinha", ["CORUJINHA","ILUMINACAO","LANTERNA","LANTERNAS","LUZ LATERAL","LUZ DE POSICAO"]),
+        ("Catraca de freio", ["CATRACA DE FREIO","CATRACA FREIO"]),
+        ("Cuíca de freio", ["CUICA","CAMARA DE FREIO"]),
+        ("Lona de freio", ["LONA DE FREIO","LONA FREIO","LONAS DE FREIO"]),
+        ("Bolsa de suspensão", ["BOLSA DE SUSPENSAO","BOLSA SUSPENSAO","BOLSA DE AR"]),
+    ]
+    for familia, termos in regras:
+        if any(t in s for t in termos):
+            return familia
+    return "Outras atividades"
+
 def render_relatorio_gerencial_laudos():
     d=carregar_laudos_manuais_web().copy()
     st.markdown("<div class='mon-section'><div class='mon-section-title'>📊 RELATÓRIO GERENCIAL — LAUDOS DE MANUTENÇÃO</div><div class='mon-section-sub'>Análise gerencial baseada exclusivamente nos laudos conferidos e publicados</div></div>",unsafe_allow_html=True)
@@ -597,11 +622,30 @@ def render_relatorio_gerencial_laudos():
     t1,t2=st.columns(2,gap="small")
     with t1:
         with st.container(border=True):
-            st.markdown("**Top 10 atividades corretivas dentro dos laudos**")
-            tc=x[x.CLASSIFICACAO.eq("CNP")].groupby("ATIVIDADE",as_index=False).agg(QTD=("ATIVIDADE","size"),HORAS=("HORAS","sum")).sort_values(["HORAS","QTD"],ascending=False).head(10)
-            if tc.empty: st.caption("Sem atividades CNP no período.")
+            st.markdown("**🔧 Principais intervenções identificadas nos laudos**")
+            st.caption("Conta cada frota uma única vez por família de serviço, mesmo que a atividade apareça em vários compartimentos. Clique em uma linha para conferir as descrições originais.")
+            tc=x[x.CLASSIFICACAO.eq("CNP")].copy()
+            if tc.empty:
+                st.caption("Sem atividades CNP no período.")
             else:
-                tc["TEMPO TOTAL"]=tc["HORAS"].apply(hhmm); st.dataframe(tc[["ATIVIDADE","QTD","TEMPO TOTAL"]],hide_index=True,use_container_width=True)
+                tc["FAMILIA"] = tc["ATIVIDADE"].apply(_normalizar_atividade_gerencial)
+                tc["_OS_FROTA"] = tc["CHAVE_OS"].astype(str)+"|"+tc["FROTA"].astype(str)
+                fam=(tc.groupby("FAMILIA",as_index=False)
+                     .agg(CARRETAS=("FROTA","nunique"), INTERVENCOES=("_OS_FROTA","nunique"), HORAS=("HORAS","sum")))
+                fam["% DAS CARRETAS"]=(fam["CARRETAS"]/max(1,frotas)*100).round(1)
+                fam=fam.sort_values(["CARRETAS","INTERVENCOES","HORAS"],ascending=False).reset_index(drop=True)
+                fam_show=fam.copy()
+                fam_show["TEMPO TOTAL"]=fam_show["HORAS"].apply(hhmm)
+                fam_show["% DAS CARRETAS"]=fam_show["% DAS CARRETAS"].apply(lambda v:f"{v:.1f}%".replace(".",","))
+                evfam=st.dataframe(fam_show[["FAMILIA","CARRETAS","% DAS CARRETAS","INTERVENCOES","TEMPO TOTAL"]].rename(columns={"FAMILIA":"ATIVIDADE NORMALIZADA","INTERVENCOES":"OS/ATENDIMENTOS"}),hide_index=True,use_container_width=True,on_select="rerun",selection_mode="single-row",key="rg_familias_servicos")
+                sel=list(evfam.selection.rows) if hasattr(evfam,"selection") else []
+                if sel and 0 <= int(sel[0]) < len(fam):
+                    familia_sel=str(fam.iloc[int(sel[0])]["FAMILIA"])
+                    rel=tc[tc["FAMILIA"].eq(familia_sel)].copy()
+                    rel["TEMPO"]=rel["HORAS"].apply(hhmm)
+                    rel=rel.rename(columns={"OS_ID":"OS/ID","COMPARTIMENTO":"COMP.","ATIVIDADE":"DESCRIÇÃO ORIGINAL"})
+                    st.markdown(f"**{familia_sel} — {rel['FROTA'].nunique()} de {frotas} carretas atendidas**")
+                    st.dataframe(rel[["FROTA","OS/ID","COMP.","DESCRIÇÃO ORIGINAL","TEMPO"]].drop_duplicates(),hide_index=True,use_container_width=True,height=min(260,38+35*max(1,len(rel))))
     with t2:
         with st.container(border=True):
             st.markdown("**Carretas com maior tempo de manutenção**")
