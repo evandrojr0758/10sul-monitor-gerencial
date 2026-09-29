@@ -139,16 +139,30 @@ def carregar_laudos_manuais_web():
     import json
     if not SUPABASE_URL or not SUPABASE_KEY: return pd.DataFrame()
     try:
-        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/monitor/laudos_manuais.json"
+        url=f"{SUPABASE_URL}/storage/v1/object/evidencias-desvios/monitor/laudos_manuais.json"
         h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
         r=requests.get(url,headers=h,timeout=45)
-        if not r.ok:return pd.DataFrame()
-        return pd.DataFrame(json.loads(r.content.decode("utf-8")))
-    except Exception:return pd.DataFrame()
+        if not r.ok:
+            st.session_state["_erro_laudos_web"] = f"HTTP {r.status_code}: {r.text[:300]}"
+            return pd.DataFrame()
+        obj=json.loads(r.content.decode("utf-8"))
+        if isinstance(obj,dict):
+            for k in ("dados","data","rows","laudos"):
+                if isinstance(obj.get(k),list):
+                    obj=obj[k]
+                    break
+        if not isinstance(obj,list):
+            st.session_state["_erro_laudos_web"] = "JSON de laudos publicado em formato inesperado."
+            return pd.DataFrame()
+        st.session_state.pop("_erro_laudos_web",None)
+        return pd.DataFrame(obj)
+    except Exception as e:
+        st.session_state["_erro_laudos_web"] = str(e)
+        return pd.DataFrame()
 
 def baixar_evidencia_laudo_web(path):
     try:
-        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/{path}"
+        url=f"{SUPABASE_URL}/storage/v1/object/evidencias-desvios/{path}"
         h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
         r=requests.get(url,headers=h,timeout=45)
         return (r.content,r.headers.get("content-type","")) if r.ok else (None,"")
@@ -158,7 +172,11 @@ def render_laudos_web():
     import json
     d=carregar_laudos_manuais_web()
     if d.empty:
-        st.caption("Ainda não há laudos manuais publicados.")
+        err=st.session_state.get("_erro_laudos_web")
+        if err:
+            st.warning(f"Laudos ainda não chegaram ao Monitor Web. Detalhe da leitura: {err}")
+        else:
+            st.caption("Ainda não há laudos manuais publicados.")
         return
 
     for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","ATIVIDADE","EXECUTANTE",
@@ -408,7 +426,7 @@ def _medias_laudos_por_dia(classificacao, dias=7):
         return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
     for c in ["REGISTRO","OS_ID","FROTA","CLASSIFICACAO","HORAS"]:
         if c not in d.columns: d[c]=""
-    col_ini=_coluna_laudo(d,["INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL"])
+    col_ini=_coluna_laudo(d,["INICIO_MANUTENCAO","INICIO MANUTENCAO","INÍCIO MANUTENÇÃO","INICIO 10 SUL","INICIO_10_SUL","INICIO10SUL"])
     if not col_ini:
         return pd.DataFrame(columns=["DIA_DT","MEDIA_H","DIA","ROTULO"]), None
     d["_INI10"]=pd.to_datetime(d[col_ini],errors="coerce",dayfirst=True)
