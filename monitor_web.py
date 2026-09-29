@@ -527,28 +527,56 @@ def render_medias_laudos():
 
 
 def _normalizar_atividade_gerencial(txt):
-    """Agrupa variações de escrita dos serviços dos laudos sem alterar a descrição original."""
-    s=str(txt or "").upper().strip()
+    """Agrupa serviços por contexto/prioridade sem alterar a descrição original do laudo."""
+    if txt is None or pd.isna(txt):
+        return "Outras atividades"
+    s=str(txt).upper().strip()
     trans=str.maketrans("ÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ", "AAAAEEEIIIOOOOUUUC")
     s=s.translate(trans)
     s=re.sub(r"[^A-Z0-9 ]+", " ", s)
-    s=re.sub(r"\\s+", " ", s).strip()
-    regras=[
-        ("Regulagem de freio", ["REGULAR FREIO","REGULAGEM FREIO","REGULA FREIO","REGUL FREIO","REGULAR CATRACA","REGULAGEM CATRACA"]),
-        ("Protetor lateral", ["PROTETOR LATERAL","PROTECAO LATERAL","PROTECAO LATER","PROT LATERAL"]),
-        ("Ponta de lona", ["PONTA DE LONA","PONTA LONA","PONTA DA LONA"]),
-        ("Catraca de amarração", ["CATRACA DE AMARRACAO","CATRACA AMARRACAO","CATRACA DA AMARRACAO"]),
-        ("Troca de pneu", ["TROCA DE PNEU","TROCAR PNEU","SUBSTITUIR PNEU","SUBSTITUICAO PNEU"]),
-        ("Rodeiro travado", ["RODEIRO TRAVADO","RODEIRO PRESO","DESTRAVAR RODEIRO","DESTRAVAMENTO RODEIRO"]),
-        ("Iluminação / Corujinha", ["CORUJINHA","ILUMINACAO","LANTERNA","LANTERNAS","LUZ LATERAL","LUZ DE POSICAO"]),
-        ("Catraca de freio", ["CATRACA DE FREIO","CATRACA FREIO"]),
-        ("Cuíca de freio", ["CUICA","CAMARA DE FREIO"]),
-        ("Lona de freio", ["LONA DE FREIO","LONA FREIO","LONAS DE FREIO"]),
-        ("Bolsa de suspensão", ["BOLSA DE SUSPENSAO","BOLSA SUSPENSAO","BOLSA DE AR"]),
-    ]
-    for familia, termos in regras:
-        if any(t in s for t in termos):
-            return familia
+    s=re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return "Outras atividades"
+
+    # Regras específicas primeiro. Palavras ambíguas (ex.: CATRACA e LONA)
+    # nunca são classificadas isoladamente sem contexto suficiente.
+    if any(t in s for t in ["CATRACA DE FREIO", "CATRACA FREIO"]):
+        return "Catraca de freio"
+    if any(t in s for t in ["REGULAR CATRACA", "REGULAGEM CATRACA", "REGULAR FREIO", "REGULAGEM FREIO", "REGULA FREIO", "REGUL FREIO"]):
+        return "Regulagem de freio"
+    if any(t in s for t in ["CATRACA DE AMARRACAO", "CATRACA AMARRACAO", "CATRACA DA AMARRACAO"]):
+        return "Catraca de amarração"
+
+    # Lona de freio precisa ser resolvida antes da família genérica de lona/porta.
+    if any(t in s for t in ["LONA DE FREIO", "LONA FREIO", "LONAS DE FREIO", "LONAS FREIO"]):
+        return "Lona de freio"
+    if any(t in s for t in ["PONTA DE LONA", "PONTA LONA", "PONTA DA LONA", "PORTA DE LONA", "PORTA LONA", "PORTAS DE LONA", "PORTAS LONA"]):
+        return "Ponta de lona"
+    # Nos laudos da operação, descrições de lona/portas sem referência a freio
+    # representam a família Ponta de lona.
+    if ("LONA" in s or "LONAS" in s) and "FREIO" not in s:
+        return "Ponta de lona"
+
+    if any(t in s for t in ["PROTETOR LATERAL", "PROTECAO LATERAL", "PROTECAO LATER", "PROT LATERAL"]):
+        return "Protetor lateral"
+
+    # Estrutura/fabricação tratada gerencialmente como SOLDA.
+    if any(t in s for t in ["CHAPA DE ASSOALHO", "CHAPA ASSOALHO", "ASSOALHO", "SOLDAR", "SOLDA", "TRINCA", "SUPORTE DO PARALAMA", "SUPORTE PARALAMA", "FABRICAR SUPORTE"]):
+        return "SOLDA"
+
+    if any(t in s for t in ["BUCHA", "BUCHAS", "MANCAL", "BALANCA"]):
+        return "Bucha / Mancal / Balança"
+    if any(t in s for t in ["TROCA DE PNEU", "TROCAR PNEU", "SUBSTITUIR PNEU", "SUBSTITUICAO PNEU"]):
+        return "Troca de pneu"
+    if any(t in s for t in ["RODEIRO TRAVADO", "RODEIRO PRESO", "DESTRAVAR RODEIRO", "DESTRAVAMENTO RODEIRO"]):
+        return "Rodeiro travado"
+    if any(t in s for t in ["CORUJINHA", "ILUMINACAO", "LANTERNA", "LANTERNAS", "LUZ LATERAL", "LUZ DE POSICAO"]):
+        return "Iluminação / Corujinha"
+    if any(t in s for t in ["CUICA", "CAMARA DE FREIO"]):
+        return "Cuíca de freio"
+    if any(t in s for t in ["BOLSA DE SUSPENSAO", "BOLSA SUSPENSAO", "BOLSA DE AR"]):
+        return "Bolsa de suspensão"
+
     return "Outras atividades"
 
 def render_relatorio_gerencial_laudos():
