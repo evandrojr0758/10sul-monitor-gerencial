@@ -246,8 +246,20 @@ def render_laudos_web():
     )
     rows=list(ev.selection.rows) if hasattr(ev,"selection") else []
     if rows:
-        pos=int(rows[0])
-        st.session_state["wreg"]=str(pv.iloc[pos]["REGISTRO"])
+        try:
+            pos=int(rows[0])
+        except Exception:
+            pos=-1
+        # O Streamlit pode manter a seleção da tabela anterior após uma busca/filtro.
+        # Nunca tente acessar uma posição que já não existe no DataFrame filtrado.
+        if 0 <= pos < len(pv):
+            st.session_state["wreg"]=str(pv.iloc[pos]["REGISTRO"])
+            st.session_state["waid"]=None
+        else:
+            st.session_state["wreg"]=None
+            st.session_state["waid"]=None
+    elif resumo.empty:
+        st.session_state["wreg"]=None
         st.session_state["waid"]=None
 
     # 2) FROTA SELECIONADA — somente atividades daquela frota.
@@ -411,7 +423,7 @@ def _quadro_supervisor(tipo,icone):
         f"</div>", unsafe_allow_html=True)
     st.markdown(
         f"<div style='display:flex;align-items:end;gap:10px;margin:0 0 3px'>"
-        f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA DO DIA</span>"
+        f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA DO DIA ANTERIOR</span>"
         f"<span style='font-size:28px;line-height:1;font-weight:900;color:#10284a'>{hhmm(hoje)}</span>"
         f"<span style='font-size:11px;color:#98a2b3'>SLA {sla:02d}:00</span></div>", unsafe_allow_html=True)
     st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:10px 0 4px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS</div>",unsafe_allow_html=True)
@@ -467,7 +479,9 @@ def _medias_laudos_por_dia(classificacao, dias=7):
     g=osd.groupby("DIA_DT",as_index=False)["HORAS"].mean().rename(columns={"HORAS":"MEDIA_H"})
     g["DIA"]=g["DIA_DT"].dt.strftime("%d/%m")
     g["ROTULO"]=g["MEDIA_H"].apply(hhmm)
-    hj=g.loc[g["DIA_DT"].eq(agora.normalize()),"MEDIA_H"]
+    # KPI dos laudos usa sempre o dia anterior, pois os laudos chegam fechados D-1.
+    dia_anterior=agora.normalize()-pd.Timedelta(days=1)
+    hj=g.loc[g["DIA_DT"].eq(dia_anterior),"MEDIA_H"]
     return g,(float(hj.iloc[0]) if len(hj) else None)
 
 def _grafico_laudos(g, classificacao):
