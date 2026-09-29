@@ -514,6 +514,92 @@ def render_medias_laudos():
         with st.container(border=True): _quadro_media_laudo("CNP","🚨")
 
 
+def render_relatorio_gerencial_laudos():
+    d=carregar_laudos_manuais_web().copy()
+    st.markdown("<div class='mon-section'><div class='mon-section-title'>📊 RELATÓRIO GERENCIAL — LAUDOS DE MANUTENÇÃO</div><div class='mon-section-sub'>Análise gerencial baseada exclusivamente nos laudos conferidos e publicados</div></div>",unsafe_allow_html=True)
+    if d.empty:
+        st.info("Ainda não há laudos conferidos publicados para montar o relatório gerencial.")
+        return
+    for c in ["REGISTRO","OS_ID","FROTA","COMPARTIMENTO","CLASSIFICACAO","ATIVIDADE","EXECUTANTE","HORAS","INICIO_MANUTENCAO","FIM_MANUTENCAO"]:
+        if c not in d.columns: d[c]=""
+    d["FROTA"]=d["FROTA"].apply(norm_frota)
+    d["HORAS"]=pd.to_numeric(d["HORAS"],errors="coerce").fillna(0.0)
+    d["CLASSIFICACAO"]=d["CLASSIFICACAO"].fillna("OUTROS").astype(str).str.upper().str.strip()
+    d["INI_DT"]=pd.to_datetime(d["INICIO_MANUTENCAO"],errors="coerce",dayfirst=True)
+    d["FIM_DT"]=pd.to_datetime(d["FIM_MANUTENCAO"],errors="coerce",dayfirst=True)
+    d=d[d["INI_DT"].notna()].copy()
+    if d.empty:
+        st.info("Os laudos publicados ainda não possuem data de início válida."); return
+    hoje_rg=agora.normalize(); mes_ini_rg=hoje_rg.replace(day=1)
+    a,b,c=st.columns([1.25,1,1])
+    with a:
+        periodo=st.selectbox("Período",["Mês atual","Últimos 7 dias","Últimos 30 dias","Personalizado"],key="rg_periodo")
+    if periodo=="Mês atual": di,dfim=mes_ini_rg,agora
+    elif periodo=="Últimos 7 dias": di,dfim=hoje_rg-pd.Timedelta(days=6),agora
+    elif periodo=="Últimos 30 dias": di,dfim=hoje_rg-pd.Timedelta(days=29),agora
+    else:
+        with b: di0=st.date_input("De",value=mes_ini_rg.date(),key="rg_de")
+        with c: df0=st.date_input("Até",value=hoje_rg.date(),key="rg_ate")
+        di=pd.Timestamp(di0); dfim=pd.Timestamp(df0)+pd.Timedelta(days=1)-pd.Timedelta(seconds=1)
+    x=d[(d["INI_DT"]>=di)&(d["INI_DT"]<=dfim)].copy()
+    if x.empty: st.info("Sem laudos conferidos no período selecionado."); return
+    osid=x["OS_ID"].fillna("").astype(str).str.strip(); reg=x["REGISTRO"].fillna("").astype(str).str.strip()
+    x["CHAVE_OS"]=osid.where(osid.ne("")&osid.str.lower().ne("nan"),reg)
+    x["CHAVE_OS"]=x["CHAVE_OS"].where(x["CHAVE_OS"].ne(""),x.index.astype(str))
+    manut=(x.groupby(["CHAVE_OS","FROTA"],as_index=False).agg(INICIO=("INI_DT","min"),FIM=("FIM_DT","max")))
+    manut["H_MANUT"]=((manut["FIM"]-manut["INICIO"]).dt.total_seconds()/3600).clip(lower=0)
+    total_laudos=x["REGISTRO"].replace("",pd.NA).nunique() or x["CHAVE_OS"].nunique()
+    frotas=x["FROTA"].nunique(); med_man=manut.loc[manut["H_MANUT"]>0,"H_MANUT"].mean()
+    piv=x.pivot_table(index=["CHAVE_OS","FROTA"],columns="CLASSIFICACAO",values="HORAS",aggfunc="sum",fill_value=0).reset_index()
+    for cc in ["ITR","CNP","GM","OUTROS"]:
+        if cc not in piv.columns:piv[cc]=0.0
+    med_itr=piv.loc[piv["ITR"]>0,"ITR"].mean(); med_cnp=piv.loc[piv["CNP"]>0,"CNP"].mean()
+    apont=piv[["ITR","CNP","GM","OUTROS"]].sum(axis=1).sum(); hman=manut["H_MANUT"].sum(); sem=max(0,hman-apont)
+    cards=[("📄","Total de Laudos",str(int(total_laudos)),"#eef6ff"),("🚛","Carretas Atendidas",str(int(frotas)),"#eef6ff"),("⏱️","Tempo Médio de Manutenção",hhmm(med_man),"#ecfdf5"),("🔧","Tempo Médio ITR",hhmm(med_itr),"#fff7ed"),("🛠️","Tempo Médio CNP",hhmm(med_cnp),"#fff1f2"),("◔","Tempo sem Apontamento",hhmm(sem/max(1,len(manut))),"#f8fafc")]
+    cs=st.columns(6,gap="small")
+    for col,(ico,lab,val,bg) in zip(cs,cards):
+        with col: st.markdown(f"<div style='background:{bg};border:1px solid #dbe3ec;border-radius:12px;padding:13px 8px;text-align:center;min-height:105px'><div style='font-size:12px;font-weight:850;color:#344054'>{ico} {lab}</div><div style='font-size:27px;font-weight:900;color:#10284a;margin-top:10px'>{val}</div></div>",unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    g1,g2,g3=st.columns([1.5,1,1],gap="small")
+    diario=x.assign(DIA=x["INI_DT"].dt.normalize()).groupby(["DIA","CLASSIFICACAO"],as_index=False)["HORAS"].sum()
+    with g1:
+        with st.container(border=True):
+            st.markdown("**Evolução dos tempos apontados por dia**")
+            if not diario.empty:
+                ch=alt.Chart(diario).mark_bar().encode(x=alt.X("DIA:T",title=None),y=alt.Y("HORAS:Q",title="Horas"),color=alt.Color("CLASSIFICACAO:N",title=None),tooltip=["DIA:T","CLASSIFICACAO:N",alt.Tooltip("HORAS:Q",format=".2f")]).properties(height=260)
+                st.altair_chart(ch,use_container_width=True)
+    comp=pd.DataFrame({"TIPO":["ITR","CNP","GM","OUTROS","SEM APONTAMENTO"],"HORAS":[x.loc[x.CLASSIFICACAO.eq("ITR"),"HORAS"].sum(),x.loc[x.CLASSIFICACAO.eq("CNP"),"HORAS"].sum(),x.loc[x.CLASSIFICACAO.eq("GM"),"HORAS"].sum(),x.loc[x.CLASSIFICACAO.eq("OUTROS"),"HORAS"].sum(),sem]})
+    with g2:
+        with st.container(border=True):
+            st.markdown("**Composição do tempo**")
+            ch=alt.Chart(comp[comp.HORAS>0]).mark_arc(innerRadius=55).encode(theta="HORAS:Q",color=alt.Color("TIPO:N",title=None),tooltip=["TIPO",alt.Tooltip("HORAS:Q",format=".2f")]).properties(height=260)
+            st.altair_chart(ch,use_container_width=True)
+    with g3:
+        with st.container(border=True):
+            st.markdown("**Tempo por compartimento**")
+            cp=x.groupby("COMPARTIMENTO",as_index=False)["HORAS"].mean(); cp=cp[cp["COMPARTIMENTO"].astype(str).str.strip().ne("")]
+            if cp.empty: st.caption("Sem compartimento informado.")
+            else:
+                ch=alt.Chart(cp).mark_bar().encode(y=alt.Y("COMPARTIMENTO:N",title=None,sort="-x"),x=alt.X("HORAS:Q",title="Horas"),tooltip=["COMPARTIMENTO",alt.Tooltip("HORAS:Q",format=".2f")]).properties(height=260)
+                st.altair_chart(ch,use_container_width=True)
+    t1,t2=st.columns(2,gap="small")
+    with t1:
+        with st.container(border=True):
+            st.markdown("**Top 10 atividades corretivas dentro dos laudos**")
+            tc=x[x.CLASSIFICACAO.eq("CNP")].groupby("ATIVIDADE",as_index=False).agg(QTD=("ATIVIDADE","size"),HORAS=("HORAS","sum")).sort_values(["HORAS","QTD"],ascending=False).head(10)
+            if tc.empty: st.caption("Sem atividades CNP no período.")
+            else:
+                tc["TEMPO TOTAL"]=tc["HORAS"].apply(hhmm); st.dataframe(tc[["ATIVIDADE","QTD","TEMPO TOTAL"]],hide_index=True,use_container_width=True)
+    with t2:
+        with st.container(border=True):
+            st.markdown("**Carretas com maior tempo de manutenção**")
+            top=manut.sort_values("H_MANUT",ascending=False).head(10).copy(); top["TEMPO TOTAL"]=top["H_MANUT"].apply(hhmm); top["INÍCIO"]=top["INICIO"].dt.strftime("%d/%m %H:%M"); top["FIM"]=top["FIM"].dt.strftime("%d/%m %H:%M")
+            st.dataframe(top[["FROTA","INÍCIO","FIM","TEMPO TOTAL"]],hide_index=True,use_container_width=True)
+    st.markdown("**Detalhamento dos laudos do período**")
+    det=x[["FROTA","OS_ID","COMPARTIMENTO","ATIVIDADE","CLASSIFICACAO","EXECUTANTE","HORAS"]].copy(); det["TEMPO"]=det["HORAS"].apply(hhmm); det=det.rename(columns={"OS_ID":"OS/ID","COMPARTIMENTO":"COMP.","CLASSIFICACAO":"TIPO"})
+    st.dataframe(det[["FROTA","OS/ID","COMP.","ATIVIDADE","TIPO","EXECUTANTE","TEMPO"]],hide_index=True,use_container_width=True,height=330)
+
+
 # OFICINA AGORA: mesma lógica-base do app principal: status manutenção + sem fim.
 status=df["status"].fillna("").astype(str).str.upper()
 mon=df[status.str.contains("MANUT",na=False)&df["fim"].isna()].copy()
@@ -569,6 +655,9 @@ with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
 render_laudos_web()
+
+with st.expander("📊 RELATÓRIO GERENCIAL — LAUDOS", expanded=False):
+    render_relatorio_gerencial_laudos()
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
