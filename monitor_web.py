@@ -545,7 +545,10 @@ def _normalizar_atividade_gerencial(txt):
     if any(t in s for t in ["REGULAR CATRACA", "REGULAGEM CATRACA", "REGULAR FREIO", "REGULAGEM FREIO", "REGULA FREIO", "REGUL FREIO"]):
         return "Regulagem de freio"
     # Amarração exige contexto explícito; CATRACA isolada nunca entra aqui.
-    if ("CATRACA" in s and "AMARRACAO" in s):
+    # Aceita variações reais dos laudos: "catraca de amarração",
+    # "suporte da catraca de amarração", "trocar catraca amarração" etc.
+    # A raiz AMARR cobre pequenas variações de escrita sem confundir com catraca de freio.
+    if "CATRACA" in s and ("AMARRACAO" in s or "AMARR" in s):
         return "Catraca de amarração"
 
     # Lona de freio precisa ser resolvida antes da família genérica de lona/porta.
