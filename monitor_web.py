@@ -527,73 +527,88 @@ def render_medias_laudos():
 
 
 def _normalizar_atividade_gerencial(txt):
-    """Agrupa serviços por contexto/prioridade sem alterar a descrição original do laudo."""
+    """Normaliza a atividade para o relatório, preservando componentes distintos."""
     if txt is None or pd.isna(txt):
         return "Outras atividades"
-    s=str(txt).upper().strip()
-    trans=str.maketrans("ÁÀÂÃÉÈÊÍÌÎÓÒÔÕÚÙÛÇ", "AAAAEEEIIIOOOOUUUC")
-    s=s.translate(trans)
-    s=re.sub(r"[^A-Z0-9 ]+", " ", s)
-    s=re.sub(r"\s+", " ", s).strip()
+
+    import unicodedata
+    s = str(txt).upper().strip()
+    s = unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("ASCII")
+    s = re.sub(r"[^A-Z0-9 ]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
     if not s:
         return "Outras atividades"
 
-    # Regras específicas primeiro. Palavras ambíguas (ex.: CATRACA e LONA)
-    # nunca são classificadas isoladamente sem contexto suficiente.
-    if any(t in s for t in ["CATRACA DE FREIO", "CATRACA FREIO"]):
-        return "Catraca de freio"
-    if any(t in s for t in ["REGULAR CATRACA", "REGULAGEM CATRACA", "REGULAR FREIO", "REGULAGEM FREIO", "REGULA FREIO", "REGUL FREIO"]):
-        return "Regulagem de freio"
-    # Amarração exige contexto explícito; CATRACA isolada nunca entra aqui.
-    # Aceita variações reais dos laudos: "catraca de amarração",
-    # "suporte da catraca de amarração", "trocar catraca amarração" etc.
-    # A raiz AMARR cobre pequenas variações de escrita sem confundir com catraca de freio.
-    if "CATRACA" in s and ("AMARRACAO" in s or "AMARR" in s):
-        return "Catraca de amarração"
+    # Leituras evidentemente suspeitas da IA: não inventar classificação.
+    if any(t in s for t in ["VAZAROLA", "VAZARROLA", "VASAROLA", "VASARROLA"]):
+        return "⚠️ Descrição a revisar"
 
-    # Lona de freio precisa ser resolvida antes da família genérica de lona/porta.
+    # FREIO x AMARRAÇÃO: regras específicas e prioritárias.
+    # Nunca classificar CATRACA isoladamente.
+    if "CATRACA" in s and "FREIO" in s:
+        return "Catraca de freio"
+    if "CATRACA" in s and "AMARR" in s:
+        return "Catraca de amarração"
+    if "GANCHO" in s and "AMARR" in s:
+        return "Gancho de amarração"
+    if any(t in s for t in ["REGULAR CATRACA", "REGULAGEM CATRACA", "REGULAR FREIO", "REGULAGEM FREIO", "REGULA FREIO", "REGUL FREIO", "REGULAR S RODAS"]):
+        return "Regulagem de freio"
+    if "TAMBOR" in s and "FREIO" in s:
+        return "Tambor de freio"
+    if any(t in s for t in ["CUICA", "CAMARA DE FREIO"]):
+        return "Cuíca de freio"
     if any(t in s for t in ["LONA DE FREIO", "LONA FREIO", "LONAS DE FREIO", "LONAS FREIO"]):
         return "Lona de freio"
+    if "BRUCUTU" in s:
+        return "Sistema de freio"
+    if "PINCA" in s:
+        return "Sistema de freio"
+
+    # Quinta roda é componente próprio; 'sapata' aqui não significa freio.
+    if any(t in s for t in ["5 RODA", "5A RODA", "QUINTA RODA"]):
+        return "Quinta roda"
+
+    if "PINO REI" in s:
+        return "Pino rei"
+
+    # Lona estrutural do implemento, separada de lona de freio.
     if any(t in s for t in ["PONTA DE LONA", "PONTA LONA", "PONTA DA LONA", "PORTA DE LONA", "PORTA LONA", "PORTAS DE LONA", "PORTAS LONA"]):
         return "Ponta de lona"
-    # Nos laudos da operação, descrições de lona/portas sem referência a freio
-    # representam a família Ponta de lona.
     if ("LONA" in s or "LONAS" in s) and "FREIO" not in s:
         return "Ponta de lona"
 
     if any(t in s for t in ["PROTETOR LATERAL", "PROTECAO LATERAL", "PROTECAO LATER", "PROT LATERAL"]):
         return "Protetor lateral"
 
-    # Estrutura/fabricação tratada gerencialmente como SOLDA.
-    # Suporte(s) de paralama só vira SOLDA quando houver contexto de fabricar/soldar/reparar.
+    # Solda/fabricação estrutural.
     if any(t in s for t in ["CHAPA DE ASSOALHO", "CHAPA ASSOALHO", "ASSOALHO", "SOLDAR", "SOLDA", "TRINCA"]):
         return "SOLDA"
-    if "PARALAMA" in s and ("SUPORTE" in s or "SUPORTES" in s) and any(t in s for t in ["FABRICAR", "FABRICACAO", "SOLDAR", "SOLDA", "REPARAR"]):
+    if "PARALAMA" in s and "SUPORTE" in s and any(t in s for t in ["FABRICAR", "FABRICACAO", "SOLDAR", "SOLDA", "REPARAR"]):
         return "SOLDA"
-
-    # Troca/reparo do próprio paralama é intervenção distinta de fabricação de suporte.
-    if "PARALAMA" in s or "PARALAMAS" in s:
+    if "PARALAMA" in s:
         return "Paralama"
 
-    # Componentes pneumáticos / sistema de ar.
+    # Suspensão / rodeiro.
+    if any(t in s for t in ["BUCHA", "BUCHAS", "MANCAL", "BALANCA"]):
+        return "Bucha / Mancal / Balança"
+    if any(t in s for t in ["AMORTECEDOR", "PONTA DE EIXO", "PONTAS DE EIXO", "MOLA AZUL", "LAMINA", "SUSPENSAO", "TIRANTE", "TIRANTES"]):
+        return "Suspensão"
+    if any(t in s for t in ["FOLGA DE CUBO", "CUBO", "RODEIRO TRAVADO", "RODEIRO PRESO", "DESTRAVAR RODEIRO", "DESTRAVAMENTO RODEIRO"]):
+        return "Cubo / Rodeiro"
+    if any(t in s for t in ["BOLSA DE SUSPENSAO", "BOLSA SUSPENSAO", "BOLSA DE AR", "VALVULA NIVELADORA", "NIVELADORA", "DRENO DO BALAO", "DRENO BALAO"]):
+        return "Suspensão pneumática"
+
+    # Sistema pneumático geral, depois das regras específicas de suspensão.
     if any(t in s for t in ["GATILHO PNEUMATICO", "PNEUMATICO", "PNEUMATICA", "VAZAMENTO DE AR", "MANGUEIRA DE AR", "CONEXAO DE AR"]):
         return "Pneumático / Sistema de ar"
 
-    # Suspensão e tirantes. Bucha/mancal/balança permanece em família própria quando explícito.
-    if any(t in s for t in ["BUCHA", "BUCHAS", "MANCAL", "BALANCA"]):
-        return "Bucha / Mancal / Balança"
-    if any(t in s for t in ["SUSPENSAO", "TIRANTE", "TIRANTES"]):
-        return "Suspensão"
+    if "CALCO" in s and "CAVALO" in s:
+        return "Calço de cavalo"
+
     if any(t in s for t in ["TROCA DE PNEU", "TROCAR PNEU", "SUBSTITUIR PNEU", "SUBSTITUICAO PNEU"]):
         return "Troca de pneu"
-    if any(t in s for t in ["RODEIRO TRAVADO", "RODEIRO PRESO", "DESTRAVAR RODEIRO", "DESTRAVAMENTO RODEIRO"]):
-        return "Rodeiro travado"
     if any(t in s for t in ["CORUJINHA", "ILUMINACAO", "LANTERNA", "LANTERNAS", "LUZ LATERAL", "LUZ DE POSICAO"]):
         return "Iluminação / Corujinha"
-    if any(t in s for t in ["CUICA", "CAMARA DE FREIO"]):
-        return "Cuíca de freio"
-    if any(t in s for t in ["BOLSA DE SUSPENSAO", "BOLSA SUSPENSAO", "BOLSA DE AR"]):
-        return "Bolsa de suspensão"
 
     return "Outras atividades"
 
