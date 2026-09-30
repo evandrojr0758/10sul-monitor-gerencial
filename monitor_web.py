@@ -544,7 +544,8 @@ def _normalizar_atividade_gerencial(txt):
         return "Catraca de freio"
     if any(t in s for t in ["REGULAR CATRACA", "REGULAGEM CATRACA", "REGULAR FREIO", "REGULAGEM FREIO", "REGULA FREIO", "REGUL FREIO"]):
         return "Regulagem de freio"
-    if any(t in s for t in ["CATRACA DE AMARRACAO", "CATRACA AMARRACAO", "CATRACA DA AMARRACAO"]):
+    # Amarração exige contexto explícito; CATRACA isolada nunca entra aqui.
+    if ("CATRACA" in s and "AMARRACAO" in s):
         return "Catraca de amarração"
 
     # Lona de freio precisa ser resolvida antes da família genérica de lona/porta.
@@ -561,11 +562,25 @@ def _normalizar_atividade_gerencial(txt):
         return "Protetor lateral"
 
     # Estrutura/fabricação tratada gerencialmente como SOLDA.
-    if any(t in s for t in ["CHAPA DE ASSOALHO", "CHAPA ASSOALHO", "ASSOALHO", "SOLDAR", "SOLDA", "TRINCA", "SUPORTE DO PARALAMA", "SUPORTE PARALAMA", "FABRICAR SUPORTE"]):
+    # Suporte(s) de paralama só vira SOLDA quando houver contexto de fabricar/soldar/reparar.
+    if any(t in s for t in ["CHAPA DE ASSOALHO", "CHAPA ASSOALHO", "ASSOALHO", "SOLDAR", "SOLDA", "TRINCA"]):
+        return "SOLDA"
+    if "PARALAMA" in s and ("SUPORTE" in s or "SUPORTES" in s) and any(t in s for t in ["FABRICAR", "FABRICACAO", "SOLDAR", "SOLDA", "REPARAR"]):
         return "SOLDA"
 
+    # Troca/reparo do próprio paralama é intervenção distinta de fabricação de suporte.
+    if "PARALAMA" in s or "PARALAMAS" in s:
+        return "Paralama"
+
+    # Componentes pneumáticos / sistema de ar.
+    if any(t in s for t in ["GATILHO PNEUMATICO", "PNEUMATICO", "PNEUMATICA", "VAZAMENTO DE AR", "MANGUEIRA DE AR", "CONEXAO DE AR"]):
+        return "Pneumático / Sistema de ar"
+
+    # Suspensão e tirantes. Bucha/mancal/balança permanece em família própria quando explícito.
     if any(t in s for t in ["BUCHA", "BUCHAS", "MANCAL", "BALANCA"]):
         return "Bucha / Mancal / Balança"
+    if any(t in s for t in ["SUSPENSAO", "TIRANTE", "TIRANTES"]):
+        return "Suspensão"
     if any(t in s for t in ["TROCA DE PNEU", "TROCAR PNEU", "SUBSTITUIR PNEU", "SUBSTITUICAO PNEU"]):
         return "Troca de pneu"
     if any(t in s for t in ["RODEIRO TRAVADO", "RODEIRO PRESO", "DESTRAVAR RODEIRO", "DESTRAVAMENTO RODEIRO"]):
