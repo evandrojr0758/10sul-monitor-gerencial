@@ -448,6 +448,63 @@ def render_medias_supervisor():
     with c2:
         with st.container(border=True): _quadro_supervisor("REVISÃO","🛠️")
 
+@st.dialog("📑 Embasamento contratual", width="large")
+def modal_embasamento_contratual(tema):
+    # Conteúdo operacional sanitizado: não publica preços, contatos ou o PDF integral.
+    dados = {
+        "ITR": {
+            "titulo": "ITR — Tempo médio contratual",
+            "destaque": "12:00 horas",
+            "texto": "A referência contratual utilizada no monitor é de 12 horas para ITR, composta por 6 horas de inspeção técnica de rotina e 6 horas para correção dos itens provenientes da ITR.",
+            "ref": "Proposta Comercial nº 27052024 — Revisão 10 • referência operacional de ITR / nível de serviço",
+        },
+        "REVISÃO": {
+            "titulo": "Revisão — Tempo médio contratual",
+            "destaque": "24:00 horas",
+            "texto": "A referência contratual utilizada no monitor é de 24 horas de tempo médio de atendimento por veículo para Revisão.",
+            "ref": "Proposta Comercial nº 27052024 — Revisão 10 • referência operacional de Revisão / nível de serviço",
+        },
+        "GM": {
+            "titulo": "GM — Tratamento contratual",
+            "destaque": "Ocorrência operacional",
+            "texto": "O documento prevê a exclusão, no cálculo dos indicadores, de avarias com GM por ocorrência operacional. A proposta utilizada como base não apresenta, nesse trecho, uma definição formal da sigla GM; por isso o monitor não amplia essa definição por conta própria.",
+            "ref": "Proposta Comercial nº 27052024 — Revisão 10 • regras de mensuração / exclusões",
+        },
+        "FORA DO ESCOPO": {
+            "titulo": "Atividades fora do escopo normal",
+            "destaque": "Tratamento separado",
+            "texto": "O documento separa alterações das características originais e intervenções maiores, usando como referência intervenções superiores a 10 HH. Também relaciona fabricação, usinagem, recondicionamento de peças, adequação/modificação de estrutura e veículos sinistrados como atividades não incluídas na proposta, observadas as ressalvas do próprio documento.",
+            "ref": "Proposta Comercial nº 27052024 — Revisão 10 • escopo e exclusões",
+        },
+        "EXPURGOS": {
+            "titulo": "Expurgos — Tempos desconsideráveis",
+            "destaque": "Conforme condição contratual",
+            "texto": "Podem ser tratados como expurgo, conforme as condições do documento, tempos atribuíveis à contratante e situações previstas, como aguardando peças, peças de má qualidade comprovada, serviços estruturais, garantias executadas por terceiros e documentação de responsabilidade da contratante.",
+            "ref": "Proposta Comercial nº 27052024 — Revisão 10 • condições de abatimento do tempo médio",
+        },
+        "RESPONSABILIDADES": {
+            "titulo": "Responsabilidades operacionais",
+            "destaque": "Consulta gerencial",
+            "texto": "Esta seção resume apenas responsabilidades operacionais necessárias à interpretação dos indicadores. Informações comerciais, valores, contatos e demais dados sensíveis não são exibidos no Monitor Web.",
+            "ref": "Proposta Comercial nº 27052024 — Revisão 10 • responsabilidades da contratante e da contratada",
+        },
+    }
+    d=dados.get(tema,dados["ITR"])
+    st.markdown(f"### {d['titulo']}")
+    st.markdown(f"<div style='background:#eef6ff;border:1px solid #cfe2ff;border-radius:12px;padding:14px;margin:8px 0 14px'><div style='font-size:12px;font-weight:800;color:#667085'>REFERÊNCIA</div><div style='font-size:25px;font-weight:900;color:#10284a'>{d['destaque']}</div></div>",unsafe_allow_html=True)
+    st.write(d["texto"])
+    st.caption(d["ref"])
+    st.info("🔒 Visualização sanitizada: o contrato integral, preços, contatos e demais dados sensíveis não são disponibilizados neste monitor.")
+
+def render_embasamento_contratual():
+    st.markdown("<div class='mon-section'><div class='mon-section-title'>📑 EMBASAMENTO CONTRATUAL</div><div class='mon-section-sub'>Consulta operacional sanitizada dos critérios utilizados no monitor — sem valores ou dados comerciais sensíveis</div></div>",unsafe_allow_html=True)
+    temas=[("ITR","ITR • 12h"),("REVISÃO","REVISÃO • 24h"),("GM","GM"),("FORA DO ESCOPO","FORA DO ESCOPO"),("EXPURGOS","EXPURGOS"),("RESPONSABILIDADES","RESPONSABILIDADES")]
+    cols=st.columns(6,gap="small")
+    for i,(tema,rotulo) in enumerate(temas):
+        with cols[i]:
+            if st.button(f"📑\n{rotulo}",key=f"emb_{i}",use_container_width=True):
+                modal_embasamento_contratual(tema)
+
 
 def _coluna_laudo(d, nomes):
     """Localiza coluna mesmo que o importador use espaço ou underscore."""
@@ -734,6 +791,8 @@ st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
 render_medias_supervisor()
+
+render_embasamento_contratual()
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 @st.dialog("Relação de carretas", width="large")
