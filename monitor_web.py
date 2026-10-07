@@ -768,8 +768,22 @@ def render_relatorio_gerencial_laudos():
         with b: di0=st.date_input("De",value=mes_ini_rg.date(),key="rg_de")
         with c: df0=st.date_input("Até",value=hoje_rg.date(),key="rg_ate")
         di=pd.Timestamp(di0); dfim=pd.Timestamp(df0)+pd.Timedelta(days=1)-pd.Timedelta(seconds=1)
+    frotas_rg=sorted(
+        frota for frota in d["FROTA"].unique()
+        if frota and frota.lower() not in ("nan","none","null","<na>")
+    )
+    frota_rg=st.selectbox(
+        "🔎 Filtrar por frota",
+        ["Todas as frotas"]+frotas_rg,
+        key="rg_frota",
+        help="Digite o número para localizar uma frota. O filtro atualiza todos os indicadores, gráficos e detalhes deste relatório.",
+    )
     x=d[(d["INI_DT"]>=di)&(d["INI_DT"]<=dfim)].copy()
-    if x.empty: st.info("Sem laudos conferidos no período selecionado."); return
+    if frota_rg!="Todas as frotas":
+        x=x[x["FROTA"].eq(frota_rg)].copy()
+    if x.empty:
+        st.info("Sem laudos conferidos para a frota e o período selecionados." if frota_rg!="Todas as frotas" else "Sem laudos conferidos no período selecionado.")
+        return
     osid=x["OS_ID"].fillna("").astype(str).str.strip(); reg=x["REGISTRO"].fillna("").astype(str).str.strip()
     x["CHAVE_OS"]=osid.where(osid.ne("")&osid.str.lower().ne("nan"),reg)
     x["CHAVE_OS"]=x["CHAVE_OS"].where(x["CHAVE_OS"].ne(""),x.index.astype(str))
