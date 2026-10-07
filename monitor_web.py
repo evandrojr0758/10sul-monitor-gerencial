@@ -799,8 +799,27 @@ def render_relatorio_gerencial_laudos():
     with g2:
         with st.container(border=True):
             st.markdown("**Composição do tempo**")
-            ch=alt.Chart(comp[comp.HORAS>0]).mark_arc(innerRadius=55).encode(theta="HORAS:Q",color=alt.Color("TIPO:N",title=None),tooltip=["TIPO",alt.Tooltip("HORAS:Q",format=".2f")]).properties(height=260)
-            st.altair_chart(ch,use_container_width=True)
+            _sel_tipo=alt.selection_point(fields=["TIPO"],name="tipo_rg",on="click",clear="dblclick")
+            ch=(alt.Chart(comp[comp.HORAS>0]).mark_arc(innerRadius=55)
+                .encode(theta="HORAS:Q",color=alt.Color("TIPO:N",title=None),
+                        opacity=alt.condition(_sel_tipo,alt.value(1.0),alt.value(0.35)),
+                        tooltip=["TIPO",alt.Tooltip("HORAS:Q",format=".2f")])
+                .add_params(_sel_tipo).properties(height=260))
+            _ev_tipo=st.altair_chart(ch,use_container_width=True,on_select="rerun",key="rg_composicao_tipo")
+            _tipo_click=None
+            try:
+                _raw=_ev_tipo.selection.get("tipo_rg",[])
+                if isinstance(_raw,list) and _raw:
+                    _tipo_click=str(_raw[0].get("TIPO","") or "").upper().strip()
+            except Exception:
+                _tipo_click=None
+            if _tipo_click:
+                st.session_state["rg_tipo_atividade"]=_tipo_click
+            _tipo_filtro=st.session_state.get("rg_tipo_atividade")
+            if _tipo_filtro:
+                st.caption(f"Filtro ativo: {_tipo_filtro} · dê duplo clique no gráfico ou use Limpar.")
+                if st.button("✖ Limpar filtro",key="rg_limpar_tipo",use_container_width=True):
+                    st.session_state.pop("rg_tipo_atividade",None); st.rerun()
     with g3:
         with st.container(border=True):
             st.markdown("**Tempo por compartimento**")
@@ -814,10 +833,17 @@ def render_relatorio_gerencial_laudos():
         with st.container(border=True):
             st.markdown("**🔧 Principais intervenções identificadas nos laudos**")
             st.caption("Conta cada frota uma única vez por família de serviço, mesmo que a atividade apareça em vários compartimentos. Clique em uma linha para conferir as descrições originais.")
-            tc=x[x.CLASSIFICACAO.eq("CNP")].copy()
-            if tc.empty:
-                st.caption("Sem atividades CNP no período.")
+            _tipo_ativo=st.session_state.get("rg_tipo_atividade")
+            if _tipo_ativo=="SEM APONTAMENTO":
+                tc=x.iloc[0:0].copy()
+                st.info("SEM APONTAMENTO é o intervalo da manutenção sem atividade registrada; por isso não há atividades para listar.")
+            elif _tipo_ativo in ("ITR","CNP","GM","OUTROS"):
+                tc=x[x.CLASSIFICACAO.eq(_tipo_ativo)].copy()
             else:
+                tc=x.copy()
+            if tc.empty and _tipo_ativo!="SEM APONTAMENTO":
+                st.caption(f"Sem atividades {_tipo_ativo or ''} no período.".replace("  "," "))
+            elif _tipo_ativo!="SEM APONTAMENTO":
                 tc["FAMILIA"] = tc["ATIVIDADE"].apply(_normalizar_atividade_gerencial)
                 tc["_OS_FROTA"] = tc["CHAVE_OS"].astype(str)+"|"+tc["FROTA"].astype(str)
                 fam=(tc.groupby("FAMILIA",as_index=False)
