@@ -181,6 +181,22 @@ def baixar_evidencia_laudo_web(path):
         return (r.content,r.headers.get("content-type","")) if r.ok else (None,"")
     except Exception:return None,""
 
+def atualizar_atividade_laudo_web(atividade_id, dados):
+    """Atualiza uma atividade já conferida na tabela public.laudos_monitor."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False,"Supabase não configurado."
+    aid=str(atividade_id or "").strip()
+    if not aid:
+        return False,"Atividade sem identificador; não é seguro editar."
+    try:
+        url=f"{SUPABASE_URL}/rest/v1/laudos_monitor"
+        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}","Content-Type":"application/json","Prefer":"return=minimal"}
+        r=requests.patch(url,headers=h,params={"atividade_id":f"eq.{aid}"},json=dados,timeout=45)
+        if not r.ok:return False,f"Supabase HTTP {r.status_code}: {r.text[:500]}"
+        carregar_laudos_manuais_web.clear()
+        return True,"Alteração salva."
+    except Exception as e:return False,str(e)
+
 def render_laudos_web():
     import json
     d=carregar_laudos_manuais_web()
@@ -297,6 +313,7 @@ def render_laudos_web():
     detalhes=pd.DataFrame({
         "ATIVIDADE":[("📎 "+str(a)+"  ›") if tem else (str(a)+"  ›")
                      for a,tem in zip(det["ATIVIDADE"].fillna("Atividade"),det["_TEM_EVIDENCIA"])],
+        "TIPO":det["CLASSIFICACAO"].fillna("OUTROS").astype(str),
         "INÍCIO":det["INICIO_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
         "FIM":det["FIM_ATIVIDADE_DT"].apply(lambda x:"--:--" if pd.isna(x) else x.strftime("%H:%M")),
         "TEMPO TOTAL":det["HORAS"].apply(hhmm),
@@ -318,6 +335,61 @@ def render_laudos_web():
     rows2=list(ev2.selection.rows) if hasattr(ev2,"selection") else []
     if rows2:
         st.session_state["waid"]=str(det.reset_index(drop=True).iloc[int(rows2[0])]["_AID_SEL"])
+
+    # Edição controlada do laudo já publicado.
+    with st.expander("✏️ Editar laudo", expanded=False):
+        edit_base=det.reset_index(drop=True).copy()
+        edit_view=pd.DataFrame({
+            "ATIVIDADE":edit_base["ATIVIDADE"].fillna("").astype(str),
+            "EXECUTANTE":edit_base["EXECUTANTE"].fillna("").astype(str),
+            "TIPO":edit_base["CLASSIFICACAO"].fillna("OUTROS").astype(str),
+            "INÍCIO":edit_base["INICIO_ATIVIDADE_DT"].apply(lambda x:"" if pd.isna(x) else x.strftime("%H:%M")),
+            "FIM":edit_base["FIM_ATIVIDADE_DT"].apply(lambda x:"" if pd.isna(x) else x.strftime("%H:%M")),
+        })
+        editado=st.data_editor(
+            edit_view,hide_index=True,use_container_width=True,num_rows="fixed",
+            key=f"editar_laudo_{reg}_{frota_chave}",
+            column_config={"TIPO":st.column_config.SelectboxColumn("TIPO",options=["ITR","CNP","GM","OUTROS"],required=True)}
+        )
+        if st.button("💾 SALVAR ALTERAÇÕES",type="primary",key=f"salvar_edicao_{reg}_{frota_chave}"):
+            erros=[]; alteradas=0
+            for i,r in editado.iterrows():
+                orig=edit_base.iloc[i]
+                aid_real=str(orig.get("ATIVIDADE_ID","") or "").strip()
+                if not aid_real or aid_real.lower()=="nan":
+                    erros.append(f"Linha {i+1}: atividade sem ID interno."); continue
+                try:
+                    base_ini=pd.to_datetime(orig.get("INICIO_ATIVIDADE"),errors="coerce")
+                    base_fim=pd.to_datetime(orig.get("FIM_ATIVIDADE"),errors="coerce")
+                    h1=datetime.strptime(str(r["INÍCIO"]).strip(),"%H:%M").time()
+                    h2=datetime.strptime(str(r["FIM"]).strip(),"%H:%M").time()
+                    dia=(base_ini.date() if not pd.isna(base_ini) else pd.Timestamp.today().date())
+                    dt1=pd.Timestamp(datetime.combine(dia,h1)); dt2=pd.Timestamp(datetime.combine(dia,h2))
+                    if dt2<dt1:dt2+=pd.Timedelta(days=1)
+                    payload={
+                        "atividade":str(r["ATIVIDADE"]).strip(),
+                        "executante":str(r["EXECUTANTE"]).strip(),
+                        "classificacao":str(r["TIPO"]).strip().upper(),
+                        "inicio_atividade":dt1.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "fim_atividade":dt2.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "horas":max(0,(dt2-dt1).total_seconds()/3600),
+                    }
+                    mudou=(payload["atividade"]!=str(orig.get("ATIVIDADE","") or "").strip()
+                           or payload["executante"]!=str(orig.get("EXECUTANTE","") or "").strip()
+                           or payload["classificacao"]!=str(orig.get("CLASSIFICACAO","") or "").strip().upper()
+                           or payload["inicio_atividade"]!=(base_ini.strftime("%Y-%m-%dT%H:%M:%S") if not pd.isna(base_ini) else "")
+                           or payload["fim_atividade"]!=(base_fim.strftime("%Y-%m-%dT%H:%M:%S") if not pd.isna(base_fim) else ""))
+                    if mudou:
+                        ok,msg=atualizar_atividade_laudo_web(aid_real,payload)
+                        if ok:alteradas+=1
+                        else:erros.append(f"Linha {i+1}: {msg}")
+                except Exception:
+                    erros.append(f"Linha {i+1}: confira INÍCIO e FIM no formato HH:MM.")
+            if erros:
+                st.error(" | ".join(erros[:6]))
+            else:
+                st.success(f"✅ {alteradas} atividade(s) atualizada(s).")
+                st.rerun()
 
     # 3) ATIVIDADE SELECIONADA — evidencia somente desta atividade.
     aid=st.session_state.get("waid")
