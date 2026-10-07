@@ -167,6 +167,25 @@ def carregar_laudos_manuais_web():
             "horas":"HORAS","evidencias":"EVIDENCIAS"
         }
         d=d.rename(columns={k:v for k,v in ren.items() if k in d.columns})
+        # FIM_MANUTENCAO preserva a liberação informada no laudo (10 Sul).
+        # A liberação da cliente vem da base sincronizada e não sobrescreve o laudo.
+        d["FIM_CLIENTE"]=""
+        try:
+            atend=carregar()
+            if not atend.empty and all(c in atend.columns for c in ["os_id","frota","fim"]):
+                def chave_os(v):
+                    return re.sub(r"\\.0$","",str(v).strip())
+                atend=atend.copy()
+                atend["_OS"]=atend["os_id"].apply(chave_os)
+                atend["_FROTA"]=atend["frota"].apply(norm_frota)
+                atend["_FIM"]=pd.to_datetime(atend["fim"],errors="coerce")
+                finais=atend.groupby(["_OS","_FROTA"])["_FIM"].max()
+                d["FIM_CLIENTE"]=[
+                    finais.get((chave_os(osid),norm_frota(fr)),pd.NaT)
+                    for osid,fr in zip(d["OS_ID"],d["FROTA"])
+                ]
+        except Exception as e:
+            st.session_state["_erro_fim_cliente"]=str(e)
         st.session_state.pop("_erro_laudos_web",None)
         return d
     except Exception as e:
@@ -298,6 +317,12 @@ def render_laudos_web():
     det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower()!="nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
 
     st.markdown(f"**Frota {det.iloc[0]['FROTA']} — detalhamento**")
+    liberacoes=pd.DataFrame({
+        "FIM INFORMADO — 10 SUL":pd.to_datetime(det["FIM_MANUTENCAO"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informado"),
+        "FIM CLIENTE":pd.to_datetime(det["FIM_CLIENTE"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("OS ainda sem baixa"),
+    }).drop_duplicates()
+    st.dataframe(liberacoes,hide_index=True,use_container_width=True)
+
 
     def _tem_evidencia_atual(v):
         try:
