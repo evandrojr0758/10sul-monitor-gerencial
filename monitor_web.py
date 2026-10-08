@@ -1251,6 +1251,9 @@ render_medias_supervisor()
 with st.expander("📑 EMBASAMENTO CONTRATUAL", expanded=False):
     render_embasamento_contratual()
 
+with st.expander("📊 RELATÓRIO GERENCIAL — LAUDOS", expanded=False):
+    render_relatorio_gerencial_laudos()
+
 with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
     st.caption("Médias calculadas pelos tempos apontados nos laudos, agrupadas pela data de INÍCIO 10 SUL.")
     render_medias_laudos()
@@ -1260,9 +1263,6 @@ render_laudos_web()
 
 with st.expander("📋 ITR SEM VÍNCULO COM LAUDO", expanded=True):
     render_itr_sem_laudo()
-
-with st.expander("📊 RELATÓRIO GERENCIAL — LAUDOS", expanded=False):
-    render_relatorio_gerencial_laudos()
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
