@@ -1215,11 +1215,6 @@ mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_html=True)
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
-render_medias_supervisor()
-
-with st.expander("📑 EMBASAMENTO CONTRATUAL", expanded=False):
-    render_embasamento_contratual()
-
 st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 @st.dialog("Relação de carretas", width="large")
 def modal_os_abertas(titulo, dados):
@@ -1250,6 +1245,11 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         # Botão real: funciona por toque no celular e clique no computador.
         if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
             modal_os_abertas(lab,dados_card)
+
+render_medias_supervisor()
+
+with st.expander("📑 EMBASAMENTO CONTRATUAL", expanded=False):
+    render_embasamento_contratual()
 
 with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
     st.caption("Médias calculadas pelos tempos apontados nos laudos, agrupadas pela data de INÍCIO 10 SUL.")
