@@ -894,11 +894,13 @@ def apurar_tempos_justificados(manut,piv,justificativas):
     return base
 
 
-def salvar_justificativa_laudo(osid,frota,minutos,motivo,observacao,responsavel):
+def salvar_justificativa_laudo(osid,frota,minutos,motivo,observacao,responsavel,inicio=None,fim=None):
     import uuid
     registro={"versao":1,"id":uuid.uuid4().hex,"os_id":_chave_vinculo_laudo(osid),
               "frota":_chave_vinculo_laudo(frota),"minutos":int(minutos),"motivo":motivo,
               "observacao":observacao.strip(),"responsavel":responsavel.strip(),
+              "inicio":inicio.isoformat() if inicio is not None else None,
+              "fim":fim.isoformat() if fim is not None else None,
               "registrado_em":pd.Timestamp.now(tz="America/Sao_Paulo").isoformat()}
     h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}","Content-Type":"application/json","x-upsert":"false"}
     r=requests.post(f"{SUPABASE_URL}/storage/v1/object/evidencias-desvios/justificativas-laudos/{registro['id']}.json",headers=h,json=registro,timeout=45)
@@ -922,8 +924,10 @@ def modal_justificativas_laudos(manut,piv,os_validas,consulta=False):
         hist=js[[(_chave_vinculo_laudo(r.os_id),_chave_vinculo_laudo(r.frota)) in chaves for _,r in js.iterrows()]].copy()
         if not hist.empty:
             hist["TEMPO"]=hist["minutos"].apply(lambda v:hhmm(float(v)/60))
+            for _c in ("inicio","fim"):
+                if _c not in hist.columns: hist[_c]=None
             st.markdown("**Justificativas registradas**")
-            st.dataframe(hist[["os_id","frota","TEMPO","motivo","observacao","responsavel","registrado_em"]].rename(columns={"os_id":"OS/ID","frota":"FROTA","motivo":"MOTIVO","observacao":"OBSERVAÇÃO","responsavel":"RESPONSÁVEL INFORMADO","registrado_em":"REGISTRO"}),hide_index=True,use_container_width=True)
+            st.dataframe(hist[["os_id","frota","inicio","fim","TEMPO","motivo","observacao","responsavel","registrado_em"]].rename(columns={"os_id":"OS/ID","frota":"FROTA","inicio":"INÍCIO","fim":"FIM","motivo":"MOTIVO","observacao":"OBSERVAÇÃO","responsavel":"RESPONSÁVEL INFORMADO","registrado_em":"REGISTRO"}),hide_index=True,use_container_width=True)
     if consulta: return
     op=base[base["PENDENTE"]>0].copy()
     op=op[[(_chave_vinculo_laudo(o),_chave_vinculo_laudo(f)) in os_validas for o,f in zip(op.CHAVE_OS,op.FROTA)]] if len(op) else op
@@ -933,29 +937,52 @@ def modal_justificativas_laudos(manut,piv,os_validas,consulta=False):
     pos=st.selectbox("Manutenção",range(len(op)),format_func=lambda i:f"Frota {op.iloc[i]['FROTA']} · OS {op.iloc[i]['CHAVE_OS']} · Saldo {hhmm(op.iloc[i]['PENDENTE'])}")
     row=op.iloc[pos]
     with st.form("registrar_justificativa_tempo"):
-        tempo=st.text_input("Tempo a justificar (HH:MM)",value=hhmm(row["PENDENTE"]))
-        motivo=st.selectbox("Motivo",["Aguardando peça","Aguardando liberação do cliente","Intervalo","Falta de equipe","Outros"])
+        st.caption("Adicione quantos intervalos forem necessários. Cada justificativa é salva separadamente.")
+        motivo=st.selectbox("Motivo",["Inspeção da Mega","Aguardando box","Aguardando peça","Aguardando liberação do cliente","Intervalo","Falta de equipe","Outros"])
+        c_ini,c_fim=st.columns(2)
+        inicio=c_ini.time_input("Início",value=None,step=60)
+        fim=c_fim.time_input("Fim",value=None,step=60)
         obs=st.text_area("Observação")
         nome=st.text_input("Responsável pelo registro")
-        gravar=st.form_submit_button("Salvar justificativa",type="primary")
+        gravar=st.form_submit_button("Adicionar justificativa",type="primary")
     if gravar:
-        match=re.fullmatch(r"(\d+):([0-5]\d)",tempo.strip())
-        if not match or not nome.strip() or (motivo=="Outros" and not obs.strip()):
-            st.error("Informe o tempo em HH:MM, o responsável e a observação quando o motivo for Outros.")
+        if inicio is None or fim is None or not nome.strip() or (motivo=="Outros" and not obs.strip()):
+            st.error("Informe início, fim, responsável e observação quando o motivo for Outros.")
             return
-        minutos=int(match[1])*60+int(match[2])
+        from datetime import datetime as _datetime
+        dia_base=pd.to_datetime(row.get("INICIO"),errors="coerce")
+        if pd.isna(dia_base):
+            st.error("A manutenção está sem data de início válida.")
+            return
+        inicio_dt=_datetime.combine(dia_base.date(),inicio)
+        fim_dt=_datetime.combine(dia_base.date(),fim)
+        if fim_dt<=inicio_dt:
+            st.error("O horário final deve ser posterior ao inicial. Para intervalos que atravessam a meia-noite, registre em dias separados.")
+            return
+        minutos=int((fim_dt-inicio_dt).total_seconds()//60)
         try:
             carregar_justificativas_laudos.clear()
-            atual=apurar_tempos_justificados(manut,piv,carregar_justificativas_laudos())
+            js_atual=carregar_justificativas_laudos()
+            atual=apurar_tempos_justificados(manut,piv,js_atual)
             saldo=atual.loc[atual.CHAVE_OS.eq(row.CHAVE_OS)&atual.FROTA.eq(row.FROTA),"PENDENTE"].iloc[0]
             if minutos<=0 or minutos>int(round(saldo*60)):
-                st.error("O tempo deve ser maior que zero e não pode ultrapassar o saldo da OS.")
+                st.error("O intervalo deve ter duração positiva e não pode ultrapassar o saldo da OS.")
                 return
-            salvar_justificativa_laudo(row.CHAVE_OS,row.FROTA,minutos,motivo,obs,nome)
+            if not js_atual.empty:
+                for _,reg in js_atual.iterrows():
+                    if (_chave_vinculo_laudo(reg.get("os_id"))!=_chave_vinculo_laudo(row.CHAVE_OS)
+                        or _chave_vinculo_laudo(reg.get("frota"))!=_chave_vinculo_laudo(row.FROTA)):
+                        continue
+                    ant_ini=pd.to_datetime(reg.get("inicio"),errors="coerce")
+                    ant_fim=pd.to_datetime(reg.get("fim"),errors="coerce")
+                    if pd.notna(ant_ini) and pd.notna(ant_fim) and inicio_dt<ant_fim.to_pydatetime() and fim_dt>ant_ini.to_pydatetime():
+                        st.error("Este intervalo se sobrepõe a uma justificativa já registrada.")
+                        return
+            salvar_justificativa_laudo(row.CHAVE_OS,row.FROTA,minutos,motivo,obs,nome,inicio_dt,fim_dt)
             st.session_state["justificativa_salva"]=True
             st.rerun()
-        except Exception:
-            st.error("Não foi possível salvar. Confira o acesso de gravação ao armazenamento e consulte o histórico antes de tentar novamente.")
+        except Exception as e:
+            st.error(f"Não foi possível salvar a justificativa: {e}")
 
 
 
