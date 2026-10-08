@@ -519,6 +519,72 @@ def _grafico_media_diaria(g,sla):
         x=alt.value("width"),y="SLA:Q",text="TXT:N")
     st.altair_chart((linha+pts+rot+rule+lab).properties(height=135),use_container_width=True)
 
+def _base_medias_origem(tipo,origem):
+    """Datas da origem escolhida; nenhuma data Suzano substitui uma data 10 Sul."""
+    e=df["evento"].fillna("").astype(str).str.strip().str.upper()
+    mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
+    b=df[mask & ~df["frota"].isin(ESPECIAIS)].copy()
+    b["OS/ID"]=b["os_id"].apply(_chave_vinculo_laudo)
+    b["FROTA"]=b["frota"].apply(_chave_vinculo_laudo)
+    if origem=="Suzano":
+        b["INICIO_CALC"]=pd.to_datetime(b["inicio"],errors="coerce")
+        b["FIM_CALC"]=pd.to_datetime(b["fim"],errors="coerce")
+        base=b[["OS/ID","FROTA","INICIO_CALC","FIM_CALC"]].copy()
+        base=base.sort_values("FIM_CALC",na_position="first").drop_duplicates(["OS/ID","FROTA"],keep="last")
+    else:
+        laudos=carregar_laudos_manuais_web().copy()
+        cols=["OS/ID","FROTA","INICIO_CALC","FIM_CALC"]
+        if laudos.empty or not {"OS_ID","FROTA","INICIO_MANUTENCAO","FIM_MANUTENCAO"}.issubset(laudos.columns):
+            return pd.DataFrame(columns=cols+["HORAS"])
+        laudos["OS/ID"]=laudos["OS_ID"].apply(_chave_vinculo_laudo)
+        laudos["FROTA"]=laudos["FROTA"].apply(_chave_vinculo_laudo)
+        laudos["INICIO_CALC"]=pd.to_datetime(laudos["INICIO_MANUTENCAO"],errors="coerce")
+        laudos["FIM_CALC"]=pd.to_datetime(laudos["FIM_MANUTENCAO"],errors="coerce")
+        base=laudos.groupby(["OS/ID","FROTA"],as_index=False).agg(INICIO_CALC=("INICIO_CALC","min"),FIM_CALC=("FIM_CALC","max"))
+        base=base.merge(b[["OS/ID","FROTA"]].drop_duplicates(),on=["OS/ID","FROTA"],how="inner")
+    base=base[base["OS/ID"].ne("") & base["FROTA"].ne("") & base["INICIO_CALC"].notna() & base["FIM_CALC"].notna() & (base["FIM_CALC"]>=base["INICIO_CALC"]) & (base["FIM_CALC"]<=agora)].copy()
+    base["HORAS"]=(base["FIM_CALC"]-base["INICIO_CALC"]).dt.total_seconds()/3600
+    return base.sort_values("FIM_CALC",ascending=False).reset_index(drop=True)
+
+
+def _recorte_media_origem(base,periodo):
+    if periodo=="Mês acumulado":
+        inicio=agora.normalize().replace(day=1); fim=agora
+        return base[base["FIM_CALC"].between(inicio,fim)].copy()
+    dia=agora.normalize()-pd.Timedelta(days=1)
+    return base[(base["FIM_CALC"]>=dia)&(base["FIM_CALC"]<dia+pd.Timedelta(days=1))].copy()
+
+
+@st.dialog("Ordens computadas na média",width="large")
+def modal_ordens_media(tipo,origem,periodo,base):
+    st.markdown(f"### {tipo} · {origem} · {periodo}")
+    if base.empty:
+        st.info("Nenhuma OS com início e fim válidos nessa origem e nesse período.")
+        return
+    total=base["HORAS"].sum(); quantidade=len(base)
+    st.metric("Média — FIM − INÍCIO",hhmm(total/quantidade))
+    st.caption(f"Tempo total {hhmm(total)} ÷ {quantidade} OS. Referência do período: FIM {origem}.")
+    show=base.copy()
+    show[f"INÍCIO {origem.upper()}"]=show["INICIO_CALC"].dt.strftime("%d/%m/%Y %H:%M")
+    show[f"FIM {origem.upper()}"]=show["FIM_CALC"].dt.strftime("%d/%m/%Y %H:%M")
+    show["TEMPO TOTAL"]=show["HORAS"].apply(hhmm)
+    st.dataframe(show[["OS/ID","FROTA",f"INÍCIO {origem.upper()}",f"FIM {origem.upper()}","TEMPO TOTAL"]],hide_index=True,use_container_width=True)
+
+
+def _botoes_medias_origens(tipo):
+    cols=st.columns(2,gap="small")
+    for col,origem in zip(cols,["Suzano","10 Sul"]):
+        with col:
+            base=_base_medias_origem(tipo,origem)
+            for periodo in ["Dia anterior","Mês acumulado"]:
+                recorte=_recorte_media_origem(base,periodo)
+                media=recorte["HORAS"].mean() if len(recorte) else None
+                if st.button(f"{origem} · {periodo}\n\n{hhmm(media)}\n\nVer {len(recorte)} OS ›",key=f"media_origem_{tipo}_{origem}_{periodo}",use_container_width=True):
+                    modal_ordens_media(tipo,origem,periodo,recorte)
+    st.caption("FIM − INÍCIO de cada origem, por OS/frota, sem substituir datas ausentes. Somente ordens com fim informado; período pela liberação. 10 Sul: datas dos laudos vinculados às OS da base sincronizada.")
+
+
+
 def _media_acumulada_mes(tipo):
     b,sla=_base_evento(tipo)
     inicio_mes=agora.normalize().replace(day=1)
@@ -540,21 +606,8 @@ def _quadro_supervisor(tipo,icone):
         f"<div style='font-size:20px;font-weight:900;color:#10284a'>{icone} {tipo}</div>"
         f"<div style='font-size:11px;font-weight:900;color:{cor};background:{fundo};padding:4px 8px;border-radius:999px'>{situacao}</div>"
         f"</div>", unsafe_allow_html=True)
-    st.markdown(
-        f"<div style='display:flex;align-items:end;gap:10px;margin:0 0 3px'>"
-        f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA DO DIA ANTERIOR</span>"
-        f"<span style='font-size:28px;line-height:1;font-weight:900;color:#10284a'>{hhmm(hoje)}</span>"
-        f"<span style='font-size:11px;color:#98a2b3'>SLA {sla:02d}:00</span></div>", unsafe_allow_html=True)
-    media_mes=_media_acumulada_mes(tipo)
-    cor_mes="#667085" if media_mes is None else ("#15803d" if media_mes < sla else "#dc2626")
-    st.markdown(
-        f"<div style='display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:8px 0'>"
-        f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA ACUMULADA DO MÊS</span>"
-        f"<span style='font-size:25px;font-weight:900;color:{cor_mes}'>{hhmm(media_mes)}</span>"
-        f"<span style='font-size:11px;color:#667085'>01/{agora.strftime('%m')} a {agora.strftime('%d/%m')}</span></div>",
-        unsafe_allow_html=True)
-    st.caption("Acumulado: OS liberadas no mês e abertas acima do SLA; média por OS, tempo total de início até fim/agora.")
-    st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:10px 0 4px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS</div>",unsafe_allow_html=True)
+    _botoes_medias_origens(tipo)
+    st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:10px 0 4px'>MÉDIA DIÁRIA SUZANO • TEMPO DISTRIBUÍDO POR DIA • ÚLTIMOS 7 DIAS</div>",unsafe_allow_html=True)
     _grafico_media_diaria(g,sla)
 
 def render_medias_supervisor():
@@ -1485,5 +1538,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
