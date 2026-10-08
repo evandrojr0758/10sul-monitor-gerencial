@@ -766,6 +766,90 @@ def _normalizar_atividade_gerencial(txt):
 
     return "Outras atividades"
 
+
+def _chave_vinculo_laudo(valor):
+    if valor is None or pd.isna(valor):
+        return ""
+    texto=str(valor).strip()
+    if texto.lower() in ("nan","none","null","<na>"):
+        return ""
+    return re.sub(r"\.0$","",texto)
+
+
+def listar_itr_sem_laudo(atendimentos, laudos):
+    """O vínculo exige a mesma OS e frota, independentemente da baixa."""
+    itr=atendimentos[atendimentos["evento"].fillna("").astype(str).str.strip().str.upper().eq("ITR")].copy()
+    itr["_OS"]=itr["os_id"].apply(_chave_vinculo_laudo)
+    itr["_FROTA"]=itr["frota"].apply(_chave_vinculo_laudo)
+    vinculados=set()
+    if not laudos.empty:
+        if not {"OS_ID","FROTA"}.issubset(laudos.columns):
+            raise ValueError("A base de laudos não possui OS/ID e FROTA para verificar o vínculo.")
+        vinculados={(osid,frota) for osid,frota in zip(
+            laudos["OS_ID"].apply(_chave_vinculo_laudo),
+            laudos["FROTA"].apply(_chave_vinculo_laudo)) if osid and frota}
+    pendentes=itr[[not (osid and frota and (osid,frota) in vinculados)
+                   for osid,frota in zip(itr["_OS"],itr["_FROTA"])]].copy() if len(itr) else itr.copy()
+    # Duplicatas da sincronização não devem aumentar o contador.
+    pendentes=pendentes.drop_duplicates(["_OS","_FROTA","inicio","parada"],keep="last")
+    com_id=pendentes[pendentes["_OS"].ne("")].drop_duplicates(["_OS","_FROTA"],keep="last")
+    sem_id=pendentes[pendentes["_OS"].eq("")]
+    return pd.concat([com_id,sem_id],ignore_index=True)
+
+
+def render_itr_sem_laudo():
+    st.markdown("#### 📋 ITR sem vínculo com laudo")
+    st.caption("Vínculo conferido por OS/ID + FROTA na base de laudos publicados. Inclui OS abertas e liberadas; laudo de outra ITR da mesma frota não elimina a pendência.")
+    laudos=carregar_laudos_manuais_web()
+    if st.session_state.get("_erro_laudos_web"):
+        st.warning("Não foi possível consultar os laudos. A lista de pendências estará disponível quando a leitura for restabelecida.")
+        return
+    try:
+        pendentes=listar_itr_sem_laudo(df,laudos)
+    except ValueError as erro:
+        st.warning(str(erro))
+        return
+    a,b,c=st.columns(3)
+    with a:
+        periodo=st.selectbox("Período da ITR",["Últimos 30 dias","Mês atual","Últimos 7 dias","Todo o histórico","Personalizado"],key="itr_sem_laudo_periodo")
+    with b:
+        situacao=st.selectbox("Situação da OS",["Todas","Em manutenção","Liberadas"],key="itr_sem_laudo_status")
+    with c:
+        busca=st.text_input("Pesquisar frota",key="itr_sem_laudo_frota",placeholder="Ex.: 13725").strip()
+    ref=pendentes["inicio"].fillna(pendentes["parada"])
+    if periodo!="Todo o histórico":
+        fim=agora
+        if periodo=="Mês atual": inicio=agora.normalize().replace(day=1)
+        elif periodo=="Últimos 7 dias": inicio=agora.normalize()-pd.Timedelta(days=6)
+        elif periodo=="Últimos 30 dias": inicio=agora.normalize()-pd.Timedelta(days=29)
+        else:
+            a,b=st.columns(2)
+            with a: inicio=pd.Timestamp(st.date_input("De",value=agora.date().replace(day=1),key="itr_sem_laudo_de"))
+            with b: fim=pd.Timestamp(st.date_input("Até",value=agora.date(),key="itr_sem_laudo_ate"))+pd.Timedelta(days=1)-pd.Timedelta(seconds=1)
+        pendentes=pendentes[ref.between(inicio,fim)].copy()
+    if situacao=="Em manutenção": pendentes=pendentes[pendentes["fim"].isna()].copy()
+    elif situacao=="Liberadas": pendentes=pendentes[pendentes["fim"].notna()].copy()
+    if busca:
+        pendentes=pendentes[pendentes["_FROTA"].str.contains(busca,regex=False,na=False)].copy()
+    a,b=st.columns(2)
+    with a: st.metric("Frotas sem vínculo",pendentes.loc[pendentes["_FROTA"].ne(""),"_FROTA"].nunique())
+    with b: st.metric("ITR sem vínculo",len(pendentes))
+    if pendentes.empty:
+        st.success("Nenhuma ITR sem vínculo com laudo nos filtros selecionados.")
+        return
+    pendentes["_INICIO"]=pendentes["inicio"].fillna(pendentes["parada"])
+    pendentes=pendentes.sort_values("_INICIO",ascending=False,na_position="last")
+    show=pd.DataFrame({
+        "OS/ID":pendentes["_OS"].replace("","Não informado"),
+        "FROTA":pendentes["_FROTA"].replace("","Não informada"),
+        "INÍCIO":pendentes["_INICIO"].dt.strftime("%d/%m/%Y %H:%M").fillna("Não informado"),
+        "FIM CLIENTE":pendentes["fim"].dt.strftime("%d/%m/%Y %H:%M").fillna("Sem baixa"),
+        "SITUAÇÃO":pendentes["fim"].notna().map({True:"Liberada",False:"Em manutenção"}),
+        "PENDÊNCIA":pendentes["_OS"].eq("").map({True:"OS/ID ausente — vínculo não verificável",False:"Sem laudo vinculado"}),
+    })
+    st.dataframe(show,hide_index=True,use_container_width=True)
+
+
 def calcular_medias_periodicas_laudos(manut, piv):
     """Uma manutenção por OS/frota; semana de segunda a domingo."""
     base=manut.merge(piv, on=["CHAVE_OS","FROTA"], how="left").copy()
@@ -1011,6 +1095,9 @@ with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
 render_laudos_web()
+
+with st.expander("📋 ITR SEM VÍNCULO COM LAUDO", expanded=True):
+    render_itr_sem_laudo()
 
 with st.expander("📊 RELATÓRIO GERENCIAL — LAUDOS", expanded=False):
     render_relatorio_gerencial_laudos()
