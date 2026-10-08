@@ -519,6 +519,16 @@ def _grafico_media_diaria(g,sla):
         x=alt.value("width"),y="SLA:Q",text="TXT:N")
     st.altair_chart((linha+pts+rot+rule+lab).properties(height=135),use_container_width=True)
 
+def _media_acumulada_mes(tipo):
+    b,sla=_base_evento(tipo)
+    inicio_mes=agora.normalize().replace(day=1)
+    # Liberadas no mês e OS abertas elegíveis pelo SLA até o momento.
+    b=b[b["fim_calc"].between(inicio_mes,agora)].copy()
+    b=b.sort_values("ini_calc").drop_duplicates(["os_id","frota"],keep="last")
+    horas=(b["fim_calc"]-b["ini_calc"]).dt.total_seconds()/3600
+    return horas.mean() if not horas.empty else None
+
+
 def _quadro_supervisor(tipo,icone):
     g,hoje,sla=_quebrar_por_dia(tipo,7)
     if not g.empty:g["ROTULO"]=g["MEDIA_H"].apply(hhmm)
@@ -535,6 +545,15 @@ def _quadro_supervisor(tipo,icone):
         f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA DO DIA ANTERIOR</span>"
         f"<span style='font-size:28px;line-height:1;font-weight:900;color:#10284a'>{hhmm(hoje)}</span>"
         f"<span style='font-size:11px;color:#98a2b3'>SLA {sla:02d}:00</span></div>", unsafe_allow_html=True)
+    media_mes=_media_acumulada_mes(tipo)
+    cor_mes="#667085" if media_mes is None else ("#15803d" if media_mes < sla else "#dc2626")
+    st.markdown(
+        f"<div style='display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:8px 0'>"
+        f"<span style='font-size:11px;font-weight:800;color:#667085'>MÉDIA ACUMULADA DO MÊS</span>"
+        f"<span style='font-size:25px;font-weight:900;color:{cor_mes}'>{hhmm(media_mes)}</span>"
+        f"<span style='font-size:11px;color:#667085'>01/{agora.strftime('%m')} a {agora.strftime('%d/%m')}</span></div>",
+        unsafe_allow_html=True)
+    st.caption("Acumulado: OS liberadas no mês e abertas acima do SLA; média por OS, tempo total de início até fim/agora.")
     st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:10px 0 4px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS</div>",unsafe_allow_html=True)
     _grafico_media_diaria(g,sla)
 
