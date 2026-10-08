@@ -850,6 +850,115 @@ def render_itr_sem_laudo():
     st.dataframe(show,hide_index=True,use_container_width=True)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def carregar_justificativas_laudos():
+    """Registros independentes no Storage; não altera atividades do laudo."""
+    import json
+    h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
+    base=f"{SUPABASE_URL}/storage/v1"
+    registros=[]; offset=0
+    while True:
+        r=requests.post(f"{base}/object/list/evidencias-desvios",headers=h,
+                        json={"prefix":"justificativas-laudos","limit":100,"offset":offset,"sortBy":{"column":"name","order":"asc"}},timeout=45)
+        r.raise_for_status()
+        objetos=r.json()
+        for obj in objetos:
+            nome=obj.get("name","")
+            if not nome.endswith(".json"): continue
+            rr=requests.get(f"{base}/object/evidencias-desvios/justificativas-laudos/{nome}",headers=h,timeout=45)
+            rr.raise_for_status()
+            item=rr.json()
+            if not isinstance(item,dict) or item.get("versao")!=1:
+                raise ValueError("Registro de justificativa inválido.")
+            registros.append(item)
+        if len(objetos)<100: break
+        offset+=100
+    return pd.DataFrame(registros)
+
+
+def apurar_tempos_justificados(manut,piv,justificativas):
+    base=manut.merge(piv,on=["CHAVE_OS","FROTA"],how="left").copy()
+    base["APONTADO"]=base[["ITR","CNP","GM","OUTROS"]].fillna(0).sum(axis=1)
+    # O saldo é calculado em cada OS; excesso de outra OS não compensa lacunas.
+    base["SEM_APONTAMENTO"]=(base["H_MANUT"]-base["APONTADO"]).clip(lower=0).fillna(0)
+    totais={}
+    if not justificativas.empty:
+        for _,r in justificativas.iterrows():
+            chave=(_chave_vinculo_laudo(r.get("os_id")),_chave_vinculo_laudo(r.get("frota")))
+            minutos=pd.to_numeric(r.get("minutos"),errors="coerce")
+            if chave[0] and chave[1] and pd.notna(minutos) and minutos>0:
+                totais[chave]=totais.get(chave,0)+float(minutos)/60
+    base["JUSTIFICADO_REGISTRADO"]=[totais.get((_chave_vinculo_laudo(o),_chave_vinculo_laudo(f)),0) for o,f in zip(base["CHAVE_OS"],base["FROTA"])]
+    base["JUSTIFICADO"]=base[["SEM_APONTAMENTO","JUSTIFICADO_REGISTRADO"]].min(axis=1)
+    base["PENDENTE"]=(base["SEM_APONTAMENTO"]-base["JUSTIFICADO"]).clip(lower=0)
+    return base
+
+
+def salvar_justificativa_laudo(osid,frota,minutos,motivo,observacao,responsavel):
+    import uuid
+    registro={"versao":1,"id":uuid.uuid4().hex,"os_id":_chave_vinculo_laudo(osid),
+              "frota":_chave_vinculo_laudo(frota),"minutos":int(minutos),"motivo":motivo,
+              "observacao":observacao.strip(),"responsavel":responsavel.strip(),
+              "registrado_em":pd.Timestamp.now(tz="America/Sao_Paulo").isoformat()}
+    h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}","Content-Type":"application/json","x-upsert":"false"}
+    r=requests.post(f"{SUPABASE_URL}/storage/v1/object/evidencias-desvios/justificativas-laudos/{registro['id']}.json",headers=h,json=registro,timeout=45)
+    r.raise_for_status()
+    carregar_justificativas_laudos.clear()
+
+
+@st.dialog("Justificativas do tempo sem apontamento",width="large")
+def modal_justificativas_laudos(manut,piv,os_validas,consulta=False):
+    try:
+        js=carregar_justificativas_laudos()
+        base=apurar_tempos_justificados(manut,piv,js)
+    except Exception:
+        st.error("Não foi possível consultar as justificativas salvas. Verifique o acesso ao armazenamento de evidências.")
+        return
+    view=base.copy()
+    for c in ["SEM_APONTAMENTO","JUSTIFICADO","PENDENTE"]: view[c]=view[c].apply(hhmm)
+    st.dataframe(view[["CHAVE_OS","FROTA","SEM_APONTAMENTO","JUSTIFICADO","PENDENTE"]].rename(columns={"CHAVE_OS":"OS/ID","SEM_APONTAMENTO":"SEM APONTAMENTO","JUSTIFICADO":"JUSTIFICADO","PENDENTE":"A JUSTIFICAR"}),hide_index=True,use_container_width=True)
+    if not js.empty:
+        chaves={(_chave_vinculo_laudo(o),_chave_vinculo_laudo(f)) for o,f in zip(base.CHAVE_OS,base.FROTA)}
+        hist=js[[(_chave_vinculo_laudo(r.os_id),_chave_vinculo_laudo(r.frota)) in chaves for _,r in js.iterrows()]].copy()
+        if not hist.empty:
+            hist["TEMPO"]=hist["minutos"].apply(lambda v:hhmm(float(v)/60))
+            st.markdown("**Justificativas registradas**")
+            st.dataframe(hist[["os_id","frota","TEMPO","motivo","observacao","responsavel","registrado_em"]].rename(columns={"os_id":"OS/ID","frota":"FROTA","motivo":"MOTIVO","observacao":"OBSERVAÇÃO","responsavel":"RESPONSÁVEL INFORMADO","registrado_em":"REGISTRO"}),hide_index=True,use_container_width=True)
+    if consulta: return
+    op=base[base["PENDENTE"]>0].copy()
+    op=op[[(_chave_vinculo_laudo(o),_chave_vinculo_laudo(f)) in os_validas for o,f in zip(op.CHAVE_OS,op.FROTA)]] if len(op) else op
+    if op.empty:
+        st.info("Nenhuma OS com saldo e identificador válido para justificar.")
+        return
+    pos=st.selectbox("Manutenção",range(len(op)),format_func=lambda i:f"Frota {op.iloc[i]['FROTA']} · OS {op.iloc[i]['CHAVE_OS']} · Saldo {hhmm(op.iloc[i]['PENDENTE'])}")
+    row=op.iloc[pos]
+    with st.form("registrar_justificativa_tempo"):
+        tempo=st.text_input("Tempo a justificar (HH:MM)",value=hhmm(row["PENDENTE"]))
+        motivo=st.selectbox("Motivo",["Aguardando peça","Aguardando liberação do cliente","Intervalo","Falta de equipe","Outros"])
+        obs=st.text_area("Observação")
+        nome=st.text_input("Responsável pelo registro")
+        gravar=st.form_submit_button("Salvar justificativa",type="primary")
+    if gravar:
+        match=re.fullmatch(r"(\d+):([0-5]\d)",tempo.strip())
+        if not match or not nome.strip() or (motivo=="Outros" and not obs.strip()):
+            st.error("Informe o tempo em HH:MM, o responsável e a observação quando o motivo for Outros.")
+            return
+        minutos=int(match[1])*60+int(match[2])
+        try:
+            carregar_justificativas_laudos.clear()
+            atual=apurar_tempos_justificados(manut,piv,carregar_justificativas_laudos())
+            saldo=atual.loc[atual.CHAVE_OS.eq(row.CHAVE_OS)&atual.FROTA.eq(row.FROTA),"PENDENTE"].iloc[0]
+            if minutos<=0 or minutos>int(round(saldo*60)):
+                st.error("O tempo deve ser maior que zero e não pode ultrapassar o saldo da OS.")
+                return
+            salvar_justificativa_laudo(row.CHAVE_OS,row.FROTA,minutos,motivo,obs,nome)
+            st.session_state["justificativa_salva"]=True
+            st.rerun()
+        except Exception:
+            st.error("Não foi possível salvar. Confira o acesso de gravação ao armazenamento e consulte o histórico antes de tentar novamente.")
+
+
+
 def calcular_medias_periodicas_laudos(manut, piv):
     """Uma manutenção por OS/frota; semana de segunda a domingo."""
     base=manut.merge(piv, on=["CHAVE_OS","FROTA"], how="left").copy()
@@ -926,11 +1035,36 @@ def render_relatorio_gerencial_laudos():
     for cc in ["ITR","CNP","GM","OUTROS"]:
         if cc not in piv.columns:piv[cc]=0.0
     med_itr=piv.loc[piv["ITR"]>0,"ITR"].mean(); med_cnp=piv.loc[piv["CNP"]>0,"CNP"].mean()
-    apont=piv[["ITR","CNP","GM","OUTROS"]].sum(axis=1).sum(); hman=manut["H_MANUT"].sum(); sem=max(0,hman-apont)
-    cards=[("📄","Total de Laudos",str(int(total_laudos)),"#eef6ff"),("🚛","Carretas Atendidas",str(int(frotas)),"#eef6ff"),("⏱️","Tempo Médio de Manutenção",hhmm(med_man),"#ecfdf5"),("🔧","Tempo Médio ITR",hhmm(med_itr),"#fff7ed"),("🛠️","Tempo Médio CNP",hhmm(med_cnp),"#fff1f2"),("◔","Tempo sem Apontamento",hhmm(sem/max(1,len(manut))),"#f8fafc")]
-    cs=st.columns(6,gap="small")
+    apont=piv[["ITR","CNP","GM","OUTROS"]].sum(axis=1).sum(); hman=manut["H_MANUT"].sum()
+    erro_justificativas=False
+    try:
+        justificativas=carregar_justificativas_laudos()
+    except Exception:
+        justificativas=pd.DataFrame()
+        erro_justificativas=True
+    tempos=apurar_tempos_justificados(manut,piv,justificativas)
+    sem=tempos["SEM_APONTAMENTO"].sum()
+    pendente=tempos["PENDENTE"].mean()
+    justificado=tempos["JUSTIFICADO"].mean()
+    os_validas={(_chave_vinculo_laudo(o),_chave_vinculo_laudo(f)) for o,f in zip(x["OS_ID"],x["FROTA"]) if _chave_vinculo_laudo(o) and _chave_vinculo_laudo(f)}
+
+    cards=[("📄","Total de Laudos",str(int(total_laudos)),"#eef6ff"),("🚛","Carretas Atendidas",str(int(frotas)),"#eef6ff"),("⏱️","Tempo Médio de Manutenção",hhmm(med_man),"#ecfdf5"),("🔧","Tempo Médio ITR",hhmm(med_itr),"#fff7ed"),("🛠️","Tempo Médio CNP",hhmm(med_cnp),"#fff1f2")]
+    cs=st.columns(3,gap="small")+st.columns(2,gap="small")
     for col,(ico,lab,val,bg) in zip(cs,cards):
         with col: st.markdown(f"<div style='background:{bg};border:1px solid #dbe3ec;border-radius:12px;padding:13px 8px;text-align:center;min-height:105px'><div style='font-size:12px;font-weight:850;color:#344054'>{ico} {lab}</div><div style='font-size:27px;font-weight:900;color:#10284a;margin-top:10px'>{val}</div></div>",unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    if st.session_state.pop("justificativa_salva",False):
+        st.success("Justificativa salva.")
+    if erro_justificativas:
+        st.warning("As justificativas não puderam ser consultadas. Os saldos estão indisponíveis até restabelecer a leitura.")
+    cpend,cjust=st.columns(2,gap="small")
+    with cpend:
+        if st.button(f"🔴 Tempo sem justificativa\n\n{hhmm(pendente) if not erro_justificativas else '--:--'}\n\nJustificar tempo ›",key="rg_justificar_tempo",use_container_width=True,disabled=erro_justificativas):
+            modal_justificativas_laudos(manut,piv,os_validas)
+    with cjust:
+        if st.button(f"🔵 Tempo justificado\n\n{hhmm(justificado) if not erro_justificativas else '--:--'}\n\nConsultar justificativas ›",key="rg_consultar_justificativas",use_container_width=True,disabled=erro_justificativas):
+            modal_justificativas_laudos(manut,piv,os_validas,consulta=True)
+    st.caption("Cards de tempo: média por manutenção. Justificativas não alteram o tempo total nem os apontamentos de ITR/CNP.")
     st.markdown("<br>",unsafe_allow_html=True)
     st.markdown("**Médias diárias e semanais — manutenção, ITR e CNP**")
     st.caption("Referência: FIM informado pela 10 Sul. Uma manutenção por OS/frota. Semana: segunda a domingo. ITR e CNP consideram apenas manutenções com tempo na categoria. Os filtros de período e frota se aplicam às médias.")
@@ -1303,4 +1437,5 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
