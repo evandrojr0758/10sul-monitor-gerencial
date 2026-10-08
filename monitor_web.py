@@ -1287,56 +1287,6 @@ mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_html=True)
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
-st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
-@st.dialog("Relação de carretas", width="large")
-def modal_os_abertas(titulo, dados):
-    st.markdown(f"### {titulo}")
-    if dados is None or dados.empty:
-        st.info("Nenhuma OS aberta neste card.")
-        return
-    x=dados.copy()
-    x["TEMPO ABERTO"]=x["horas_aberto"].apply(hhmm)
-    x["INÍCIO"]=pd.to_datetime(x["inicio_mon"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
-    x["SITUAÇÃO"]=x["acima_sla"].map({True:"🔴 SLA ULTRAPASSADO",False:"🟢 EM MANUTENÇÃO"})
-    x=x.rename(columns={"os_id":"OS/ID","frota":"FROTA","evento":"EVENTO","descricao":"DESCRIÇÃO DO EVENTO"})
-    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","INÍCIO","TEMPO ABERTO","SITUAÇÃO"]
-    st.dataframe(x[cols_show],use_container_width=True,hide_index=True)
-
-cards=[
-    (len(mon),"🔧 EM MANUTENÇÃO","",mon),
-    (int(mcnp.sum()),"🚨 CNP ABERTAS","red",mon[mcnp]),
-    (int(msos.sum()),"🆘 SOS ABERTOS","red",mon[msos]),
-    (int(mitr.sum()),"🔧 ITR ABERTAS","",mon[mitr]),
-    (int(mrev.sum()),"🛠️ REVISÕES","",mon[mrev]),
-    (0,"📦 AG. PEÇA","orange",mon.iloc[0:0]),
-    (int(mon["acima_sla"].sum()),"⏱️ ACIMA SLA","red",mon[mon["acima_sla"]]),
-]
-cols=st.columns(7,gap="small")
-for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
-    with col:
-        # Botão real: funciona por toque no celular e clique no computador.
-        if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
-            modal_os_abertas(lab,dados_card)
-
-render_medias_supervisor()
-
-with st.expander("📑 EMBASAMENTO CONTRATUAL", expanded=False):
-    render_embasamento_contratual()
-
-with st.expander("📊 RELATÓRIO GERENCIAL — LAUDOS", expanded=False):
-    render_relatorio_gerencial_laudos()
-
-with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
-    st.caption("Médias calculadas pelos tempos apontados nos laudos, agrupadas pela data de INÍCIO 10 SUL.")
-    render_medias_laudos()
-
-with st.expander("📋 APURAÇÃO DOS LAUDOS", expanded=False):
-    st.caption("Resumo dos tempos apontados por frota e evidências das atividades.")
-    render_laudos_web()
-
-with st.expander("📋 ITR SEM VÍNCULO COM LAUDO", expanded=True):
-    render_itr_sem_laudo()
-
 st.markdown("#### 🔎 Consulta rápida de frota")
 
 @st.dialog("🔎 Histórico da frota", width="large")
@@ -1393,6 +1343,57 @@ with q2:
     pesquisar=st.button("🔎 Pesquisar",use_container_width=True)
 if pesquisar and frota_q.strip():
     modal_historico_frota(norm_frota(frota_q))
+
+
+st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
+@st.dialog("Relação de carretas", width="large")
+def modal_os_abertas(titulo, dados):
+    st.markdown(f"### {titulo}")
+    if dados is None or dados.empty:
+        st.info("Nenhuma OS aberta neste card.")
+        return
+    x=dados.copy()
+    x["TEMPO ABERTO"]=x["horas_aberto"].apply(hhmm)
+    x["INÍCIO"]=pd.to_datetime(x["inicio_mon"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+    x["SITUAÇÃO"]=x["acima_sla"].map({True:"🔴 SLA ULTRAPASSADO",False:"🟢 EM MANUTENÇÃO"})
+    x=x.rename(columns={"os_id":"OS/ID","frota":"FROTA","evento":"EVENTO","descricao":"DESCRIÇÃO DO EVENTO"})
+    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","INÍCIO","TEMPO ABERTO","SITUAÇÃO"]
+    st.dataframe(x[cols_show],use_container_width=True,hide_index=True)
+
+cards=[
+    (len(mon),"🔧 EM MANUTENÇÃO","",mon),
+    (int(mcnp.sum()),"🚨 CNP ABERTAS","red",mon[mcnp]),
+    (int(msos.sum()),"🆘 SOS ABERTOS","red",mon[msos]),
+    (int(mitr.sum()),"🔧 ITR ABERTAS","",mon[mitr]),
+    (int(mrev.sum()),"🛠️ REVISÕES","",mon[mrev]),
+    (0,"📦 AG. PEÇA","orange",mon.iloc[0:0]),
+    (int(mon["acima_sla"].sum()),"⏱️ ACIMA SLA","red",mon[mon["acima_sla"]]),
+]
+cols=st.columns(7,gap="small")
+for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
+    with col:
+        # Botão real: funciona por toque no celular e clique no computador.
+        if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
+            modal_os_abertas(lab,dados_card)
+
+render_medias_supervisor()
+
+with st.expander("📑 EMBASAMENTO CONTRATUAL", expanded=False):
+    render_embasamento_contratual()
+
+with st.expander("📊 RELATÓRIO GERENCIAL — LAUDOS", expanded=False):
+    render_relatorio_gerencial_laudos()
+
+with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
+    st.caption("Médias calculadas pelos tempos apontados nos laudos, agrupadas pela data de INÍCIO 10 SUL.")
+    render_medias_laudos()
+
+with st.expander("📋 APURAÇÃO DOS LAUDOS", expanded=False):
+    st.caption("Resumo dos tempos apontados por frota e evidências das atividades.")
+    render_laudos_web()
+
+with st.expander("📋 ITR SEM VÍNCULO COM LAUDO", expanded=True):
+    render_itr_sem_laudo()
 
 # MAIORES TEMPOS
 st.markdown("### 🚨 Maiores tempos em manutenção por evento")
