@@ -766,6 +766,22 @@ def _normalizar_atividade_gerencial(txt):
 
     return "Outras atividades"
 
+def calcular_medias_periodicas_laudos(manut, piv):
+    """Uma manutenção por OS/frota; semana de segunda a domingo."""
+    base=manut.merge(piv, on=["CHAVE_OS","FROTA"], how="left").copy()
+    base=base[base["FIM"].notna() & base["H_MANUT"].notna()].copy()
+    base["DIA"]=base["FIM"].dt.normalize()
+    base["SEMANA"]=base["DIA"]-pd.to_timedelta(base["DIA"].dt.weekday,unit="D")
+    for tipo in ["ITR","CNP"]:
+        base[tipo]=base[tipo].where(base[tipo]>0)
+    def agrupar(coluna):
+        return (base.groupby(coluna,as_index=False)
+                .agg(MANUTENCOES=("H_MANUT","size"),MEDIA_MANUT=("H_MANUT","mean"),
+                     MEDIA_ITR=("ITR","mean"),MEDIA_CNP=("CNP","mean"))
+                .sort_values(coluna))
+    return agrupar("DIA"),agrupar("SEMANA")
+
+
 def render_relatorio_gerencial_laudos():
     d=carregar_laudos_manuais_web().copy()
     st.markdown("<div class='mon-section'><div class='mon-section-title'>📊 RELATÓRIO GERENCIAL — LAUDOS DE MANUTENÇÃO</div><div class='mon-section-sub'>Análise gerencial baseada exclusivamente nos laudos conferidos e publicados</div></div>",unsafe_allow_html=True)
@@ -803,7 +819,13 @@ def render_relatorio_gerencial_laudos():
         key="rg_frota",
         help="Digite o número para localizar uma frota. O filtro atualiza todos os indicadores, gráficos e detalhes deste relatório.",
     )
-    x=d[(d["INI_DT"]>=di)&(d["INI_DT"]<=dfim)].copy()
+    # Usa a liberação consolidada da OS, mantendo todos os compartimentos.
+    os_base=d["OS_ID"].fillna("").astype(str).str.strip()
+    reg_base=d["REGISTRO"].fillna("").astype(str).str.strip()
+    d["CHAVE_OS"]=os_base.where(os_base.ne("")&os_base.str.lower().ne("nan"),reg_base)
+    d["CHAVE_OS"]=d["CHAVE_OS"].where(d["CHAVE_OS"].ne(""),d.index.astype(str))
+    fim_os=d.groupby(["CHAVE_OS","FROTA"])["FIM_DT"].transform("max")
+    x=d[(fim_os>=di)&(fim_os<=dfim)].copy()
     if frota_rg!="Todas as frotas":
         x=x[x["FROTA"].eq(frota_rg)].copy()
     if x.empty:
@@ -826,8 +848,29 @@ def render_relatorio_gerencial_laudos():
     for col,(ico,lab,val,bg) in zip(cs,cards):
         with col: st.markdown(f"<div style='background:{bg};border:1px solid #dbe3ec;border-radius:12px;padding:13px 8px;text-align:center;min-height:105px'><div style='font-size:12px;font-weight:850;color:#344054'>{ico} {lab}</div><div style='font-size:27px;font-weight:900;color:#10284a;margin-top:10px'>{val}</div></div>",unsafe_allow_html=True)
     st.markdown("<br>",unsafe_allow_html=True)
+    st.markdown("**Médias diárias e semanais — manutenção, ITR e CNP**")
+    st.caption("Referência: FIM informado pela 10 Sul. Uma manutenção por OS/frota. Semana: segunda a domingo. ITR e CNP consideram apenas manutenções com tempo na categoria. Os filtros de período e frota se aplicam às médias.")
+    medias_dia,medias_semana=calcular_medias_periodicas_laudos(manut,piv)
+    tab_dia,tab_semana=st.tabs(["Média por dia","Média por semana"])
+    for tab,tabela,coluna in [(tab_dia,medias_dia,"DIA"),(tab_semana,medias_semana,"SEMANA")]:
+        with tab:
+            if tabela.empty:
+                st.caption("Sem manutenções liberadas para calcular as médias.")
+                continue
+            ultimo=tabela.iloc[-1]
+            rotulo=(ultimo[coluna].strftime("%d/%m/%Y") if coluna=="DIA"
+                    else f"{ultimo[coluna].strftime('%d/%m/%Y')} a {(ultimo[coluna]+pd.Timedelta(days=6)).strftime('%d/%m/%Y')}")
+            st.caption(f"{'Último dia com liberação' if coluna=='DIA' else 'Última semana com liberação'} no período: {rotulo}")
+            for col,(label,campo) in zip(st.columns(3),[("Média manutenção","MEDIA_MANUT"),("Média ITR","MEDIA_ITR"),("Média CNP","MEDIA_CNP")]):
+                with col: st.metric(label,hhmm(ultimo[campo]))
+            exib=tabela.copy()
+            exib[coluna]=exib[coluna].apply(lambda v: v.strftime("%d/%m/%Y") if coluna=="DIA" else f"{v.strftime('%d/%m/%Y')} a {(v+pd.Timedelta(days=6)).strftime('%d/%m/%Y')}")
+            for campo in ["MEDIA_MANUT","MEDIA_ITR","MEDIA_CNP"]:
+                exib[campo]=exib[campo].apply(hhmm)
+            st.dataframe(exib.rename(columns={coluna:"DIA" if coluna=="DIA" else "SEMANA (SEG–DOM)","MANUTENCOES":"MANUTENÇÕES","MEDIA_MANUT":"MÉDIA MANUTENÇÃO","MEDIA_ITR":"MÉDIA ITR","MEDIA_CNP":"MÉDIA CNP"}),hide_index=True,use_container_width=True)
+    st.markdown("<br>",unsafe_allow_html=True)
     g1,g2,g3=st.columns([1.5,1,1],gap="small")
-    diario=x.assign(DIA=x["INI_DT"].dt.normalize()).groupby(["DIA","CLASSIFICACAO"],as_index=False)["HORAS"].sum()
+    diario=x.assign(DIA=x.groupby(["CHAVE_OS","FROTA"])["FIM_DT"].transform("max").dt.normalize()).groupby(["DIA","CLASSIFICACAO"],as_index=False)["HORAS"].sum()
     with g1:
         with st.container(border=True):
             st.markdown("**Evolução dos tempos apontados por dia**")
@@ -1173,3 +1216,4 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
