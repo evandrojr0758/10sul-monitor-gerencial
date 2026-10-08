@@ -1258,8 +1258,9 @@ with st.expander("📊 MÉDIAS DOS LAUDOS", expanded=False):
     st.caption("Médias calculadas pelos tempos apontados nos laudos, agrupadas pela data de INÍCIO 10 SUL.")
     render_medias_laudos()
 
-st.markdown("<div class='mon-section'><div class='mon-section-title'>APURAÇÃO DOS LAUDOS</div><div class='mon-section-sub'>Resumo dos tempos apontados por frota e evidências das atividades</div></div>",unsafe_allow_html=True)
-render_laudos_web()
+with st.expander("📋 APURAÇÃO DOS LAUDOS", expanded=False):
+    st.caption("Resumo dos tempos apontados por frota e evidências das atividades.")
+    render_laudos_web()
 
 with st.expander("📋 ITR SEM VÍNCULO COM LAUDO", expanded=True):
     render_itr_sem_laudo()
