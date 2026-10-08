@@ -576,7 +576,7 @@ def _botoes_medias_origens(tipo):
     for col,origem in zip(cols,["Suzano","10 Sul"]):
         with col:
             base=_base_medias_origem(tipo,origem)
-            for periodo in ["Dia anterior","Mês acumulado"]:
+            for periodo in ["Mês acumulado"]:
                 recorte=_recorte_media_origem(base,periodo)
                 media=recorte["HORAS"].mean() if len(recorte) else None
                 if st.button(f"{origem} · {periodo}\n\n{hhmm(media)}\n\nVer {len(recorte)} OS ›",key=f"media_origem_{tipo}_{origem}_{periodo}",use_container_width=True):
