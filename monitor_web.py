@@ -1217,7 +1217,8 @@ st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agor
 
 render_medias_supervisor()
 
-render_embasamento_contratual()
+with st.expander("📑 EMBASAMENTO CONTRATUAL", expanded=False):
+    render_embasamento_contratual()
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 @st.dialog("Relação de carretas", width="large")
