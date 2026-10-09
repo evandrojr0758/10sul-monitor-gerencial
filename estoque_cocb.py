@@ -13,7 +13,27 @@ from urllib.parse import quote
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="10 Sul | Estoque COCB", page_icon="📦", layout="wide")
+
+central = st.query_params.get("pagina", "") == "central"
+st.set_page_config(page_title="10 Sul" if central else "10 Sul | Estoque", page_icon="🏢" if central else "📦", layout="wide")
+if central:
+    st.markdown("""<style>
+    .block-container {max-width:760px; padding-top:2rem;}
+    [data-testid="stLinkButton"] a {min-height:70px; font-size:22px; border-radius:16px;}
+    </style>""", unsafe_allow_html=True)
+    st.title("10 SUL")
+    st.caption("Desenvolvido por Evandro Junior")
+    st.subheader("Central de sistemas")
+    st.link_button("📦 Estoque", "https://10sul-estoque-cocb.streamlit.app/?pagina=painel", use_container_width=True)
+    st.link_button("🔧 Monitor Oficina", "https://10sul-monitor-gerencial-tah7ewvdikufrddrrysy56.streamlit.app/", use_container_width=True)
+    url_treinamentos = str(st.secrets.get("TREINAMENTOS_URL", "")).strip()
+    if url_treinamentos.startswith("https://"):
+        st.link_button("🎓 Treinamentos", url_treinamentos, use_container_width=True)
+    else:
+        st.button("🎓 Treinamentos — aguardando link", disabled=True, use_container_width=True)
+    st.info("Para ter um ícone no celular, adicione esta página à tela inicial com o nome 10 SUL.")
+    st.stop()
+
 
 UNIDADES = ("ARA", "MUC", "COCB", "NAM")
 
