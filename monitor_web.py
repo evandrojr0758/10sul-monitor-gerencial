@@ -1296,6 +1296,7 @@ mon["sla_h"]=pd.to_numeric(mon["sla_h"],errors="coerce")
 mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 
 st.markdown(f"<div class='mon-title'>{"📊 10 SUL • CONSULTA MOBILE" if MOBILE_READ_ONLY else "📺 MONITOR DA OFICINA"}</div>",unsafe_allow_html=True)
+st.markdown("<div class='mon-sub'>Desenvolvido por Evandro Junior</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
 if MOBILE_READ_ONLY:
