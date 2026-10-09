@@ -129,6 +129,15 @@ def normalizar(dados):
                     "maximo": item.get("maximo") if u == "COCB" else None}
                 for u in UNIDADES
             }
+        for campo in ("minimo", "maximo"):
+            geral = item["unidades"].get("COCB", {}).get(campo)
+            if geral is None:
+                geral = item.get(campo)
+            if geral is None:
+                geral = next((item["unidades"][u].get(campo) for u in UNIDADES if item["unidades"][u].get(campo) is not None), None)
+            item[campo] = geral
+            for u in UNIDADES:
+                item["unidades"][u][campo] = geral
     for movimento in dados.get("movimentos", []):
         if movimento.get("unidade") == "NAN":
             movimento["unidade"] = "NAM"
@@ -273,7 +282,7 @@ def gerar_imagem_reposicao(dados, unidade):
                 maximo = estoque.get("maximo")
                 reposicao.append(max(0, maximo - estoque["saldo"]) if critico and maximo is not None else None)
             if abaixo:
-                descricao = textwrap.wrap(material["descricao"], width=32) or [""]
+                descricao = textwrap.wrap(material["descricao"], width=28) or [""]
                 linhas.append((ni, descricao, reposicao, [material["unidades"][u] for u in UNIDADES]))
         grupos.append((titulo, cor, linhas))
 
@@ -291,9 +300,9 @@ def gerar_imagem_reposicao(dados, unidade):
 
     altura = 400 + sum(225 + sum(max(48, len(l[1]) * 27 + 16) for l in linhas)
                         for _, _, linhas in grupos)
-    imagem = Image.new("RGB", (1840, altura), "white")
+    imagem = Image.new("RGB", (1480, altura), "white")
     desenho = ImageDraw.Draw(imagem)
-    desenho.rectangle((0, 0, 1840, 140), fill="#15364b")
+    desenho.rectangle((0, 0, 1480, 140), fill="#15364b")
     desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
     agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     desenho.text((36, 82), f"Todas as unidades  |  Atualizado em {agora}", font=fonte(23), fill="white")
@@ -302,14 +311,13 @@ def gerar_imagem_reposicao(dados, unidade):
     for titulo, cor, linhas in grupos:
         desenho.text((36, y), f"{titulo} ({len(linhas)})", font=fonte(26), fill=cor)
         y += 45
-        desenho.rectangle((30, y, 1810, y + 65), fill="#eaf0f4")
-        for x, texto in ((42, "NI"), (210, "MATERIAL"), (1680, "TOTAL")):
+        desenho.rectangle((30, y, 1450, y + 65), fill="#eaf0f4")
+        for x, texto in ((42, "NI"), (210, "MATERIAL"), (600, "MÍNIMO"), (710, "MÁXIMO"), (1320, "TOTAL")):
             desenho.text((x, y + 8), texto, font=fonte(19), fill="#15364b")
-        for x, nome in zip((680, 930, 1180, 1430), ("ARA", "MUC", "COCB", "NAN")):
-            desenho.text((x + 75, y + 8), nome, font=fonte(21), fill="#15364b")
-            for offset, rotulo in ((0, "MÍN."), (75, "MÁX."), (150, "REPOR")):
-                desenho.text((x + offset, y + 35), rotulo, font=fonte(17), fill="#15364b")
-        desenho.text((1680, y + 35), "REPOR", font=fonte(17), fill="#15364b")
+        for x, nome in zip((840, 960, 1080, 1200), ("ARA", "MUC", "COCB", "NAN")):
+            desenho.text((x, y + 8), nome, font=fonte(21), fill="#15364b")
+            desenho.text((x, y + 35), "REPOR", font=fonte(17), fill="#15364b")
+        desenho.text((1320, y + 35), "REPOR", font=fonte(17), fill="#15364b")
         y += 65
         if not linhas:
             desenho.text((42, y + 12), "Nenhum item nesta condição.", font=fonte(21), fill="#52616b")
@@ -317,24 +325,26 @@ def gerar_imagem_reposicao(dados, unidade):
         totais = [0, 0, 0, 0]
         for indice, (ni, descricao, reposicao, estoques) in enumerate(linhas):
             h = max(48, len(descricao) * 27 + 16)
-            desenho.rectangle((30, y, 1810, y + h), fill="#f5f7f9" if indice % 2 == 0 else "white")
+            desenho.rectangle((30, y, 1450, y + h), fill="#f5f7f9" if indice % 2 == 0 else "white")
             desenho.text((42, y + 10), ni, font=fonte(21), fill="#243746")
             for n, trecho in enumerate(descricao):
                 desenho.text((210, y + 8 + n * 27), trecho, font=fonte(21), fill="#243746")
-            for x, estoque, repor in zip((680, 930, 1180, 1430), estoques, reposicao):
-                for offset, numero in ((0, estoque.get("minimo")), (75, estoque.get("maximo")), (150, repor)):
-                    desenho.text((x + offset, y + 10), "—" if numero is None else str(numero), font=fonte(22), fill=cor if offset == 150 and numero else "#243746")
-            desenho.text((1680, y + 10), str(sum(n or 0 for n in reposicao)), font=fonte(22), fill=cor)
+            for x, campo in ((600, "minimo"), (710, "maximo")):
+                numero = estoques[0].get(campo)
+                desenho.text((x, y + 10), "—" if numero is None else str(numero), font=fonte(22), fill="#243746")
+            for x, repor in zip((840, 960, 1080, 1200), reposicao):
+                desenho.text((x, y + 10), "—" if repor is None else str(repor), font=fonte(22), fill=cor if repor else "#52616b")
+            desenho.text((1320, y + 10), str(sum(n or 0 for n in reposicao)), font=fonte(22), fill=cor)
             totais = [total + (numero or 0) for total, numero in zip(totais, reposicao)]
             y += h
-        desenho.rectangle((30, y, 1810, y + 52), fill="#15364b")
+        desenho.rectangle((30, y, 1450, y + 52), fill="#15364b")
         desenho.text((42, y + 14), "TOTAL A REPOR", font=fonte(21), fill="white")
-        for x, numero in zip((830, 1080, 1330, 1580, 1680), [*totais, sum(totais)]):
+        for x, numero in zip((840, 960, 1080, 1200, 1320), [*totais, sum(totais)]):
             desenho.text((x, y + 14), str(numero), font=fonte(22), fill="white")
         y += 77
     desenho.text((36, y), "A lista abaixo do máximo também inclui os itens abaixo do mínimo.",
                  font=fonte(19), fill="#52616b")
-    imagem = imagem.crop((0, 0, 1840, y + 50))
+    imagem = imagem.crop((0, 0, 1480, y + 50))
     arquivo = BytesIO()
     imagem.save(arquivo, format="PNG")
     return arquivo.getvalue()
@@ -455,14 +465,17 @@ elif pagina == "cadastro":
         else:
             dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
             normalizar(dados)
-            dados["itens"][ni]["unidades"][unidade].update(minimo=int(minimo_novo), maximo=int(maximo_novo))
+            dados["itens"][ni].update(minimo=int(minimo_novo), maximo=int(maximo_novo))
+            for registro in dados["itens"][ni]["unidades"].values():
+                registro.update(minimo=int(minimo_novo), maximo=int(maximo_novo))
+            normalizar(dados)
             try:
                 base.salvar(dados, sha)
                 st.success("Material cadastrado.")
                 st.rerun()
             except ErroEstoque as exc:
                 st.error(str(exc))
-    st.subheader("Editar item e limites — " + unidade)
+    st.subheader("Editar item e limites gerais")
     if dados["itens"]:
         escolhas = {f"{ni} | {item['descricao']}": ni for ni, item in sorted(dados["itens"].items())}
         escolhido_limite = st.selectbox("Material para editar", list(escolhas))
@@ -484,6 +497,10 @@ elif pagina == "cadastro":
                 material["descricao"] = descricao_editada.strip()
                 item_limite["minimo"] = int(minimo)
                 item_limite["maximo"] = int(maximo)
+                material.update(minimo=int(minimo), maximo=int(maximo))
+                for registro in material["unidades"].values():
+                    registro.update(minimo=int(minimo), maximo=int(maximo))
+                normalizar(dados)
                 try:
                     base.salvar(dados, sha)
                     st.rerun()
