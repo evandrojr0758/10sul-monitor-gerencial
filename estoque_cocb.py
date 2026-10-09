@@ -30,7 +30,11 @@ def inicializar():
         db.execute("""CREATE TABLE IF NOT EXISTS itens (
             ni TEXT PRIMARY KEY, descricao TEXT NOT NULL,
             saldo INTEGER NOT NULL DEFAULT 0 CHECK(saldo >= 0),
+            estoque_inicial INTEGER,
             criado_em TEXT NOT NULL)""")
+        cols = [r[1] for r in db.execute("PRAGMA table_info(itens)")]
+        if "estoque_inicial" not in cols:
+            db.execute("ALTER TABLE itens ADD COLUMN estoque_inicial INTEGER")
         db.execute("""CREATE TABLE IF NOT EXISTS movimentos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ni TEXT NOT NULL REFERENCES itens(ni),
@@ -38,6 +42,27 @@ def inicializar():
             quantidade INTEGER NOT NULL CHECK(quantidade > 0),
             saldo_apos INTEGER NOT NULL, data_hora TEXT NOT NULL,
             observacao TEXT NOT NULL DEFAULT '')""")
+
+
+MATERIAIS_INICIAIS = [
+    ("27179902", "Válvula relê Facchini"),
+    ("27174139", "Parafuso Facchini"),
+    ("27174074", "Porca Facchini"),
+    ("27130048", "Parafuso 1/1.8"),
+    ("27114780", "Porca de 1.1/8"),
+    ("27145672", "Mangotes"),
+    ("27094293", "Válvula prévia"),
+    ("27258592", "Bolsa de ar Manos"),
+    ("27033363", "Bolsa de ar Sergomel"),
+    ("27251038", "Arruela cônica"),
+    ("27243269", "Colar de alinhamento"),
+]
+
+
+def cadastrar_materiais_iniciais():
+    with conexao() as db:
+        for ni, descricao in MATERIAIS_INICIAIS:
+            db.execute("INSERT OR IGNORE INTO itens (ni,descricao,saldo,estoque_inicial,criado_em) VALUES (?,?,0,NULL,?)", (ni,descricao,agora()))
 
 
 def agora():
@@ -50,7 +75,7 @@ def cadastrar(ni, descricao, inicial):
         raise ValueError("Informe NI, descrição e estoque inicial válido.")
     with conexao() as db:
         db.execute("BEGIN IMMEDIATE")
-        db.execute("INSERT INTO itens VALUES (?,?,?,?)", (ni, descricao, inicial, agora()))
+        db.execute("INSERT INTO itens (ni,descricao,saldo,estoque_inicial,criado_em) VALUES (?,?,?,?,?)", (ni, descricao, inicial, inicial if inicial else None, agora()))
         if inicial:
             db.execute("""INSERT INTO movimentos
                 (ni,tipo,quantidade,saldo_apos,data_hora,observacao)
@@ -62,21 +87,25 @@ def movimentar(ni, tipo, quantidade, observacao=""):
         raise ValueError("Movimento ou quantidade inválida.")
     with conexao() as db:
         db.execute("BEGIN IMMEDIATE")
-        item = db.execute("SELECT saldo FROM itens WHERE ni=?", (ni,)).fetchone()
+        item = db.execute("SELECT saldo, estoque_inicial FROM itens WHERE ni=?", (ni,)).fetchone()
         if item is None:
             raise ValueError("Material não encontrado.")
         novo = item["saldo"] + (quantidade if tipo == "ENTRADA" else -quantidade)
         if novo < 0:
             raise ValueError(f"Saldo insuficiente. Disponível: {item['saldo']}.")
-        db.execute("UPDATE itens SET saldo=? WHERE ni=?", (novo, ni))
+        primeira_entrada = tipo == "ENTRADA" and item["estoque_inicial"] is None
+        if primeira_entrada:
+            db.execute("UPDATE itens SET saldo=?, estoque_inicial=? WHERE ni=?", (novo, quantidade, ni))
+        else:
+            db.execute("UPDATE itens SET saldo=? WHERE ni=?", (novo, ni))
         db.execute("""INSERT INTO movimentos
             (ni,tipo,quantidade,saldo_apos,data_hora,observacao)
-            VALUES (?,?,?,?,?,?)""", (ni, tipo, quantidade, novo, agora(), observacao.strip()))
+            VALUES (?,?,?,?,?,?)""", (ni, "ESTOQUE INICIAL" if primeira_entrada else tipo, quantidade, novo, agora(), observacao.strip()))
 
 
 def itens_df():
     with conexao() as db:
-        return pd.read_sql_query("SELECT ni AS NI, descricao AS DESCRIÇÃO, saldo AS ESTOQUE FROM itens ORDER BY descricao", db)
+        return pd.read_sql_query("SELECT ni AS NI, descricao AS DESCRIÇÃO, saldo AS ESTOQUE, estoque_inicial AS "ESTOQUE INICIAL" FROM itens ORDER BY descricao", db)
 
 
 def movimentos_df():
@@ -89,6 +118,7 @@ def movimentos_df():
 
 
 inicializar()
+cadastrar_materiais_iniciais()
 st.title("📦 10 SUL • CONTROLE DE ESTOQUE COCB")
 st.caption("Desenvolvido por Evandro Junior")
 pagina = st.query_params.get("pagina", "cadastro")
@@ -115,7 +145,7 @@ if pagina == "cadastro":
             st.error(str(e))
 
     st.subheader("Importar cadastro do Excel")
-    st.caption("Colunas: NI, DESCRICAO, ESTOQUE INICIAL. NI existente será ignorado, sem alterar saldo.")
+    st.caption("Colunas: NI, DESCRICAO, ESTOQUE INICIAL. NI existente será ignorado, sem alterar saldo. Para itens sem quantidade, informe 0.")
     arquivo = st.file_uploader("Selecione um arquivo .xlsx", type=["xlsx"])
     if arquivo:
         try:
@@ -155,6 +185,7 @@ if pagina == "cadastro":
                        "saldos_cocb.csv", "text/csv")
 else:
     st.subheader("Entrada e saída de materiais")
+    st.caption("A primeira ENTRADA de cada NI define seu ESTOQUE INICIAL automaticamente.")
     tabela = itens_df()
     if tabela.empty:
         st.info("Cadastre um material antes de movimentar o estoque.")
