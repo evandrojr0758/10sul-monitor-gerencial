@@ -75,7 +75,7 @@ class BaseGitHub:
         if arquivo is None:
             dados = {"schema": 1, "itens": {}, "movimentos": []}
             for ni, descricao in MATERIAIS:
-                dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": int(minimo_novo), "maximo": int(maximo_novo)}
+                dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
             return dados, None
         try:
             dados = json.loads(base64.b64decode(arquivo["content"]))
