@@ -311,17 +311,19 @@ except ErroEstoque as exc:
     st.stop()
 
 normalizar(dados)
-unidade = st.selectbox("Unidade para movimentações e limites", UNIDADES, index=2)
-if st.button("📷 Relatório para enviar ao cliente", type="primary", use_container_width=True):
+unidade = st.selectbox("Unidade", UNIDADES, index=2)
+somente_movimentacao = st.query_params.get("acesso", "") == "movimentacao"
+if not somente_movimentacao and st.button("📷 Relatório para enviar ao cliente", type="primary", use_container_width=True):
     abrir_relatorio_reposicao(dados, unidade)
 
-pagina = st.query_params.get("pagina", "painel")
+pagina = "movimentacao" if somente_movimentacao else st.query_params.get("pagina", "painel")
 if pagina not in ("painel", "cadastro", "movimentacao"):
     pagina = "painel"
-a, b, c = st.columns(3)
-a.link_button("📊 Painel", "?pagina=painel", use_container_width=True)
-b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
-c.link_button("📦 Movimentação", "?pagina=movimentacao", use_container_width=True)
+if not somente_movimentacao:
+    a, b, c = st.columns(3)
+    a.link_button("📊 Painel", "?pagina=painel", use_container_width=True)
+    b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
+    c.link_button("📦 Movimentação", "?pagina=movimentacao", use_container_width=True)
 
 if pagina == "painel":
     st.subheader("Painel de Estoque — " + unidade)
