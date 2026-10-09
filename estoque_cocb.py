@@ -167,6 +167,63 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
     return primeira, saldo
 
 
+
+def exportar_criticos_excel(tabela, unidade):
+    from io import BytesIO
+    from zoneinfo import ZoneInfo
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Itens críticos"
+    ws.sheet_view.showGridLines = False
+    ws.merge_cells("A1:G1")
+    ws["A1"] = "10 SUL — ITENS ABAIXO DO MÍNIMO"
+    ws["A1"].font = Font(size=18, bold=True, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor="15364B")
+    ws.row_dimensions[1].height = 34
+    ws.merge_cells("A2:G2")
+    ws["A2"] = "Unidade: " + unidade + " | " + datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
+    cabecalhos = ["NI", "DESCRIÇÃO", "MÍNIMO", "MÁXIMO", "ESTOQUE ATUAL", "REPOR ATÉ MÁXIMO", "UNIDADE"]
+    ws.append([])
+    ws.append(cabecalhos)
+    for c in ws[4]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="15364B")
+        c.alignment = Alignment(wrap_text=True, vertical="center")
+    ws.row_dimensions[4].height = 32
+    for numero, (_, item) in enumerate(tabela.iterrows(), start=5):
+        atual, maximo = int(item["SALDO ATUAL"]), item["MÁXIMO"]
+        ws.append([str(item["NI"]), str(item["DESCRIÇÃO"]), item["MÍNIMO"],
+                   None if pd.isna(maximo) else maximo, atual,
+                   None if pd.isna(maximo) else max(0, maximo - atual), unidade])
+        for c in ws[numero]:
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+            if numero % 2:
+                c.fill = PatternFill("solid", fgColor="F0F4F7")
+            if c.column in (3, 4, 5, 6):
+                c.number_format = "#,##0"
+        ws.cell(numero, 6).font = Font(bold=True, color="B42318")
+        ws.row_dimensions[numero].height = 30
+    for coluna, largura in enumerate((16, 48, 13, 13, 19, 23, 13), start=1):
+        ws.column_dimensions[get_column_letter(coluna)].width = largura
+    ws.freeze_panes = "C5"
+    ws.auto_filter.ref = f"A4:G{ws.max_row}"
+    ws.print_title_rows = "1:4"
+    ws.print_options.horizontalCentered = True
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_area = f"A1:G{ws.max_row}"
+    arquivo = BytesIO()
+    wb.save(arquivo)
+    return arquivo.getvalue()
+
+
 def gerar_imagem_reposicao(dados, unidade):
     from io import BytesIO
     import textwrap
@@ -277,7 +334,7 @@ if pagina == "painel":
     else:
         criticos["REPOR ATÉ MÍNIMO"] = criticos["MÍNIMO"] - criticos["SALDO ATUAL"]
         st.dataframe(criticos[["NI", "DESCRIÇÃO", "SALDO ATUAL", "MÍNIMO", "MÁXIMO", "REPOR ATÉ MÍNIMO"]], hide_index=True, use_container_width=True)
-        st.download_button("Exportar itens críticos", criticos.to_csv(index=False).encode("utf-8-sig"), "estoque_critico.csv")
+        st.download_button("Exportar itens críticos em Excel", exportar_criticos_excel(criticos, unidade), f"estoque_critico_{unidade}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.subheader("Alertas de todas as unidades")
     alertas = []
     for ni, material in dados["itens"].items():
