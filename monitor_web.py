@@ -1375,12 +1375,33 @@ cards=[
     (0,"📦 AG. PEÇA","orange",mon.iloc[0:0]),
     (int(mon["acima_sla"].sum()),"⏱️ ACIMA SLA","red",mon[mon["acima_sla"]]),
 ]
+# Alerta SOS: somente atendimentos ainda abertos, estritamente acima de 3 horas.
+sos_em_alerta = bool(mon.loc[msos, "horas_aberto"].gt(3).any())
+if sos_em_alerta:
+    st.markdown("""
+    <style>
+    @keyframes sos_card_piscar {
+        0%, 100% {background-color:#dc2626; border-color:#dc2626;}
+        50% {background-color:#991b1b; border-color:#991b1b;}
+    }
+    .st-key-card_sos div[data-testid="stButton"] > button {
+        background-color:#dc2626;
+        border-color:#dc2626;
+        color:#ffffff!important;
+        animation:sos_card_piscar 1.4s ease-in-out infinite;
+    }
+    .st-key-card_sos div[data-testid="stButton"] > button * {
+        color:#ffffff!important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 cols=st.columns(7,gap="small")
 for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
     with col:
-        # Botão real: funciona por toque no celular e clique no computador.
-        if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
-            modal_os_abertas(lab,dados_card)
+        # Contêiner estável permite colorir todo o botão SOS sem perder o clique.
+        with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
+            if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
+                modal_os_abertas(lab,dados_card)
 
 render_medias_supervisor()
 
