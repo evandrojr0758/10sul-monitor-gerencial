@@ -289,7 +289,7 @@ def gerar_imagem_reposicao(dados, unidade):
                 pass
         return ImageFont.load_default(size=tamanho)
 
-    altura = 200 + sum(140 + sum(max(48, len(l[1]) * 27 + 16) for l in linhas)
+    altura = 300 + sum(165 + sum(max(48, len(l[1]) * 27 + 16) for l in linhas)
                         for _, _, linhas in grupos)
     imagem = Image.new("RGB", (1200, altura), "white")
     desenho = ImageDraw.Draw(imagem)
@@ -297,15 +297,17 @@ def gerar_imagem_reposicao(dados, unidade):
     desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
     agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     desenho.text((36, 82), f"Todas as unidades  |  Atualizado em {agora}", font=fonte(23), fill="white")
-    desenho.text((36, 155), "Quantidades a repor até o máximo de cada unidade. — = sem necessidade ou limite não definido.", font=fonte(19), fill="#52616b")
+    desenho.text((36, 155), "REPOR = MÁXIMO − ATUAL. Quantidade necessária em cada unidade.", font=fonte(19), fill="#52616b")
     y = 200
     for titulo, cor, linhas in grupos:
         desenho.text((36, y), f"{titulo} ({len(linhas)})", font=fonte(26), fill=cor)
         y += 45
-        desenho.rectangle((30, y, 1170, y + 40), fill="#eaf0f4")
+        desenho.rectangle((30, y, 1170, y + 65), fill="#eaf0f4")
         for x, texto in ((42, "NI"), (210, "MATERIAL"), (730, "ARA"), (840, "MUC"), (950, "COCB"), (1060, "NAN")):
             desenho.text((x, y + 8), texto, font=fonte(19), fill="#15364b")
-        y += 40
+        for x in (730, 840, 950, 1060):
+            desenho.text((x, y + 33), "REPOR", font=fonte(17), fill="#15364b")
+        y += 65
         if not linhas:
             desenho.text((42, y + 12), "Nenhum item nesta condição.", font=fonte(21), fill="#52616b")
             y += 48
