@@ -125,7 +125,9 @@ def _combinar_base_asn(historico, asn):
 def carregar():
     historico = _ler_atendimentos("monitor_atendimentos")
     asn = _ler_atendimentos("monitor_asn")
-    return _combinar_base_asn(historico, asn)
+    base = _combinar_base_asn(historico, asn)
+    unidade = base["unidade"].fillna("").astype(str).str.strip().str.upper()
+    return base.loc[unidade.eq("ARA")].copy().reset_index(drop=True)
 
 def norm_frota(v):
     s=str(v or "").strip()
@@ -179,6 +181,8 @@ def carregar_laudos_manuais_web():
                 def chave_os(v):
                     return re.sub(r"\\.0$","",str(v).strip())
                 atend=atend.copy()
+                chaves_ara = set(zip(atend["os_id"].apply(chave_os), atend["frota"].apply(norm_frota)))
+                d = d.loc[[(chave_os(o), norm_frota(f)) in chaves_ara for o, f in zip(d["OS_ID"], d["FROTA"])]].copy()
                 atend["_OS"]=atend["os_id"].apply(chave_os)
                 atend["_FROTA"]=atend["frota"].apply(norm_frota)
                 atend["_FIM"]=pd.to_datetime(atend["fim"],errors="coerce")
