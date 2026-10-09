@@ -103,12 +103,19 @@ def _combinar_base_asn(historico, asn):
         raise RuntimeError("monitor_asn não retornou registros. Confira a permissão de leitura dessa tabela.")
     a = preparar(asn)
     a["inicio_suzano"] = a["parada"]
+    a["fim_asn"] = a["fim"]
+    a["fim"] = pd.to_datetime(a["fim_asn"], errors="coerce")
     if historico.empty:
         return a.reset_index()
     h = preparar(historico)
+    # Fim histórico combinado não comprova a origem ASN ou liberação manual.
+    for c in ["fim_asn", "fim_liberacao_10sul"]:
+        if c not in h.columns:
+            h[c] = pd.NaT
+    h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"], errors="coerce"))
     resultado = h.reindex(h.index.union(a.index)).copy()
     # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
-    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "sincronizado_em"]:
+    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "fim_asn", "sincronizado_em"]:
         if c not in resultado.columns:
             resultado[c] = None
         resultado.loc[a.index, c] = a[c]
@@ -118,6 +125,7 @@ def _combinar_base_asn(historico, asn):
     resultado.loc[novos, "inicio"] = a.loc[novos, "inicio"]
     sem_inicio = a.index[salvo.reindex(a.index).isna()]
     resultado.loc[sem_inicio, "inicio"] = a.loc[sem_inicio, "inicio"]
+    resultado["fim"] = pd.to_datetime(resultado["fim_asn"], errors="coerce").fillna(pd.to_datetime(resultado["fim_liberacao_10sul"], errors="coerce"))
     return resultado.reset_index()
 
 
@@ -177,7 +185,7 @@ def carregar_laudos_manuais_web():
         d["FIM_CLIENTE"]=""
         try:
             atend=carregar()
-            if not atend.empty and all(c in atend.columns for c in ["os_id","frota","fim"]):
+            if not atend.empty and all(c in atend.columns for c in ["os_id","frota","fim_asn"]):
                 def chave_os(v):
                     return re.sub(r"\\.0$","",str(v).strip())
                 atend=atend.copy()
@@ -185,7 +193,7 @@ def carregar_laudos_manuais_web():
                 d = d.loc[[(chave_os(o), norm_frota(f)) in chaves_ara for o, f in zip(d["OS_ID"], d["FROTA"])]].copy()
                 atend["_OS"]=atend["os_id"].apply(chave_os)
                 atend["_FROTA"]=atend["frota"].apply(norm_frota)
-                atend["_FIM"]=pd.to_datetime(atend["fim"],errors="coerce")
+                atend["_FIM"]=pd.to_datetime(atend["fim_asn"],errors="coerce")
                 finais=atend.groupby(["_OS","_FROTA"])["_FIM"].max()
                 d["FIM_CLIENTE"]=[
                     finais.get((chave_os(osid),norm_frota(fr)),pd.NaT)
@@ -527,28 +535,18 @@ def _grafico_media_diaria(g,sla):
     st.altair_chart((linha+pts+rot+rule+lab).properties(height=135),use_container_width=True)
 
 def _base_medias_origem(tipo,origem):
-    """Datas da origem escolhida; nenhuma data Suzano substitui uma data 10 Sul."""
+    """Médias das OS: datas de laudos não participam deste cálculo."""
     e=df["evento"].fillna("").astype(str).str.strip().str.upper()
     mask=e.eq("ITR") if tipo=="ITR" else e.str.contains("REVIS",na=False)
     b=df[mask & ~df["frota"].isin(ESPECIAIS)].copy()
     b["OS/ID"]=b["os_id"].apply(_chave_vinculo_laudo)
     b["FROTA"]=b["frota"].apply(_chave_vinculo_laudo)
-    if origem=="Suzano":
-        b["INICIO_CALC"]=pd.to_datetime(b["parada"],errors="coerce")
-        b["FIM_CALC"]=pd.to_datetime(b["fim"],errors="coerce")
-        base=b[["OS/ID","FROTA","INICIO_CALC","FIM_CALC"]].copy()
-        base=base.sort_values("FIM_CALC",na_position="first").drop_duplicates(["OS/ID","FROTA"],keep="last")
-    else:
-        laudos=carregar_laudos_manuais_web().copy()
-        cols=["OS/ID","FROTA","INICIO_CALC","FIM_CALC"]
-        if laudos.empty or not {"OS_ID","FROTA","INICIO_MANUTENCAO","FIM_MANUTENCAO"}.issubset(laudos.columns):
-            return pd.DataFrame(columns=cols+["HORAS"])
-        laudos["OS/ID"]=laudos["OS_ID"].apply(_chave_vinculo_laudo)
-        laudos["FROTA"]=laudos["FROTA"].apply(_chave_vinculo_laudo)
-        laudos["INICIO_CALC"]=pd.to_datetime(laudos["INICIO_MANUTENCAO"],errors="coerce")
-        laudos["FIM_CALC"]=pd.to_datetime(laudos["FIM_MANUTENCAO"],errors="coerce")
-        base=laudos.groupby(["OS/ID","FROTA"],as_index=False).agg(INICIO_CALC=("INICIO_CALC","min"),FIM_CALC=("FIM_CALC","max"))
-        base=base.merge(b[["OS/ID","FROTA"]].drop_duplicates(),on=["OS/ID","FROTA"],how="inner")
+    inicio_col = "parada" if origem == "Suzano" else "inicio"
+    fim_col = "fim_asn" if origem == "Suzano" else "fim"
+    b["INICIO_CALC"] = pd.to_datetime(b[inicio_col], errors="coerce")
+    b["FIM_CALC"] = pd.to_datetime(b[fim_col], errors="coerce")
+    base = b[["OS/ID", "FROTA", "INICIO_CALC", "FIM_CALC"]].copy()
+    base = base.sort_values("FIM_CALC", na_position="first").drop_duplicates(["OS/ID", "FROTA"], keep="last")
     base=base[base["OS/ID"].ne("") & base["FROTA"].ne("") & base["INICIO_CALC"].notna() & base["FIM_CALC"].notna() & (base["FIM_CALC"]>=base["INICIO_CALC"]) & (base["FIM_CALC"]<=agora)].copy()
     base["HORAS"]=(base["FIM_CALC"]-base["INICIO_CALC"]).dt.total_seconds()/3600
     return base.sort_values("FIM_CALC",ascending=False).reset_index(drop=True)
@@ -588,7 +586,7 @@ def _botoes_medias_origens(tipo):
                 media=recorte["HORAS"].mean() if len(recorte) else None
                 if st.button(f"{origem} · {periodo}\n\n{hhmm(media)}\n\nVer {len(recorte)} OS ›",key=f"media_origem_{tipo}_{origem}_{periodo}",use_container_width=True):
                     modal_ordens_media(tipo,origem,periodo,recorte)
-    st.caption("FIM − INÍCIO de cada origem, por OS/frota, sem substituir datas ausentes. Somente ordens com fim informado; período pela liberação. 10 Sul: datas dos laudos vinculados às OS da base sincronizada.")
+    st.caption("Suzano: parada até fim ASN. 10 Sul: início ajustado da OS até fim ASN; sem baixa ASN, usa a liberação manual identificada. Datas do laudo ficam apenas nas médias dos laudos.")
 
 
 
