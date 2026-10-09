@@ -265,6 +265,7 @@ def gerar_imagem_reposicao(dados, unidade):
     from PIL import Image, ImageDraw, ImageFont
 
     normalizar(dados)
+    unidades_relatorio = ("MUC", "COCB", "NAM")
     grupos = []
     for campo, titulo, cor in (
         ("minimo", "ITENS ABAIXO DO MÍNIMO", "#b42318"),
@@ -274,7 +275,7 @@ def gerar_imagem_reposicao(dados, unidade):
         for ni, material in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"]):
             reposicao = []
             abaixo = False
-            for u in UNIDADES:
+            for u in unidades_relatorio:
                 estoque = material["unidades"][u]
                 limite = estoque.get(campo)
                 critico = limite is not None and estoque["saldo"] < limite
@@ -283,7 +284,7 @@ def gerar_imagem_reposicao(dados, unidade):
                 reposicao.append(max(0, maximo - estoque["saldo"]) if critico and maximo is not None else None)
             if abaixo:
                 descricao = textwrap.wrap(material["descricao"], width=28) or [""]
-                linhas.append((ni, descricao, reposicao, [material["unidades"][u] for u in UNIDADES]))
+                linhas.append((ni, descricao, reposicao, [material["unidades"][u] for u in unidades_relatorio]))
         grupos.append((titulo, cor, linhas))
 
     def fonte(tamanho):
@@ -305,7 +306,7 @@ def gerar_imagem_reposicao(dados, unidade):
     desenho.rectangle((0, 0, 1480, 140), fill="#15364b")
     desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
     agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
-    desenho.text((36, 82), f"Todas as unidades  |  Atualizado em {agora}", font=fonte(23), fill="white")
+    desenho.text((36, 82), f"Unidades: MUC, COCB e NAN  |  Atualizado em {agora}", font=fonte(23), fill="white")
     desenho.text((36, 155), "REPOR = MÁXIMO − ATUAL. Quantidade necessária em cada unidade.", font=fonte(19), fill="#52616b")
     y = 200
     for titulo, cor, linhas in grupos:
@@ -314,7 +315,7 @@ def gerar_imagem_reposicao(dados, unidade):
         desenho.rectangle((30, y, 1450, y + 65), fill="#eaf0f4")
         for x, texto in ((42, "NI"), (210, "MATERIAL"), (600, "MÍNIMO"), (710, "MÁXIMO"), (1320, "TOTAL")):
             desenho.text((x, y + 8), texto, font=fonte(19), fill="#15364b")
-        for x, nome in zip((840, 960, 1080, 1200), ("ARA", "MUC", "COCB", "NAN")):
+        for x, nome in zip((840, 1000, 1160), ("MUC", "COCB", "NAN")):
             desenho.text((x, y + 8), nome, font=fonte(21), fill="#15364b")
             desenho.text((x, y + 35), "REPOR", font=fonte(17), fill="#15364b")
         desenho.text((1320, y + 35), "REPOR", font=fonte(17), fill="#15364b")
@@ -322,7 +323,7 @@ def gerar_imagem_reposicao(dados, unidade):
         if not linhas:
             desenho.text((42, y + 12), "Nenhum item nesta condição.", font=fonte(21), fill="#52616b")
             y += 48
-        totais = [0, 0, 0, 0]
+        totais = [0, 0, 0]
         for indice, (ni, descricao, reposicao, estoques) in enumerate(linhas):
             h = max(48, len(descricao) * 27 + 16)
             desenho.rectangle((30, y, 1450, y + h), fill="#f5f7f9" if indice % 2 == 0 else "white")
@@ -332,14 +333,14 @@ def gerar_imagem_reposicao(dados, unidade):
             for x, campo in ((600, "minimo"), (710, "maximo")):
                 numero = estoques[0].get(campo)
                 desenho.text((x, y + 10), "—" if numero is None else str(numero), font=fonte(22), fill="#243746")
-            for x, repor in zip((840, 960, 1080, 1200), reposicao):
+            for x, repor in zip((840, 1000, 1160), reposicao):
                 desenho.text((x, y + 10), "—" if repor is None else str(repor), font=fonte(22), fill=cor if repor else "#52616b")
             desenho.text((1320, y + 10), str(sum(n or 0 for n in reposicao)), font=fonte(22), fill=cor)
             totais = [total + (numero or 0) for total, numero in zip(totais, reposicao)]
             y += h
         desenho.rectangle((30, y, 1450, y + 52), fill="#15364b")
         desenho.text((42, y + 14), "TOTAL A REPOR", font=fonte(21), fill="white")
-        for x, numero in zip((840, 960, 1080, 1200, 1320), [*totais, sum(totais)]):
+        for x, numero in zip((840, 1000, 1160, 1320), [*totais, sum(totais)]):
             desenho.text((x, y + 14), str(numero), font=fonte(22), fill="white")
         y += 77
     desenho.text((36, y), "A lista abaixo do máximo também inclui os itens abaixo do mínimo.",
