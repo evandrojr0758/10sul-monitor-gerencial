@@ -217,6 +217,45 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
 
 
 
+def exportar_tabela_excel(tabela, titulo):
+    """Gera o arquivo Excel no servidor para download pelo aplicativo."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = titulo[:31]
+    ws.sheet_view.showGridLines = False
+    ws.append([str(c) for c in tabela.columns])
+    for valores in tabela.itertuples(index=False, name=None):
+        ws.append([None if pd.isna(v) else v.item() if hasattr(v, "item") else v for v in valores])
+    for celula in ws[1]:
+        celula.font = Font(bold=True, color="FFFFFF")
+        celula.fill = PatternFill("solid", fgColor="15364B")
+        celula.alignment = Alignment(wrap_text=True, vertical="center")
+    ws.row_dimensions[1].height = 32
+    linha = Side(style="thin", color="D6DEE6")
+    for linha_dados in ws.iter_rows(min_row=2):
+        for celula in linha_dados:
+            celula.alignment = Alignment(vertical="center", wrap_text=True)
+            celula.border = Border(bottom=linha)
+            if celula.row % 2 == 0:
+                celula.fill = PatternFill("solid", fgColor="F0F4F7")
+            if isinstance(celula.value, (int, float)):
+                celula.number_format = "#,##0"
+    for indice, nome in enumerate(tabela.columns, 1):
+        tamanho = max([len(str(nome)), *[len(str(v)) for v in tabela[nome].dropna()]])
+        ws.column_dimensions[get_column_letter(indice)].width = min(55, max(15, tamanho + 3))
+    ws.freeze_panes = "C2"
+    if len(tabela.columns):
+        ws.auto_filter.ref = ws.dimensions
+    arquivo = BytesIO()
+    wb.save(arquivo)
+    return arquivo.getvalue()
+
+
 def exportar_criticos_excel(tabela, unidade):
     from io import BytesIO
     from zoneinfo import ZoneInfo
@@ -568,7 +607,7 @@ elif pagina == "cadastro":
         tabela = tabela[tabela["NI"].str.contains(busca, case=False, regex=False) |
                         tabela["DESCRIÇÃO"].str.contains(busca, case=False, regex=False)]
     st.dataframe(tabela, use_container_width=True, hide_index=True)
-    st.download_button("Exportar saldos", tabela.to_csv(index=False).encode("utf-8-sig"), "saldos_cocb.csv")
+    st.download_button("Exportar saldos em Excel", exportar_tabela_excel(tabela, "Saldos"), "saldos_estoque.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 elif pagina == "movimentacao":
     st.subheader("Movimentação")
     tabela = itens_tabela(dados)
@@ -601,4 +640,4 @@ elif pagina == "movimentacao":
         movimentos = movimentos.drop(columns=["go_carreta"], errors="ignore")
         movimentos = movimentos[movimentos["unidade"] == unidade]
     st.dataframe(movimentos, use_container_width=True, hide_index=True)
-    st.download_button("Exportar histórico", movimentos.to_csv(index=False).encode("utf-8-sig"), "historico_cocb.csv")
+    st.download_button("Exportar histórico em Excel", exportar_tabela_excel(movimentos, "Histórico"), "historico_estoque.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
