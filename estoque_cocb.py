@@ -263,11 +263,18 @@ def gerar_imagem_reposicao(dados, unidade):
     ):
         linhas = []
         for ni, material in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"]):
-            estoque = material["unidades"][unidade]
-            limite = estoque.get(campo)
-            if limite is not None and estoque["saldo"] < limite:
-                descricao = textwrap.wrap(material["descricao"], width=42) or [""]
-                linhas.append((ni, descricao, estoque["saldo"], limite, limite - estoque["saldo"]))
+            reposicao = []
+            abaixo = False
+            for u in UNIDADES:
+                estoque = material["unidades"][u]
+                limite = estoque.get(campo)
+                critico = limite is not None and estoque["saldo"] < limite
+                abaixo = abaixo or critico
+                maximo = estoque.get("maximo")
+                reposicao.append(max(0, maximo - estoque["saldo"]) if critico and maximo is not None else None)
+            if abaixo:
+                descricao = textwrap.wrap(material["descricao"], width=36) or [""]
+                linhas.append((ni, descricao, reposicao))
         grupos.append((titulo, cor, linhas))
 
     def fonte(tamanho):
@@ -289,26 +296,27 @@ def gerar_imagem_reposicao(dados, unidade):
     desenho.rectangle((0, 0, 1200, 140), fill="#15364b")
     desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
     agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
-    desenho.text((36, 82), f"Unidade: {unidade}  |  Atualizado em {agora}", font=fonte(23), fill="white")
-    y = 165
+    desenho.text((36, 82), f"Todas as unidades  |  Atualizado em {agora}", font=fonte(23), fill="white")
+    desenho.text((36, 155), "Quantidades a repor até o máximo de cada unidade. — = sem necessidade ou limite não definido.", font=fonte(19), fill="#52616b")
+    y = 200
     for titulo, cor, linhas in grupos:
         desenho.text((36, y), f"{titulo} ({len(linhas)})", font=fonte(26), fill=cor)
         y += 45
         desenho.rectangle((30, y, 1170, y + 40), fill="#eaf0f4")
-        for x, texto in ((42, "NI"), (210, "MATERIAL"), (800, "ATUAL"), (920, "LIMITE"), (1040, "REPOR")):
+        for x, texto in ((42, "NI"), (210, "MATERIAL"), (730, "ARA"), (840, "MUC"), (950, "COCB"), (1060, "NAN")):
             desenho.text((x, y + 8), texto, font=fonte(19), fill="#15364b")
         y += 40
         if not linhas:
             desenho.text((42, y + 12), "Nenhum item nesta condição.", font=fonte(21), fill="#52616b")
             y += 48
-        for indice, (ni, descricao, saldo, limite, repor) in enumerate(linhas):
+        for indice, (ni, descricao, reposicao) in enumerate(linhas):
             h = max(48, len(descricao) * 27 + 16)
             desenho.rectangle((30, y, 1170, y + h), fill="#f5f7f9" if indice % 2 == 0 else "white")
             desenho.text((42, y + 10), ni, font=fonte(21), fill="#243746")
             for n, trecho in enumerate(descricao):
                 desenho.text((210, y + 8 + n * 27), trecho, font=fonte(21), fill="#243746")
-            for x, numero in ((800, saldo), (920, limite), (1040, repor)):
-                desenho.text((x, y + 10), str(numero), font=fonte(22), fill=cor if x == 1040 else "#243746")
+            for x, numero in zip((730, 840, 950, 1060), reposicao):
+                desenho.text((x, y + 10), "—" if numero is None else str(numero), font=fonte(22), fill=cor if numero else "#52616b")
             y += h
         y += 25
     desenho.text((36, y), "A lista abaixo do máximo também inclui os itens abaixo do mínimo.",
@@ -322,7 +330,7 @@ def gerar_imagem_reposicao(dados, unidade):
 def abrir_relatorio_reposicao(dados, unidade):
     png = gerar_imagem_reposicao(dados, unidade)
     st.image(png, use_container_width=True)
-    st.download_button("Baixar imagem PNG", png, f"reposicao_{unidade}.png", mime="image/png")
+    st.download_button("Baixar imagem PNG", png, "reposicao_todas_unidades.png", mime="image/png")
 
 
 st.title("📦 10 SUL • CONTROLE DE ESTOQUE")
