@@ -452,11 +452,13 @@ elif pagina == "movimentacao":
         st.info("Cadastre materiais antes de movimentar.")
     else:
         opcoes = {f"{r['NI']} | {r['DESCRIÇÃO']} | Saldo: {r['SALDO ATUAL']}": r["NI"] for _, r in tabela.iterrows()}
-        with st.form("movimentacao", clear_on_submit=True):
+        tipo = st.selectbox("Movimento", ["ENTRADA", "SAÍDA"], key="tipo_movimentacao")
+        with st.form("movimentacao_" + tipo, clear_on_submit=True):
             escolhido = st.selectbox("Material", list(opcoes))
-            tipo = st.selectbox("Movimento", ["ENTRADA", "SAÍDA"])
             quantidade = st.number_input("Quantidade", min_value=1, step=1)
-            go_carreta = st.text_input("GO da carreta (obrigatório nas saídas)", placeholder="Ex.: 13795")
+            go_carreta = ""
+            if tipo == "SAÍDA":
+                go_carreta = st.text_input("GO da carreta (obrigatório)", placeholder="Ex.: 13795")
             observacao = st.text_input("Observação (opcional)")
             confirmar = st.form_submit_button("Registrar movimentação", type="primary")
         if confirmar:
