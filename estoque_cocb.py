@@ -335,10 +335,41 @@ def gerar_imagem_reposicao(dados, unidade):
     imagem.save(arquivo, format="PNG")
     return arquivo.getvalue()
 
+
+def botao_compartilhar_imagem(png):
+    import streamlit.components.v1 as components
+    imagem_base64 = base64.b64encode(png).decode("ascii")
+    html = """<!doctype html><html lang="pt-BR"><meta charset="utf-8">
+<style>
+body{margin:0;font-family:Arial,sans-serif}button{width:100%;padding:13px;border:0;border-radius:8px;background:#128c7e;color:white;font-size:16px;cursor:pointer}button:disabled{opacity:.65}p{font-size:13px;color:#52616b;margin:8px 0}
+</style>
+<button id="share">Compartilhar imagem no WhatsApp</button>
+<p id="status" role="status">Escolha o WhatsApp e o contato na tela de compartilhamento.</p>
+<script>
+const bytes=Uint8Array.from(atob("__PNG__"),c=>c.charCodeAt(0));
+const file=new File([bytes],"reposicao_10sul.png",{type:"image/png"});
+const button=document.getElementById("share"), status=document.getElementById("status");
+const navigators=[navigator];
+try { if(window.parent!==window) navigators.unshift(window.parent.navigator); } catch(e) {}
+button.onclick=async()=>{
+ const sharing=navigators.find(n=>{try{return typeof n.share==="function"&&typeof n.canShare==="function"&&n.canShare({files:[file]});}catch(e){return false;}});
+ if(!sharing){status.textContent="Este navegador não permite compartilhar imagens diretamente. Use Baixar imagem PNG e anexe no WhatsApp.";return;}
+ button.disabled=true;
+ try{
+  await sharing.share({files:[file],title:"10 SUL — Necessidade de reposição"});
+  status.textContent="Imagem compartilhada com o aplicativo escolhido.";
+ }catch(e){
+  status.textContent=e.name==="AbortError"?"Compartilhamento cancelado. Você pode tentar novamente.":"Não foi possível abrir o compartilhamento. Use Baixar imagem PNG e anexe no WhatsApp.";
+ }finally{button.disabled=false;}
+};
+</script></html>""".replace("__PNG__", imagem_base64)
+    components.html(html, height=120, scrolling=False)
+
 @st.dialog("Relatório de reposição", width="large")
 def abrir_relatorio_reposicao(dados, unidade):
     png = gerar_imagem_reposicao(dados, unidade)
     st.image(png, use_container_width=True)
+    botao_compartilhar_imagem(png)
     st.download_button("Baixar imagem PNG", png, "reposicao_todas_unidades.png", mime="image/png")
 
 
