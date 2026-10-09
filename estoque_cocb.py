@@ -1,212 +1,157 @@
-"""Controle de Estoque COCB — aplicativo independente (Streamlit).
-
-Execute: streamlit run estoque_cocb.py
-Links independentes: /?pagina=cadastro e /?pagina=movimentacao
-IMPORTANTE: SQLite local é adequado apenas para teste em armazenamento persistente.
-Para uso compartilhado no Streamlit Cloud, migrar para PostgreSQL hospedado.
+"""Controle de Estoque COCB | Streamlit + Supabase PostgreSQL.
+Secrets do Streamlit: [connections.cocb] url = "postgresql://..."
 """
-import os
-import sqlite3
-from datetime import datetime
-from pathlib import Path
-
+import io
 import pandas as pd
+import psycopg2
+from psycopg2 import errors
 import streamlit as st
 
 st.set_page_config(page_title="10 Sul | Estoque COCB", page_icon="📦", layout="wide")
-DB_PATH = Path(os.getenv("COCB_DB_PATH", "estoque_cocb.sqlite3"))
 
+def conectar():
+    try:
+        uri = st.secrets["connections"]["cocb"]["url"]
+    except (KeyError, FileNotFoundError):
+        st.error("Configure [connections.cocb] url nos Secrets do Streamlit Cloud.")
+        st.stop()
+    try:
+        return psycopg2.connect(uri, connect_timeout=12, sslmode="require")
+    except psycopg2.Error:
+        st.error("Não foi possível conectar ao Supabase. Confira a URI nos Secrets.")
+        st.stop()
 
-def conexao():
-    db = sqlite3.connect(DB_PATH, timeout=30)
-    db.execute("PRAGMA busy_timeout=30000")
-    db.execute("PRAGMA foreign_keys=ON")
-    db.row_factory = sqlite3.Row
-    return db
+def consultar(sql, params=()):
+    with conectar() as conn:
+        return pd.read_sql_query(sql, conn, params=params)
 
-
-def inicializar():
-    with conexao() as db:
-        db.execute("""CREATE TABLE IF NOT EXISTS itens (
-            ni TEXT PRIMARY KEY, descricao TEXT NOT NULL,
-            saldo INTEGER NOT NULL DEFAULT 0 CHECK(saldo >= 0),
-            estoque_inicial INTEGER,
-            criado_em TEXT NOT NULL)""")
-        cols = [r[1] for r in db.execute("PRAGMA table_info(itens)")]
-        if "estoque_inicial" not in cols:
-            db.execute("ALTER TABLE itens ADD COLUMN estoque_inicial INTEGER")
-        db.execute("""CREATE TABLE IF NOT EXISTS movimentos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ni TEXT NOT NULL REFERENCES itens(ni),
-            tipo TEXT NOT NULL CHECK(tipo IN ('ENTRADA','SAÍDA','ESTOQUE INICIAL')),
-            quantidade INTEGER NOT NULL CHECK(quantidade > 0),
-            saldo_apos INTEGER NOT NULL, data_hora TEXT NOT NULL,
-            observacao TEXT NOT NULL DEFAULT '')""")
-
-
-MATERIAIS_INICIAIS = [
-    ("27179902", "Válvula relê Facchini"),
-    ("27174139", "Parafuso Facchini"),
-    ("27174074", "Porca Facchini"),
-    ("27130048", "Parafuso 1/1.8"),
-    ("27114780", "Porca de 1.1/8"),
-    ("27145672", "Mangotes"),
-    ("27094293", "Válvula prévia"),
-    ("27258592", "Bolsa de ar Manos"),
-    ("27033363", "Bolsa de ar Sergomel"),
-    ("27251038", "Arruela cônica"),
-    ("27243269", "Colar de alinhamento"),
-]
-
-
-def cadastrar_materiais_iniciais():
-    with conexao() as db:
-        for ni, descricao in MATERIAIS_INICIAIS:
-            db.execute("INSERT OR IGNORE INTO itens (ni,descricao,saldo,estoque_inicial,criado_em) VALUES (?,?,0,NULL,?)", (ni,descricao,agora()))
-
-
-def agora():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def cadastrar(ni, descricao, inicial):
+def cadastrar(ni, descricao):
     ni, descricao = str(ni).strip(), str(descricao).strip()
-    if not ni or not descricao or inicial < 0:
-        raise ValueError("Informe NI, descrição e estoque inicial válido.")
-    with conexao() as db:
-        db.execute("BEGIN IMMEDIATE")
-        db.execute("INSERT INTO itens (ni,descricao,saldo,estoque_inicial,criado_em) VALUES (?,?,?,?,?)", (ni, descricao, inicial, inicial if inicial else None, agora()))
-        if inicial:
-            db.execute("""INSERT INTO movimentos
-                (ni,tipo,quantidade,saldo_apos,data_hora,observacao)
-                VALUES (?,?,?,?,?,?)""", (ni, "ESTOQUE INICIAL", inicial, inicial, agora(), "Cadastro"))
+    if not ni or not descricao:
+        raise ValueError("NI e descrição são obrigatórios.")
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO public.cocb_itens (ni,descricao) VALUES (%s,%s) ON CONFLICT (ni) DO NOTHING RETURNING ni",
+                (ni, descricao))
+            return cur.fetchone() is not None
 
+def movimentar(ni, tipo, quantidade, observacao):
+    if tipo not in ("ENTRADA", "SAIDA") or quantidade <= 0:
+        raise ValueError("Movimento ou quantidade inválidos.")
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT saldo_atual, estoque_inicial FROM public.cocb_itens WHERE ni=%s FOR UPDATE", (ni,))
+            item = cur.fetchone()
+            if item is None:
+                raise ValueError("NI não encontrado.")
+            saldo, inicial = item
+            if tipo == "SAIDA" and inicial is None:
+                raise ValueError("Registre a primeira ENTRADA antes de efetuar saídas.")
+            novo = saldo + (quantidade if tipo == "ENTRADA" else -quantidade)
+            if novo < 0:
+                raise ValueError(f"Estoque insuficiente: saldo disponível {saldo}.")
+            primeira = tipo == "ENTRADA" and inicial is None
+            cur.execute(
+                """UPDATE public.cocb_itens
+                   SET saldo_atual=%s, estoque_inicial=CASE WHEN %s THEN %s ELSE estoque_inicial END
+                   WHERE ni=%s""", (novo, primeira, quantidade, ni))
+            cur.execute(
+                """INSERT INTO public.cocb_movimentacoes
+                   (ni,movimento,quantidade,saldo_apos,estoque_inicial_registrado,observacao)
+                   VALUES (%s,%s,%s,%s,%s,%s)""",
+                (ni, tipo, quantidade, novo, primeira, observacao.strip()))
+    return primeira, novo
 
-def movimentar(ni, tipo, quantidade, observacao=""):
-    if tipo not in ("ENTRADA", "SAÍDA") or quantidade <= 0:
-        raise ValueError("Movimento ou quantidade inválida.")
-    with conexao() as db:
-        db.execute("BEGIN IMMEDIATE")
-        item = db.execute("SELECT saldo, estoque_inicial FROM itens WHERE ni=?", (ni,)).fetchone()
-        if item is None:
-            raise ValueError("Material não encontrado.")
-        novo = item["saldo"] + (quantidade if tipo == "ENTRADA" else -quantidade)
-        if novo < 0:
-            raise ValueError(f"Saldo insuficiente. Disponível: {item['saldo']}.")
-        primeira_entrada = tipo == "ENTRADA" and item["estoque_inicial"] is None
-        if primeira_entrada:
-            db.execute("UPDATE itens SET saldo=?, estoque_inicial=? WHERE ni=?", (novo, quantidade, ni))
-        else:
-            db.execute("UPDATE itens SET saldo=? WHERE ni=?", (novo, ni))
-        db.execute("""INSERT INTO movimentos
-            (ni,tipo,quantidade,saldo_apos,data_hora,observacao)
-            VALUES (?,?,?,?,?,?)""", (ni, "ESTOQUE INICIAL" if primeira_entrada else tipo, quantidade, novo, agora(), observacao.strip()))
+def itens():
+    return consultar("""SELECT ni AS "NI", descricao AS "DESCRIÇÃO",
+                       estoque_inicial AS "ESTOQUE INICIAL", saldo_atual AS "SALDO ATUAL"
+                       FROM public.cocb_itens ORDER BY descricao""")
 
+def historico():
+    return consultar("""SELECT m.data_hora AS "DATA/HORA", m.ni AS "NI",
+                       i.descricao AS "DESCRIÇÃO", m.movimento AS "MOVIMENTO",
+                       m.quantidade AS "QUANTIDADE", m.saldo_apos AS "SALDO APÓS",
+                       m.estoque_inicial_registrado AS "PRIMEIRA ENTRADA",
+                       m.observacao AS "OBSERVAÇÃO"
+                       FROM public.cocb_movimentacoes m
+                       JOIN public.cocb_itens i ON i.ni=m.ni ORDER BY m.id DESC""")
 
-def itens_df():
-    with conexao() as db:
-        return pd.read_sql_query("SELECT ni AS NI, descricao AS DESCRIÇÃO, saldo AS ESTOQUE, estoque_inicial AS "ESTOQUE INICIAL" FROM itens ORDER BY descricao", db)
-
-
-def movimentos_df():
-    with conexao() as db:
-        return pd.read_sql_query("""SELECT m.data_hora AS 'DATA/HORA', m.ni AS NI,
-            i.descricao AS DESCRIÇÃO, m.tipo AS MOVIMENTO,
-            m.quantidade AS QUANTIDADE, m.saldo_apos AS 'SALDO APÓS',
-            m.observacao AS OBSERVAÇÃO FROM movimentos m
-            JOIN itens i ON i.ni=m.ni ORDER BY m.id DESC""", db)
-
-
-inicializar()
-cadastrar_materiais_iniciais()
-st.title("📦 10 SUL • CONTROLE DE ESTOQUE COCB")
+st.title("📦 10 SUL • ESTOQUE COCB")
 st.caption("Desenvolvido por Evandro Junior")
 pagina = st.query_params.get("pagina", "cadastro")
 if pagina not in ("cadastro", "movimentacao"):
     pagina = "cadastro"
-a, b = st.columns(2)
-a.link_button("Cadastro de itens", "?pagina=cadastro", use_container_width=True)
-b.link_button("Movimentação de estoque", "?pagina=movimentacao", use_container_width=True)
+col1, col2 = st.columns(2)
+col1.link_button("Cadastro de itens", "?pagina=cadastro", use_container_width=True)
+col2.link_button("Movimentação", "?pagina=movimentacao", use_container_width=True)
 
 if pagina == "cadastro":
-    st.subheader("Cadastro de itens")
-    with st.form("cadastro", clear_on_submit=True):
-        ni = st.text_input("NI (código original)", max_chars=100)
-        descricao = st.text_input("Descrição do material")
-        inicial = st.number_input("Estoque inicial", min_value=0, step=1)
-        salvar = st.form_submit_button("Cadastrar material", type="primary")
-    if salvar:
+    st.subheader("Cadastro de materiais")
+    st.info("O estoque inicial será definido automaticamente pela primeira ENTRADA de cada material.")
+    with st.form("novo_item", clear_on_submit=True):
+        ni = st.text_input("NI (manual)")
+        descricao = st.text_input("Descrição")
+        gravar = st.form_submit_button("Cadastrar material", type="primary")
+    if gravar:
         try:
-            cadastrar(ni, descricao, int(inicial))
-            st.success("Material cadastrado.")
-        except sqlite3.IntegrityError:
-            st.error("Este NI já está cadastrado. O saldo existente não foi alterado.")
-        except (ValueError, sqlite3.Error) as e:
-            st.error(str(e))
-
-    st.subheader("Importar cadastro do Excel")
-    st.caption("Colunas: NI, DESCRICAO, ESTOQUE INICIAL. NI existente será ignorado, sem alterar saldo. Para itens sem quantidade, informe 0.")
-    arquivo = st.file_uploader("Selecione um arquivo .xlsx", type=["xlsx"])
+            st.success("Material cadastrado.") if cadastrar(ni, descricao) else st.warning("NI já cadastrado; nenhum dado foi alterado.")
+        except (ValueError, psycopg2.Error) as exc:
+            st.error(str(exc) if isinstance(exc, ValueError) else "Falha ao cadastrar material.")
+    st.subheader("Importar materiais por Excel")
+    arquivo = st.file_uploader("Planilha com colunas NI e DESCRIÇÃO", type=["xlsx"])
     if arquivo:
         try:
-            planilha = pd.read_excel(arquivo, dtype={"NI": str}).fillna("")
-            planilha.columns = [str(c).strip().upper().replace("Ç", "C").replace("Ã", "A") for c in planilha.columns]
-            if not {"NI", "DESCRICAO", "ESTOQUE INICIAL"}.issubset(planilha.columns):
-                st.error("A planilha precisa conter NI, DESCRICAO e ESTOQUE INICIAL.")
+            df = pd.read_excel(arquivo, dtype=str).fillna("")
+            df.columns = [str(c).strip().upper().replace("Ç", "C").replace("Ã", "A") for c in df.columns]
+            if not {"NI", "DESCRICAO"}.issubset(df.columns):
+                st.error("A planilha precisa ter as colunas NI e DESCRIÇÃO.")
             else:
-                st.dataframe(planilha.head(30), use_container_width=True, hide_index=True)
+                st.dataframe(df[["NI", "DESCRICAO"]].head(30), hide_index=True)
                 if st.button("Confirmar importação"):
-                    novos, existentes, erros = 0, 0, []
-                    for linha, r in planilha.iterrows():
+                    novos, existentes, falhas = 0, 0, 0
+                    for _, linha in df.iterrows():
                         try:
-                            valor = float(r["ESTOQUE INICIAL"])
-                            if not valor.is_integer() or valor < 0:
-                                raise ValueError("Estoque inicial deve ser inteiro e não negativo")
-                            cadastrar(r["NI"], r["DESCRICAO"], int(valor))
-                            novos += 1
-                        except sqlite3.IntegrityError:
-                            existentes += 1
-                        except (ValueError, TypeError, sqlite3.Error) as e:
-                            erros.append(f"Linha {linha + 2}: {e}")
-                    st.success(f"Importados: {novos}. NI já existentes: {existentes}.")
-                    if erros:
-                        st.warning("\n".join(erros[:30]))
-        except Exception as e:
-            st.error(f"Não foi possível ler a planilha: {e}")
-
-    st.subheader("Saldo atual")
-    tabela = itens_df()
-    filtro = st.text_input("Pesquisar NI ou descrição")
+                            if cadastrar(linha["NI"], linha["DESCRICAO"]):
+                                novos += 1
+                            else:
+                                existentes += 1
+                        except (ValueError, psycopg2.Error):
+                            falhas += 1
+                    st.success(f"Novos: {novos}; existentes: {existentes}; não importados: {falhas}.")
+        except Exception:
+            st.error("Não foi possível ler a planilha.")
+    st.subheader("Saldos")
+    dados = itens()
+    filtro = st.text_input("Buscar NI ou descrição")
     if filtro:
-        tabela = tabela[tabela["NI"].str.contains(filtro, case=False, regex=False) |
-                        tabela["DESCRIÇÃO"].str.contains(filtro, case=False, regex=False)]
-    st.dataframe(tabela, hide_index=True, use_container_width=True)
-    st.download_button("Exportar saldos CSV", tabela.to_csv(index=False).encode("utf-8-sig"),
-                       "saldos_cocb.csv", "text/csv")
+        dados = dados[dados["NI"].str.contains(filtro, case=False, regex=False) |
+                      dados["DESCRIÇÃO"].str.contains(filtro, case=False, regex=False)]
+    st.dataframe(dados, use_container_width=True, hide_index=True)
+    st.download_button("Exportar saldos", dados.to_csv(index=False).encode("utf-8-sig"), "cocb_saldos.csv")
 else:
-    st.subheader("Entrada e saída de materiais")
-    st.caption("A primeira ENTRADA de cada NI define seu ESTOQUE INICIAL automaticamente.")
-    tabela = itens_df()
-    if tabela.empty:
-        st.info("Cadastre um material antes de movimentar o estoque.")
+    st.subheader("Entrada e saída")
+    dados = itens()
+    if dados.empty:
+        st.info("Nenhum material cadastrado.")
     else:
-        opcoes = {f"{r.NI} | {r.DESCRIÇÃO} | Saldo: {r.ESTOQUE}": r.NI
-                  for r in tabela.itertuples(index=False)}
-        with st.form("movimentacao", clear_on_submit=True):
-            escolha = st.selectbox("Descrição / NI", list(opcoes))
+        opcoes = {f"{r['NI']} | {r['DESCRIÇÃO']} | Saldo: {r['SALDO ATUAL']}": r["NI"]
+                  for _, r in dados.iterrows()}
+        with st.form("movimentar", clear_on_submit=True):
+            selecionado = st.selectbox("Material", list(opcoes))
             tipo = st.selectbox("Movimento", ["ENTRADA", "SAÍDA"])
             quantidade = st.number_input("Quantidade", min_value=1, step=1)
-            observacao = st.text_input("Observação (opcional)")
-            confirmar = st.form_submit_button("Registrar movimentação", type="primary")
-        if confirmar:
+            obs = st.text_input("Observação")
+            enviar = st.form_submit_button("Registrar", type="primary")
+        if enviar:
             try:
-                movimentar(opcoes[escolha], tipo, int(quantidade), observacao)
-                st.success("Movimentação registrada e saldo atualizado.")
-            except (ValueError, sqlite3.Error) as e:
-                st.error(str(e))
-    st.subheader("Histórico de movimentações")
-    historico = movimentos_df()
-    st.dataframe(historico, hide_index=True, use_container_width=True)
-    st.download_button("Exportar histórico CSV",
-                       historico.to_csv(index=False).encode("utf-8-sig"),
-                       "historico_cocb.csv", "text/csv")
+                primeira, novo = movimentar(opcoes[selecionado], "SAIDA" if tipo == "SAÍDA" else "ENTRADA", int(quantidade), obs)
+                st.success(f"{'Estoque inicial registrado!' if primeira else 'Movimentação registrada!'} Novo saldo: {novo}")
+            except ValueError as exc:
+                st.error(str(exc))
+            except psycopg2.Error:
+                st.error("Erro ao salvar movimentação no banco.")
+    st.subheader("Histórico")
+    movs = historico()
+    st.dataframe(movs, use_container_width=True, hide_index=True)
+    st.download_button("Exportar histórico", movs.to_csv(index=False).encode("utf-8-sig"), "cocb_historico.csv")
