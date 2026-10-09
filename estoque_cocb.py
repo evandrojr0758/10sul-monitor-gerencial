@@ -317,7 +317,8 @@ except ErroEstoque as exc:
 
 normalizar(dados)
 unidade = st.selectbox("Unidade", UNIDADES, index=2)
-somente_movimentacao = st.query_params.get("acesso", "") == "movimentacao"
+somente_movimentacao = (st.query_params.get("acesso", "") == "movimentacao"
+                         or st.query_params.get("pagina", "") == "movimentacao")
 if not somente_movimentacao and st.button("📷 Relatório para enviar ao cliente", type="primary", use_container_width=True):
     abrir_relatorio_reposicao(dados, unidade)
 
