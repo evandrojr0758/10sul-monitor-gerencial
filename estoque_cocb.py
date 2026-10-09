@@ -341,6 +341,7 @@ def gerar_imagem_reposicao(dados, unidade):
             desenho.text((830, y + 10), str(sum(estoque["saldo"] for estoque in estoques)), font=fonte(22), fill="#243746")
             desenho.text((1500, y + 10), str(sum(n or 0 for n in reposicao)), font=fonte(22), fill=cor)
             totais = [total + (numero or 0) for total, numero in zip(totais, reposicao)]
+            desenho.line((30, y + h - 1, imagem.width - 30, y + h - 1), fill="#c6d2dc", width=2)
             y += h
         desenho.rectangle((30, y, 1630, y + 52), fill="#15364b")
         desenho.text((42, y + 14), "TOTAL A REPOR", font=fonte(21), fill="white")
