@@ -15,12 +15,17 @@ import streamlit as st
 
 
 central = st.query_params.get("pagina", "") == "central"
-st.set_page_config(page_title="10 Sul" if central else "10 Sul | Estoque", page_icon="🏢" if central else "📦", layout="wide")
+from pathlib import Path
+from io import BytesIO
+from PIL import Image
+logo_10sul = Image.open(BytesIO(base64.b64decode((Path(__file__).resolve().parent / "assets" / "logo_10sul_base64.txt").read_text().strip().split(",")[-1])))
+st.set_page_config(page_title="10 Sul" if central else "10 Sul | Estoque", page_icon=logo_10sul, layout="wide")
 if central:
     st.markdown("""<style>
     .block-container {max-width:760px; padding-top:2rem;}
     [data-testid="stLinkButton"] a {min-height:70px; font-size:22px; border-radius:16px;}
     </style>""", unsafe_allow_html=True)
+    st.image(logo_10sul, width=180)
     st.title("10 SUL")
     st.caption("Desenvolvido por Evandro Junior")
     st.subheader("Central de sistemas")
