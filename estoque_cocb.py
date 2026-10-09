@@ -283,7 +283,6 @@ def gerar_imagem_reposicao(dados, unidade):
     unidades_relatorio = ("MUC", "COCB")
     grupos = []
     for campo, titulo, cor in (
-        ("minimo", "ITENS ABAIXO DO MÍNIMO", "#b42318"),
         ("maximo", "ITENS ABAIXO DO MÁXIMO", "#b76e00"),
     ):
         linhas = []
@@ -322,7 +321,7 @@ def gerar_imagem_reposicao(dados, unidade):
     desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
     agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     desenho.text((36, 82), f"Unidades: MUC e COCB  |  Atualizado em {agora}", font=fonte(23), fill="white")
-    desenho.text((36, 155), "REPOR: abaixo do mínimo = ATUAL − MÍNIMO; abaixo do máximo = ATUAL − MÁXIMO.", font=fonte(19), fill="#52616b")
+    desenho.text((36, 155), "REPOR = ATUAL − MÁXIMO. Valores negativos indicam a quantidade que falta.", font=fonte(19), fill="#52616b")
     y = 200
     for titulo, cor, linhas in grupos:
         desenho.text((36, y), f"{titulo} ({len(linhas)})", font=fonte(26), fill=cor)
@@ -363,7 +362,7 @@ def gerar_imagem_reposicao(dados, unidade):
         for x, numero in zip((1120, 1360, 1500), [*totais, sum(totais)]):
             desenho.text((x, y + 14), str(numero), font=fonte(22), fill="white")
         y += 77
-    desenho.text((36, y), "A lista abaixo do máximo também inclui os itens abaixo do mínimo.",
+    desenho.text((36, y), "Reposição calculada com base no estoque máximo de cada material.",
                  font=fonte(19), fill="#52616b")
     imagem = imagem.crop((0, 0, 1660, y + 50))
     arquivo = BytesIO()
