@@ -75,7 +75,7 @@ class BaseGitHub:
         if arquivo is None:
             dados = {"schema": 1, "itens": {}, "movimentos": []}
             for ni, descricao in MATERIAIS:
-                dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
+                dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": int(minimo_novo), "maximo": int(maximo_novo)}
             return dados, None
         try:
             dados = json.loads(base64.b64decode(arquivo["content"]))
@@ -141,19 +141,41 @@ except ErroEstoque as exc:
     st.error(str(exc))
     st.stop()
 
-pagina = st.query_params.get("pagina", "cadastro")
-if pagina not in ("cadastro", "movimentacao"):
-    pagina = "cadastro"
-a, b = st.columns(2)
-a.link_button("Cadastro de itens", "?pagina=cadastro", use_container_width=True)
-b.link_button("Movimentação de estoque", "?pagina=movimentacao", use_container_width=True)
+pagina = st.query_params.get("pagina", "painel")
+if pagina not in ("painel", "cadastro", "movimentacao"):
+    pagina = "painel"
+a, b, c = st.columns(3)
+a.link_button("📊 Painel", "?pagina=painel", use_container_width=True)
+b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
+c.link_button("📦 Movimentação", "?pagina=movimentacao", use_container_width=True)
 
-if pagina == "cadastro":
+if pagina == "painel":
+    st.subheader("Painel de Estoque COCB")
+    tabela = itens_tabela(dados)
+    criticos = tabela[tabela["SITUAÇÃO"] == "🔴 Abaixo do mínimo"].copy()
+    configurados = sum(x.get("minimo") is not None and x.get("maximo") is not None for x in dados["itens"].values())
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Materiais", len(dados["itens"]))
+    a2.metric("Abaixo do mínimo", len(criticos))
+    a3.metric("Limites definidos", configurados)
+    st.subheader("🔴 Itens abaixo do mínimo")
+    if criticos.empty:
+        st.success("Nenhum material abaixo do mínimo.")
+    else:
+        criticos["REPOR ATÉ MÍNIMO"] = criticos["MÍNIMO"] - criticos["SALDO ATUAL"]
+        st.dataframe(criticos[["NI", "DESCRIÇÃO", "SALDO ATUAL", "MÍNIMO", "MÁXIMO", "REPOR ATÉ MÍNIMO"]], hide_index=True, use_container_width=True)
+        st.download_button("Exportar itens críticos", criticos.to_csv(index=False).encode("utf-8-sig"), "estoque_critico.csv")
+    st.subheader("Consulta geral")
+    apenas_criticos = st.checkbox("Mostrar apenas itens abaixo do mínimo")
+    st.dataframe(criticos if apenas_criticos else tabela, hide_index=True, use_container_width=True)
+elif pagina == "cadastro":
     st.subheader("Cadastro de materiais")
     st.info("A primeira ENTRADA de cada material definirá o estoque inicial.")
     with st.form("cadastro", clear_on_submit=True):
         ni = st.text_input("NI (informado manualmente)")
         descricao = st.text_input("Descrição")
+        minimo_novo = st.number_input("Estoque mínimo", min_value=0, step=1)
+        maximo_novo = st.number_input("Estoque máximo", min_value=0, step=1)
         gravar = st.form_submit_button("Cadastrar", type="primary")
     if gravar:
         ni, descricao = ni.strip(), descricao.strip()
@@ -161,6 +183,8 @@ if pagina == "cadastro":
             st.error("Preencha NI e descrição.")
         elif ni in dados["itens"]:
             st.warning("Este NI já existe; nada foi alterado.")
+        elif maximo_novo < minimo_novo:
+            st.error("O máximo não pode ser menor que o mínimo.")
         else:
             dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
             try:
@@ -227,7 +251,7 @@ if pagina == "cadastro":
                         tabela["DESCRIÇÃO"].str.contains(busca, case=False, regex=False)]
     st.dataframe(tabela, use_container_width=True, hide_index=True)
     st.download_button("Exportar saldos", tabela.to_csv(index=False).encode("utf-8-sig"), "saldos_cocb.csv")
-else:
+elif pagina == "movimentacao":
     st.subheader("Movimentação")
     tabela = itens_tabela(dados)
     if tabela.empty:
