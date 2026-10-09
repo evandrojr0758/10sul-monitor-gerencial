@@ -7,7 +7,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-MOBILE_READ_ONLY = bool(globals().get("MOBILE_READ_ONLY", False))
+MOBILE_READ_ONLY = bool(globals().get("MOBILE_READ_ONLY", False)) or st.query_params.get("mobile", "0") == "1"
 st.set_page_config(page_title="10 Sul • Consulta Mobile" if MOBILE_READ_ONLY else "Monitor Gerencial 10 Sul", page_icon="📊", layout="wide")
 
 def _secret(nome):
