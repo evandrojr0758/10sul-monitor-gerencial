@@ -131,8 +131,8 @@ def itens_tabela(dados):
                        "ESTOQUE INICIAL": registro["estoque_inicial"],
                        "MÍNIMO": registro.get("minimo"), "MÁXIMO": registro.get("maximo"),
                        "SITUAÇÃO": situacao(registro)})
-    return pd.DataFrame(linhas, columns=["NI", "DESCRIÇÃO", *UNIDADES, "TOTAL", "UNIDADE",
-                                        "SALDO ATUAL", "ESTOQUE INICIAL", "MÍNIMO", "MÁXIMO", "SITUAÇÃO"])
+    return pd.DataFrame(linhas, columns=["NI", "DESCRIÇÃO", "MÍNIMO", "MÁXIMO", *UNIDADES, "TOTAL", "UNIDADE",
+                                        "SALDO ATUAL", "ESTOQUE INICIAL", "SITUAÇÃO"])
 
 def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
     normalizar(dados)
