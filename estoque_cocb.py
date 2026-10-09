@@ -246,6 +246,10 @@ def gerar_imagem_reposicao(dados, unidade):
         grupos.append((titulo, cor, linhas))
 
     def fonte(tamanho):
+        from pathlib import Path
+        embutida = Path(__file__).resolve().parent / "assets" / "relatorio_font.b64"
+        if embutida.exists():
+            return ImageFont.truetype(BytesIO(base64.b64decode(embutida.read_text())), tamanho)
         for caminho in ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
             try:
                 return ImageFont.truetype(caminho, tamanho)
