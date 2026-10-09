@@ -281,7 +281,7 @@ def gerar_imagem_reposicao(dados, unidade):
                 critico = limite is not None and estoque["saldo"] < limite
                 abaixo = abaixo or critico
                 maximo = estoque.get("maximo")
-                reposicao.append(max(0, maximo - estoque["saldo"]) if critico and maximo is not None else None)
+                reposicao.append(estoque["saldo"] - limite if critico else None)
             if abaixo:
                 descricao = textwrap.wrap(material["descricao"], width=28) or [""]
                 linhas.append((ni, descricao, reposicao, [material["unidades"][u] for u in unidades_relatorio]))
@@ -307,7 +307,7 @@ def gerar_imagem_reposicao(dados, unidade):
     desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
     agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     desenho.text((36, 82), f"Unidades: MUC e COCB  |  Atualizado em {agora}", font=fonte(23), fill="white")
-    desenho.text((36, 155), "REPOR = MÁXIMO − ATUAL. Quantidade necessária em cada unidade.", font=fonte(19), fill="#52616b")
+    desenho.text((36, 155), "REPOR: abaixo do mínimo = ATUAL − MÍNIMO; abaixo do máximo = ATUAL − MÁXIMO.", font=fonte(19), fill="#52616b")
     y = 200
     for titulo, cor, linhas in grupos:
         desenho.text((36, y), f"{titulo} ({len(linhas)})", font=fonte(26), fill=cor)
