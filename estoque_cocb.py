@@ -166,6 +166,79 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
         "primeira_entrada": primeira, "go_carreta": go_carreta if tipo == "SAÍDA" else "", "observacao": obs.strip()})
     return primeira, saldo
 
+
+def gerar_imagem_reposicao(dados, unidade):
+    from io import BytesIO
+    import textwrap
+    from zoneinfo import ZoneInfo
+    from PIL import Image, ImageDraw, ImageFont
+
+    normalizar(dados)
+    grupos = []
+    for campo, titulo, cor in (
+        ("minimo", "ITENS ABAIXO DO MÍNIMO", "#b42318"),
+        ("maximo", "ITENS ABAIXO DO MÁXIMO", "#b76e00"),
+    ):
+        linhas = []
+        for ni, material in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"]):
+            estoque = material["unidades"][unidade]
+            limite = estoque.get(campo)
+            if limite is not None and estoque["saldo"] < limite:
+                descricao = textwrap.wrap(material["descricao"], width=42) or [""]
+                linhas.append((ni, descricao, estoque["saldo"], limite, limite - estoque["saldo"]))
+        grupos.append((titulo, cor, linhas))
+
+    def fonte(tamanho):
+        for caminho in ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+            try:
+                return ImageFont.truetype(caminho, tamanho)
+            except OSError:
+                pass
+        return ImageFont.load_default(size=tamanho)
+
+    altura = 200 + sum(140 + sum(max(48, len(l[1]) * 27 + 16) for l in linhas)
+                        for _, _, linhas in grupos)
+    imagem = Image.new("RGB", (1200, altura), "white")
+    desenho = ImageDraw.Draw(imagem)
+    desenho.rectangle((0, 0, 1200, 140), fill="#15364b")
+    desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
+    agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
+    desenho.text((36, 82), f"Unidade: {unidade}  |  Atualizado em {agora}", font=fonte(23), fill="white")
+    y = 165
+    for titulo, cor, linhas in grupos:
+        desenho.text((36, y), f"{titulo} ({len(linhas)})", font=fonte(26), fill=cor)
+        y += 45
+        desenho.rectangle((30, y, 1170, y + 40), fill="#eaf0f4")
+        for x, texto in ((42, "NI"), (210, "MATERIAL"), (800, "ATUAL"), (920, "LIMITE"), (1040, "REPOR")):
+            desenho.text((x, y + 8), texto, font=fonte(19), fill="#15364b")
+        y += 40
+        if not linhas:
+            desenho.text((42, y + 12), "Nenhum item nesta condição.", font=fonte(21), fill="#52616b")
+            y += 48
+        for indice, (ni, descricao, saldo, limite, repor) in enumerate(linhas):
+            h = max(48, len(descricao) * 27 + 16)
+            desenho.rectangle((30, y, 1170, y + h), fill="#f5f7f9" if indice % 2 == 0 else "white")
+            desenho.text((42, y + 10), ni, font=fonte(21), fill="#243746")
+            for n, trecho in enumerate(descricao):
+                desenho.text((210, y + 8 + n * 27), trecho, font=fonte(21), fill="#243746")
+            for x, numero in ((800, saldo), (920, limite), (1040, repor)):
+                desenho.text((x, y + 10), str(numero), font=fonte(22), fill=cor if x == 1040 else "#243746")
+            y += h
+        y += 25
+    desenho.text((36, y), "A lista abaixo do máximo também inclui os itens abaixo do mínimo.",
+                 font=fonte(19), fill="#52616b")
+    imagem = imagem.crop((0, 0, 1200, y + 50))
+    arquivo = BytesIO()
+    imagem.save(arquivo, format="PNG")
+    return arquivo.getvalue()
+
+@st.dialog("Relatório de reposição", width="large")
+def abrir_relatorio_reposicao(dados, unidade):
+    png = gerar_imagem_reposicao(dados, unidade)
+    st.image(png, use_container_width=True)
+    st.download_button("Baixar imagem PNG", png, f"reposicao_{unidade}.png", mime="image/png")
+
+
 st.title("📦 10 SUL • CONTROLE DE ESTOQUE")
 st.caption("Desenvolvido por Evandro Junior")
 try:
@@ -178,6 +251,8 @@ except ErroEstoque as exc:
 
 normalizar(dados)
 unidade = st.selectbox("Unidade para movimentações e limites", UNIDADES, index=2)
+if st.button("📷 Relatório para enviar ao cliente", type="primary", use_container_width=True):
+    abrir_relatorio_reposicao(dados, unidade)
 
 pagina = st.query_params.get("pagina", "painel")
 if pagina not in ("painel", "cadastro", "movimentacao"):
