@@ -15,7 +15,7 @@ import streamlit as st
 
 st.set_page_config(page_title="10 Sul | Estoque COCB", page_icon="📦", layout="wide")
 
-UNIDADES = ("ARA", "MUC", "COCB", "NAN")
+UNIDADES = ("ARA", "MUC", "COCB", "NAM")
 
 MATERIAIS = [
     ("27179902", "Válvula relê Facchini"),
@@ -99,6 +99,8 @@ class BaseGitHub:
 def normalizar(dados):
     """Preserva o saldo legado em COCB; as demais unidades começam vazias."""
     for item in dados["itens"].values():
+        if "unidades" in item and "NAN" in item["unidades"] and "NAM" not in item["unidades"]:
+            item["unidades"]["NAM"] = item["unidades"].pop("NAN")
         if "unidades" not in item:
             item["unidades"] = {
                 u: {"saldo": item.get("saldo", 0) if u == "COCB" else 0,
@@ -107,6 +109,9 @@ def normalizar(dados):
                     "maximo": item.get("maximo") if u == "COCB" else None}
                 for u in UNIDADES
             }
+    for movimento in dados.get("movimentos", []):
+        if movimento.get("unidade") == "NAN":
+            movimento["unidade"] = "NAM"
 
 def situacao(item):
     minimo, maximo = item.get("minimo"), item.get("maximo")
