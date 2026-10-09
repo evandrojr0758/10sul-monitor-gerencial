@@ -75,7 +75,7 @@ class BaseGitHub:
         if arquivo is None:
             dados = {"schema": 1, "itens": {}, "movimentos": []}
             for ni, descricao in MATERIAIS:
-                dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0}
+                dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
             return dados, None
         try:
             dados = json.loads(base64.b64decode(arquivo["content"]))
@@ -92,10 +92,21 @@ class BaseGitHub:
             payload["sha"] = sha
         self.requisitar(self.path, "PUT", payload)
 
+def situacao(item):
+    minimo, maximo = item.get("minimo"), item.get("maximo")
+    saldo = item["saldo"]
+    if minimo is not None and saldo < minimo:
+        return "🔴 Abaixo do mínimo"
+    if maximo is not None and saldo > maximo:
+        return "🟠 Acima do máximo"
+    if minimo is None or maximo is None:
+        return "⚪ Não configurado"
+    return "🟢 Dentro dos limites"
+
 def itens_tabela(dados):
     return pd.DataFrame([{"NI": ni, "DESCRIÇÃO": item["descricao"],
                           "ESTOQUE INICIAL": item["estoque_inicial"],
-                          "SALDO ATUAL": item["saldo"]}
+                          "SALDO ATUAL": item["saldo"], "MÍNIMO": item.get("minimo"), "MÁXIMO": item.get("maximo"), "SITUAÇÃO": situacao(item)}
                          for ni, item in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"])])
 
 def registrar(dados, ni, tipo, quantidade, obs):
@@ -151,13 +162,35 @@ if pagina == "cadastro":
         elif ni in dados["itens"]:
             st.warning("Este NI já existe; nada foi alterado.")
         else:
-            dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0}
+            dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
             try:
                 base.salvar(dados, sha)
                 st.success("Material cadastrado.")
                 st.rerun()
             except ErroEstoque as exc:
                 st.error(str(exc))
+    st.subheader("Configurar estoque mínimo e máximo")
+    if dados["itens"]:
+        escolhas = {f"{ni} | {item['descricao']}": ni for ni, item in sorted(dados["itens"].items())}
+        with st.form("limites"):
+            escolhido_limite = st.selectbox("Material para configurar", list(escolhas))
+            item_limite = dados["itens"][escolhas[escolhido_limite]]
+            col_min, col_max = st.columns(2)
+            minimo = col_min.number_input("Estoque mínimo", min_value=0, value=int(item_limite.get("minimo") or 0), step=1)
+            maximo = col_max.number_input("Estoque máximo", min_value=0, value=int(item_limite.get("maximo") or 0), step=1)
+            salvar_limites = st.form_submit_button("Salvar limites", type="primary")
+        if salvar_limites:
+            if maximo < minimo:
+                st.error("O estoque máximo não pode ser menor que o mínimo.")
+            else:
+                item_limite["minimo"] = int(minimo)
+                item_limite["maximo"] = int(maximo)
+                try:
+                    base.salvar(dados, sha)
+                    st.success("Limites atualizados.")
+                    st.rerun()
+                except ErroEstoque as exc:
+                    st.error(str(exc))
     st.subheader("Importar materiais")
     arquivo = st.file_uploader("Excel com NI e DESCRIÇÃO", type=["xlsx"])
     if arquivo:
@@ -173,7 +206,7 @@ if pagina == "cadastro":
                     for _, linha in planilha.iterrows():
                         ni, descricao = str(linha["NI"]).strip(), str(linha["DESCRICAO"]).strip()
                         if ni and descricao and ni not in dados["itens"]:
-                            dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0}
+                            dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
                             novos += 1
                     if novos:
                         try:
