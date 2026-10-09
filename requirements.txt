@@ -2,3 +2,6 @@ streamlit
 pandas
 altair
 requests
+psycopg2-binary
+openpyxl
+Pillow>=10.1
