@@ -168,6 +168,21 @@ def itens_tabela(dados):
     return pd.DataFrame(linhas, columns=["NI", "DESCRIÇÃO", "MÍNIMO", "MÁXIMO", *UNIDADES, "TOTAL", "UNIDADE",
                                         "SALDO ATUAL", "ESTOQUE INICIAL", "SITUAÇÃO"])
 
+def alterar_ni(dados, ni_atual, novo_ni):
+    novo_ni = str(novo_ni).strip()
+    if not novo_ni:
+        raise ErroEstoque("Informe o NI do material.")
+    if novo_ni != ni_atual and novo_ni in dados["itens"]:
+        raise ErroEstoque("Este NI já pertence a outro material.")
+    if novo_ni != ni_atual:
+        dados["itens"][novo_ni] = dados["itens"].pop(ni_atual)
+        for movimento in dados["movimentos"]:
+            if str(movimento.get("ni", "")) == ni_atual:
+                movimento.setdefault("ni_original", ni_atual)
+                movimento["ni"] = novo_ni
+    return novo_ni
+
+
 def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
     normalizar(dados)
     material = dados["itens"].get(ni)
@@ -489,17 +504,24 @@ elif pagina == "cadastro":
         material = dados["itens"][ni_editar]
         item_limite = material["unidades"][unidade]
         with st.form("limites_" + ni_editar + "_" + unidade):
+            ni_editado = st.text_input("NI do item", value=ni_editar)
             descricao_editada = st.text_input("Descrição do item", value=material["descricao"])
             col_min, col_max = st.columns(2)
             minimo = col_min.number_input("Estoque mínimo", min_value=0, value=int(item_limite.get("minimo") or 0), step=1)
             maximo = col_max.number_input("Estoque máximo", min_value=0, value=int(item_limite.get("maximo") or 0), step=1)
             salvar_limites = st.form_submit_button("Salvar alterações", type="primary")
         if salvar_limites:
-            if not descricao_editada.strip():
+            ni_editado = ni_editado.strip()
+            if not ni_editado:
+                st.error("Informe o NI do material.")
+            elif ni_editado != ni_editar and ni_editado in dados["itens"]:
+                st.error("Este NI já pertence a outro material.")
+            elif not descricao_editada.strip():
                 st.error("Informe a descrição.")
             elif maximo < minimo:
                 st.error("O estoque máximo não pode ser menor que o mínimo.")
             else:
+                alterar_ni(dados, ni_editar, ni_editado)
                 material["descricao"] = descricao_editada.strip()
                 item_limite["minimo"] = int(minimo)
                 item_limite["maximo"] = int(maximo)
