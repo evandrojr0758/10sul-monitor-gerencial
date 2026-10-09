@@ -78,51 +78,54 @@ def api_get(table, params=None):
         raise RuntimeError(f"Supabase HTTP {r.status_code}: {r.text[:800]}")
     return r.json()
 
+def _ler_atendimentos(table):
+    """Paginação estável para o histórico e para a origem ASN."""
+    todos = []
+    offset = 0
+    while True:
+        lote = api_get(table, {"select": "*", "order": "os_id.asc,frota.asc",
+                              "limit": 1000, "offset": offset})
+        todos.extend(lote)
+        if len(lote) < 1000:
+            break
+        offset += 1000
+    return pd.DataFrame(todos)
+
+
+def _combinar_base_asn(historico, asn):
+    """ASN prevalece nos dados da cliente; início salvo continua preservado."""
+    def preparar(d):
+        d = d.copy()
+        for c in ["os_id", "frota"]:
+            d[c] = d[c].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        return d.drop_duplicates(["os_id", "frota"], keep="last").set_index(["os_id", "frota"])
+    if asn.empty:
+        raise RuntimeError("monitor_asn não retornou registros. Confira a permissão de leitura dessa tabela.")
+    a = preparar(asn)
+    a["inicio_suzano"] = a["parada"]
+    if historico.empty:
+        return a.reset_index()
+    h = preparar(historico)
+    resultado = h.reindex(h.index.union(a.index)).copy()
+    # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
+    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "sincronizado_em"]:
+        if c not in resultado.columns:
+            resultado[c] = None
+        resultado.loc[a.index, c] = a[c]
+    # Não substitui possíveis ajustes de início já gravados pelo sistema principal.
+    salvo = pd.to_datetime(resultado["inicio"], errors="coerce")
+    novos = a.index[~a.index.isin(h.index)]
+    resultado.loc[novos, "inicio"] = a.loc[novos, "inicio"]
+    sem_inicio = a.index[salvo.reindex(a.index).isna()]
+    resultado.loc[sem_inicio, "inicio"] = a.loc[sem_inicio, "inicio"]
+    return resultado.reset_index()
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar():
-    # O Supabase/PostgREST limita cada resposta a ~1000 linhas.
-    # Portanto buscamos em páginas para trazer TODO o histórico,
-    # inclusive revisões antigas usadas na Consulta Rápida.
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError("SUPABASE_URL/SUPABASE_KEY não configurados nos Secrets.")
-
-    url=f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
-    base_headers={
-        "apikey":SUPABASE_KEY,
-        "Authorization":f"Bearer {SUPABASE_KEY}",
-    }
-
-    todos=[]
-    pagina=1000
-    inicio_range=0
-
-    while True:
-        fim_range=inicio_range + pagina - 1
-        headers=dict(base_headers)
-        headers["Range"]=f"{inicio_range}-{fim_range}"
-        headers["Prefer"]="count=none"
-
-        r=requests.get(
-            url,
-            headers=headers,
-            params={"select":"*","order":"inicio.desc"},
-            timeout=60
-        )
-        if not r.ok:
-            raise RuntimeError(f"Supabase HTTP {r.status_code}: {r.text[:800]}")
-
-        lote=r.json()
-        if not lote:
-            break
-
-        todos.extend(lote)
-
-        if len(lote) < pagina:
-            break
-
-        inicio_range += pagina
-
-    return pd.DataFrame(todos)
+    historico = _ler_atendimentos("monitor_atendimentos")
+    asn = _ler_atendimentos("monitor_asn")
+    return _combinar_base_asn(historico, asn)
 
 def norm_frota(v):
     s=str(v or "").strip()
@@ -452,7 +455,7 @@ except Exception as e:
     st.stop()
 
 if df.empty:
-    st.warning("A tabela monitor_atendimentos está vazia. Abra o sistema principal para sincronizar a base.")
+    st.warning("A base do monitor está vazia. Confira a sincronização da Lista ASN no Power Automate.")
     st.stop()
 
 for c in ["parada","inicio","fim"]:
@@ -527,7 +530,7 @@ def _base_medias_origem(tipo,origem):
     b["OS/ID"]=b["os_id"].apply(_chave_vinculo_laudo)
     b["FROTA"]=b["frota"].apply(_chave_vinculo_laudo)
     if origem=="Suzano":
-        b["INICIO_CALC"]=pd.to_datetime(b["inicio"],errors="coerce")
+        b["INICIO_CALC"]=pd.to_datetime(b["parada"],errors="coerce")
         b["FIM_CALC"]=pd.to_datetime(b["fim"],errors="coerce")
         base=b[["OS/ID","FROTA","INICIO_CALC","FIM_CALC"]].copy()
         base=base.sort_values("FIM_CALC",na_position="first").drop_duplicates(["OS/ID","FROTA"],keep="last")
