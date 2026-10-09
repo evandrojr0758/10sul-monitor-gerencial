@@ -1357,10 +1357,11 @@ def modal_os_abertas(titulo, dados):
         return
     x=dados.copy()
     x["TEMPO ABERTO"]=x["horas_aberto"].apply(hhmm)
+    x["PARADA"]=pd.to_datetime(x["parada"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informada")
     x["INÍCIO"]=pd.to_datetime(x["inicio_mon"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
     x["SITUAÇÃO"]=x["acima_sla"].map({True:"🔴 SLA ULTRAPASSADO",False:"🟢 EM MANUTENÇÃO"})
     x=x.rename(columns={"os_id":"OS/ID","frota":"FROTA","evento":"EVENTO","descricao":"DESCRIÇÃO DO EVENTO"})
-    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","INÍCIO","TEMPO ABERTO","SITUAÇÃO"]
+    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","SITUAÇÃO"]
     st.dataframe(x[cols_show],use_container_width=True,hide_index=True)
 
 cards=[
