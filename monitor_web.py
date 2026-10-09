@@ -464,6 +464,10 @@ def evento_flags(s):
     )
     return e,itr,rev,sos,cnp
 
+if st.button("↻ Atualizar", key="monitor_refresh_top", type="primary", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
 try:
     df=carregar()
 except Exception as e:
@@ -1303,9 +1307,6 @@ if MOBILE_READ_ONLY:
     st.caption("Somente consulta • Unidade ARA")
     sync = pd.to_datetime(df.get("sincronizado_em", pd.Series(dtype=str)), errors="coerce", utc=True).max()
     st.caption("Última sincronização da base: " + (sync.tz_convert("America/Sao_Paulo").strftime("%d/%m/%Y %H:%M") if pd.notna(sync) else "não informada pela origem"))
-    if st.button("↻ Atualizar consulta", key="mobile_refresh"):
-        st.cache_data.clear()
-        st.rerun()
     st.markdown("""<style>
     @media(max-width:768px){
       div[class*="st-key-card_oficina_"],.st-key-card_sos{height:100%}
