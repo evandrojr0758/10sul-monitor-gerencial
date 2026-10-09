@@ -7,7 +7,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="Monitor Gerencial 10 Sul", page_icon="📺", layout="wide")
+MOBILE_READ_ONLY = bool(globals().get("MOBILE_READ_ONLY", False))
+st.set_page_config(page_title="10 Sul • Consulta Mobile" if MOBILE_READ_ONLY else "Monitor Gerencial 10 Sul", page_icon="📊", layout="wide")
 
 def _secret(nome):
     try:
@@ -217,6 +218,8 @@ def baixar_evidencia_laudo_web(path):
 
 def atualizar_atividade_laudo_web(atividade_id, dados):
     """Atualiza uma atividade já conferida na tabela public.laudos_monitor."""
+    if MOBILE_READ_ONLY:
+        return False, "Esta versão permite somente consulta."
     if not SUPABASE_URL or not SUPABASE_KEY:
         return False,"Supabase não configurado."
     aid=str(atividade_id or "").strip()
@@ -377,59 +380,60 @@ def render_laudos_web():
         st.session_state["waid"]=str(det.reset_index(drop=True).iloc[int(rows2[0])]["_AID_SEL"])
 
     # Edição controlada do laudo já publicado.
-    with st.expander("✏️ Editar laudo", expanded=False):
-        edit_base=det.reset_index(drop=True).copy()
-        edit_view=pd.DataFrame({
-            "ATIVIDADE":edit_base["ATIVIDADE"].fillna("").astype(str),
-            "EXECUTANTE":edit_base["EXECUTANTE"].fillna("").astype(str),
-            "TIPO":edit_base["CLASSIFICACAO"].fillna("OUTROS").astype(str),
-            "INÍCIO":edit_base["INICIO_ATIVIDADE_DT"].apply(lambda x:"" if pd.isna(x) else x.strftime("%H:%M")),
-            "FIM":edit_base["FIM_ATIVIDADE_DT"].apply(lambda x:"" if pd.isna(x) else x.strftime("%H:%M")),
-        })
-        editado=st.data_editor(
-            edit_view,hide_index=True,use_container_width=True,num_rows="fixed",
-            key=f"editar_laudo_{reg}_{frota_chave}",
-            column_config={"TIPO":st.column_config.SelectboxColumn("TIPO",options=["ITR","CNP","GM","OUTROS"],required=True)}
-        )
-        if st.button("💾 SALVAR ALTERAÇÕES",type="primary",key=f"salvar_edicao_{reg}_{frota_chave}"):
-            erros=[]; alteradas=0
-            for i,r in editado.iterrows():
-                orig=edit_base.iloc[i]
-                aid_real=str(orig.get("ATIVIDADE_ID","") or "").strip()
-                if not aid_real or aid_real.lower()=="nan":
-                    erros.append(f"Linha {i+1}: atividade sem ID interno."); continue
-                try:
-                    base_ini=pd.to_datetime(orig.get("INICIO_ATIVIDADE"),errors="coerce")
-                    base_fim=pd.to_datetime(orig.get("FIM_ATIVIDADE"),errors="coerce")
-                    h1=datetime.strptime(str(r["INÍCIO"]).strip(),"%H:%M").time()
-                    h2=datetime.strptime(str(r["FIM"]).strip(),"%H:%M").time()
-                    dia=(base_ini.date() if not pd.isna(base_ini) else pd.Timestamp.today().date())
-                    dt1=pd.Timestamp(datetime.combine(dia,h1)); dt2=pd.Timestamp(datetime.combine(dia,h2))
-                    if dt2<dt1:dt2+=pd.Timedelta(days=1)
-                    payload={
-                        "atividade":str(r["ATIVIDADE"]).strip(),
-                        "executante":str(r["EXECUTANTE"]).strip(),
-                        "classificacao":str(r["TIPO"]).strip().upper(),
-                        "inicio_atividade":dt1.strftime("%Y-%m-%dT%H:%M:%S"),
-                        "fim_atividade":dt2.strftime("%Y-%m-%dT%H:%M:%S"),
-                        "horas":max(0,(dt2-dt1).total_seconds()/3600),
-                    }
-                    mudou=(payload["atividade"]!=str(orig.get("ATIVIDADE","") or "").strip()
-                           or payload["executante"]!=str(orig.get("EXECUTANTE","") or "").strip()
-                           or payload["classificacao"]!=str(orig.get("CLASSIFICACAO","") or "").strip().upper()
-                           or payload["inicio_atividade"]!=(base_ini.strftime("%Y-%m-%dT%H:%M:%S") if not pd.isna(base_ini) else "")
-                           or payload["fim_atividade"]!=(base_fim.strftime("%Y-%m-%dT%H:%M:%S") if not pd.isna(base_fim) else ""))
-                    if mudou:
-                        ok,msg=atualizar_atividade_laudo_web(aid_real,payload)
-                        if ok:alteradas+=1
-                        else:erros.append(f"Linha {i+1}: {msg}")
-                except Exception:
-                    erros.append(f"Linha {i+1}: confira INÍCIO e FIM no formato HH:MM.")
-            if erros:
-                st.error(" | ".join(erros[:6]))
-            else:
-                st.success(f"✅ {alteradas} atividade(s) atualizada(s).")
-                st.rerun()
+    if not MOBILE_READ_ONLY:
+        with st.expander("✏️ Editar laudo", expanded=False):
+            edit_base=det.reset_index(drop=True).copy()
+            edit_view=pd.DataFrame({
+                "ATIVIDADE":edit_base["ATIVIDADE"].fillna("").astype(str),
+                "EXECUTANTE":edit_base["EXECUTANTE"].fillna("").astype(str),
+                "TIPO":edit_base["CLASSIFICACAO"].fillna("OUTROS").astype(str),
+                "INÍCIO":edit_base["INICIO_ATIVIDADE_DT"].apply(lambda x:"" if pd.isna(x) else x.strftime("%H:%M")),
+                "FIM":edit_base["FIM_ATIVIDADE_DT"].apply(lambda x:"" if pd.isna(x) else x.strftime("%H:%M")),
+            })
+            editado=st.data_editor(
+                edit_view,hide_index=True,use_container_width=True,num_rows="fixed",
+                key=f"editar_laudo_{reg}_{frota_chave}",
+                column_config={"TIPO":st.column_config.SelectboxColumn("TIPO",options=["ITR","CNP","GM","OUTROS"],required=True)}
+            )
+            if st.button("💾 SALVAR ALTERAÇÕES",type="primary",key=f"salvar_edicao_{reg}_{frota_chave}"):
+                erros=[]; alteradas=0
+                for i,r in editado.iterrows():
+                    orig=edit_base.iloc[i]
+                    aid_real=str(orig.get("ATIVIDADE_ID","") or "").strip()
+                    if not aid_real or aid_real.lower()=="nan":
+                        erros.append(f"Linha {i+1}: atividade sem ID interno."); continue
+                    try:
+                        base_ini=pd.to_datetime(orig.get("INICIO_ATIVIDADE"),errors="coerce")
+                        base_fim=pd.to_datetime(orig.get("FIM_ATIVIDADE"),errors="coerce")
+                        h1=datetime.strptime(str(r["INÍCIO"]).strip(),"%H:%M").time()
+                        h2=datetime.strptime(str(r["FIM"]).strip(),"%H:%M").time()
+                        dia=(base_ini.date() if not pd.isna(base_ini) else pd.Timestamp.today().date())
+                        dt1=pd.Timestamp(datetime.combine(dia,h1)); dt2=pd.Timestamp(datetime.combine(dia,h2))
+                        if dt2<dt1:dt2+=pd.Timedelta(days=1)
+                        payload={
+                            "atividade":str(r["ATIVIDADE"]).strip(),
+                            "executante":str(r["EXECUTANTE"]).strip(),
+                            "classificacao":str(r["TIPO"]).strip().upper(),
+                            "inicio_atividade":dt1.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "fim_atividade":dt2.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "horas":max(0,(dt2-dt1).total_seconds()/3600),
+                        }
+                        mudou=(payload["atividade"]!=str(orig.get("ATIVIDADE","") or "").strip()
+                               or payload["executante"]!=str(orig.get("EXECUTANTE","") or "").strip()
+                               or payload["classificacao"]!=str(orig.get("CLASSIFICACAO","") or "").strip().upper()
+                               or payload["inicio_atividade"]!=(base_ini.strftime("%Y-%m-%dT%H:%M:%S") if not pd.isna(base_ini) else "")
+                               or payload["fim_atividade"]!=(base_fim.strftime("%Y-%m-%dT%H:%M:%S") if not pd.isna(base_fim) else ""))
+                        if mudou:
+                            ok,msg=atualizar_atividade_laudo_web(aid_real,payload)
+                            if ok:alteradas+=1
+                            else:erros.append(f"Linha {i+1}: {msg}")
+                    except Exception:
+                        erros.append(f"Linha {i+1}: confira INÍCIO e FIM no formato HH:MM.")
+                if erros:
+                    st.error(" | ".join(erros[:6]))
+                else:
+                    st.success(f"✅ {alteradas} atividade(s) atualizada(s).")
+                    st.rerun()
 
     # 3) ATIVIDADE SELECIONADA — evidencia somente desta atividade.
     aid=st.session_state.get("waid")
@@ -972,6 +976,8 @@ def apurar_tempos_justificados(manut,piv,justificativas):
 
 
 def salvar_justificativa_laudo(osid,frota,minutos,motivo,observacao,responsavel,inicio=None,fim=None):
+    if MOBILE_READ_ONLY:
+        raise PermissionError("Esta versão permite somente consulta.")
     import uuid
     registro={"versao":1,"id":uuid.uuid4().hex,"os_id":_chave_vinculo_laudo(osid),
               "frota":_chave_vinculo_laudo(frota),"minutos":int(minutos),"motivo":motivo,
@@ -1005,7 +1011,7 @@ def modal_justificativas_laudos(manut,piv,os_validas,consulta=False):
                 if _c not in hist.columns: hist[_c]=None
             st.markdown("**Justificativas registradas**")
             st.dataframe(hist[["os_id","frota","inicio","fim","TEMPO","motivo","observacao","responsavel","registrado_em"]].rename(columns={"os_id":"OS/ID","frota":"FROTA","inicio":"INÍCIO","fim":"FIM","motivo":"MOTIVO","observacao":"OBSERVAÇÃO","responsavel":"RESPONSÁVEL INFORMADO","registrado_em":"REGISTRO"}),hide_index=True,use_container_width=True)
-    if consulta: return
+    if consulta or MOBILE_READ_ONLY: return
     op=base[base["PENDENTE"]>0].copy()
     op=op[[(_chave_vinculo_laudo(o),_chave_vinculo_laudo(f)) in os_validas for o,f in zip(op.CHAVE_OS,op.FROTA)]] if len(op) else op
     if op.empty:
@@ -1163,8 +1169,8 @@ def render_relatorio_gerencial_laudos():
         st.warning("As justificativas não puderam ser consultadas. Os saldos estão indisponíveis até restabelecer a leitura.")
     cpend,cjust=st.columns(2,gap="small")
     with cpend:
-        if st.button(f"🔴 Tempo sem justificativa\n\n{hhmm(pendente) if not erro_justificativas else '--:--'}\n\nJustificar tempo ›",key="rg_justificar_tempo",use_container_width=True,disabled=erro_justificativas):
-            modal_justificativas_laudos(manut,piv,os_validas)
+        if st.button(f"🔴 Tempo sem justificativa\n\n{hhmm(pendente) if not erro_justificativas else '--:--'}\n\n{"Consultar saldo ›" if MOBILE_READ_ONLY else "Justificar tempo ›"}",key="rg_justificar_tempo",use_container_width=True,disabled=erro_justificativas):
+            modal_justificativas_laudos(manut,piv,os_validas,consulta=MOBILE_READ_ONLY)
     with cjust:
         if st.button(f"🔵 Tempo justificado\n\n{hhmm(justificado) if not erro_justificativas else '--:--'}\n\nConsultar justificativas ›",key="rg_consultar_justificativas",use_container_width=True,disabled=erro_justificativas):
             modal_justificativas_laudos(manut,piv,os_validas,consulta=True)
@@ -1289,8 +1295,24 @@ mon.loc[mrev,"sla_h"]=24.0
 mon["sla_h"]=pd.to_numeric(mon["sla_h"],errors="coerce")
 mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 
-st.markdown("<div class='mon-title'>📺 MONITOR DA OFICINA</div>",unsafe_allow_html=True)
+st.markdown(f"<div class='mon-title'>{"📊 10 SUL • CONSULTA MOBILE" if MOBILE_READ_ONLY else "📺 MONITOR DA OFICINA"}</div>",unsafe_allow_html=True)
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
+
+if MOBILE_READ_ONLY:
+    st.caption("Somente consulta • Unidade ARA")
+    sync = pd.to_datetime(df.get("sincronizado_em", pd.Series(dtype=str)), errors="coerce", utc=True).max()
+    st.caption("Última sincronização da base: " + (sync.tz_convert("America/Sao_Paulo").strftime("%d/%m/%Y %H:%M") if pd.notna(sync) else "não informada pela origem"))
+    if st.button("↻ Atualizar consulta", key="mobile_refresh"):
+        st.cache_data.clear()
+        st.rerun()
+    st.markdown("""<style>
+    @media(max-width:768px){
+      div[class*="st-key-card_oficina_"],.st-key-card_sos{height:100%}
+      div[data-testid="stHorizontalBlock"]:has(.st-key-card_sos)>div{min-width:calc(50% - .5rem)!important;width:calc(50% - .5rem)!important;flex:1 1 calc(50% - .5rem)!important}
+      button{touch-action:manipulation}
+    }
+    @media(prefers-reduced-motion:reduce){.st-key-card_sos button{animation:none!important}}
+    </style>""", unsafe_allow_html=True)
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
@@ -1419,7 +1441,7 @@ with st.expander("📋 APURAÇÃO DOS LAUDOS", expanded=False):
     st.caption("Resumo dos tempos apontados por frota e evidências das atividades.")
     render_laudos_web()
 
-with st.expander("📋 ITR SEM VÍNCULO COM LAUDO", expanded=True):
+with st.expander("📋 ITR SEM VÍNCULO COM LAUDO", expanded=not MOBILE_READ_ONLY):
     render_itr_sem_laudo()
 
 # MAIORES TEMPOS
@@ -1566,6 +1588,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
