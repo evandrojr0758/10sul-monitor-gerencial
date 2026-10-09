@@ -316,8 +316,9 @@ def gerar_imagem_reposicao(dados, unidade):
         for x, texto in ((42, "NI"), (210, "MATERIAL"), (600, "MÍNIMO"), (710, "MÁXIMO"), (1320, "TOTAL")):
             desenho.text((x, y + 8), texto, font=fonte(19), fill="#15364b")
         for x, nome in zip((840, 1080), ("MUC", "COCB")):
-            desenho.text((x, y + 8), nome, font=fonte(21), fill="#15364b")
-            desenho.text((x, y + 35), "REPOR", font=fonte(17), fill="#15364b")
+            desenho.text((x + 40, y + 8), nome, font=fonte(21), fill="#15364b")
+            desenho.text((x, y + 35), "ATUAL", font=fonte(17), fill="#15364b")
+            desenho.text((x + 100, y + 35), "REPOR", font=fonte(17), fill="#15364b")
         desenho.text((1320, y + 35), "REPOR", font=fonte(17), fill="#15364b")
         y += 65
         if not linhas:
@@ -333,14 +334,15 @@ def gerar_imagem_reposicao(dados, unidade):
             for x, campo in ((600, "minimo"), (710, "maximo")):
                 numero = estoques[0].get(campo)
                 desenho.text((x, y + 10), "—" if numero is None else str(numero), font=fonte(22), fill="#243746")
-            for x, repor in zip((840, 1080), reposicao):
-                desenho.text((x, y + 10), "—" if repor is None else str(repor), font=fonte(22), fill=cor if repor else "#52616b")
+            for x, estoque, repor in zip((840, 1080), estoques, reposicao):
+                desenho.text((x, y + 10), str(estoque["saldo"]), font=fonte(22), fill="#243746")
+                desenho.text((x + 100, y + 10), "—" if repor is None else str(repor), font=fonte(22), fill=cor if repor else "#52616b")
             desenho.text((1320, y + 10), str(sum(n or 0 for n in reposicao)), font=fonte(22), fill=cor)
             totais = [total + (numero or 0) for total, numero in zip(totais, reposicao)]
             y += h
         desenho.rectangle((30, y, 1450, y + 52), fill="#15364b")
         desenho.text((42, y + 14), "TOTAL A REPOR", font=fonte(21), fill="white")
-        for x, numero in zip((840, 1080, 1320), [*totais, sum(totais)]):
+        for x, numero in zip((940, 1180, 1320), [*totais, sum(totais)]):
             desenho.text((x, y + 14), str(numero), font=fonte(22), fill="white")
         y += 77
     desenho.text((36, y), "A lista abaixo do máximo também inclui os itens abaixo do mínimo.",
