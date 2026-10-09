@@ -134,13 +134,16 @@ def itens_tabela(dados):
     return pd.DataFrame(linhas, columns=["NI", "DESCRIÇÃO", *UNIDADES, "TOTAL", "UNIDADE",
                                         "SALDO ATUAL", "ESTOQUE INICIAL", "MÍNIMO", "MÁXIMO", "SITUAÇÃO"])
 
-def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB"):
+def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
     normalizar(dados)
     material = dados["itens"].get(ni)
     if material is None:
         raise ErroEstoque("Material não encontrado.")
     if unidade not in UNIDADES or tipo not in ("ENTRADA", "SAÍDA"):
         raise ErroEstoque("Unidade ou movimento inválido.")
+    go_carreta = str(go_carreta).strip().upper()
+    if tipo == "SAÍDA" and not go_carreta:
+        raise ErroEstoque("Informe o GO da carreta que receberá o material.")
     item = material["unidades"][unidade]
     if quantidade <= 0:
         raise ErroEstoque("Informe uma quantidade positiva.")
@@ -160,7 +163,7 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB"):
         "data_hora": datetime.now(timezone.utc).isoformat(),
         "ni": ni, "descricao": material["descricao"], "unidade": unidade, "movimento": tipo,
         "quantidade": quantidade, "saldo_apos": saldo,
-        "primeira_entrada": primeira, "observacao": obs.strip()})
+        "primeira_entrada": primeira, "go_carreta": go_carreta if tipo == "SAÍDA" else "", "observacao": obs.strip()})
     return primeira, saldo
 
 st.title("📦 10 SUL • CONTROLE DE ESTOQUE")
@@ -317,11 +320,12 @@ elif pagina == "movimentacao":
             escolhido = st.selectbox("Material", list(opcoes))
             tipo = st.selectbox("Movimento", ["ENTRADA", "SAÍDA"])
             quantidade = st.number_input("Quantidade", min_value=1, step=1)
+            go_carreta = st.text_input("GO da carreta (obrigatório nas saídas)", placeholder="Ex.: 13795")
             observacao = st.text_input("Observação (opcional)")
             confirmar = st.form_submit_button("Registrar movimentação", type="primary")
         if confirmar:
             try:
-                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade)
+                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade, go_carreta)
                 base.salvar(dados, sha)
                 st.success(f"{'Estoque inicial registrado!' if primeira else 'Movimentação registrada!'} Saldo: {saldo}")
                 st.rerun()
@@ -331,6 +335,8 @@ elif pagina == "movimentacao":
     movimentos = pd.DataFrame(reversed(dados["movimentos"]))
     if not movimentos.empty:
         movimentos["unidade"] = movimentos.get("unidade", pd.Series("COCB", index=movimentos.index)).fillna("COCB")
+        movimentos["GO DA CARRETA"] = movimentos.get("go_carreta", pd.Series("", index=movimentos.index)).fillna("")
+        movimentos = movimentos.drop(columns=["go_carreta"], errors="ignore")
         movimentos = movimentos[movimentos["unidade"] == unidade]
     st.dataframe(movimentos, use_container_width=True, hide_index=True)
     st.download_button("Exportar histórico", movimentos.to_csv(index=False).encode("utf-8-sig"), "historico_cocb.csv")
