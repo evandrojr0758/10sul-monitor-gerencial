@@ -1329,15 +1329,21 @@ def modal_historico_frota(fq):
     itr=hist[hev.eq("ITR")].copy()
     rev=hist[hev.str.contains("REVIS",na=False)].copy()
 
-    def ultima_liberada(x):
-        if x.empty: return None
+    def ultima_preventiva(x):
+        if x.empty:
+            return None
         x=x.copy()
-        x["_lib"]=x["fim"]
-        x=x[x["_lib"].notna()].sort_values("_lib",ascending=False)
-        return None if x.empty else x.iloc[0]
+        x["_lib"]=pd.to_datetime(x["fim"],errors="coerce")
+        x["_entrada"]=pd.to_datetime(x["inicio"],errors="coerce").fillna(
+            pd.to_datetime(x["parada"],errors="coerce"))
+        # A última entrada identifica o atendimento mais recente, inclusive aberto.
+        # O fim só é usado como referência quando a entrada não foi informada.
+        x["_ref"]=x["_entrada"].fillna(x["_lib"])
+        x=x.sort_values(["_ref","_lib"],ascending=False,na_position="last")
+        return x.iloc[0]
 
-    r_itr=ultima_liberada(itr)
-    r_rev=ultima_liberada(rev)
+    r_itr=ultima_preventiva(itr)
+    r_rev=ultima_preventiva(rev)
 
     c1,c2=st.columns(2)
     def preventiva_card(col, titulo, row, cor, intervalo):
@@ -1346,16 +1352,26 @@ def modal_historico_frota(fq):
                 st.markdown(f"<div style='font-size:13px;font-weight:800;color:#667085'>{cor} {titulo}</div>",unsafe_allow_html=True)
                 if row is None:
                     st.markdown("<div style='font-size:24px;font-weight:900'>Não encontrada</div>",unsafe_allow_html=True)
-                    st.caption("Sem preventiva liberada na base sincronizada.")
+                    st.caption("Nenhum atendimento desse evento no histórico ARA sincronizado.")
                     return
-                lib=pd.Timestamp(row["_lib"])
+                st.caption(f"OS/ID: {row['os_id']}")
+                lib=row["_lib"]
+                entrada=row["_entrada"]
+                if pd.isna(lib):
+                    data=entrada.strftime("%d/%m/%Y") if pd.notna(entrada) else "Data não informada"
+                    st.markdown(f"<div style='font-size:27px;font-weight:900'>{data}</div>",unsafe_allow_html=True)
+                    st.caption("Último atendimento • liberação da OS ainda não confirmada.")
+                    if pd.notna(entrada):
+                        st.caption(f"Início: {entrada.strftime('%d/%m/%Y %H:%M')}")
+                    st.caption(f"Status: {row.get('status','Não informado')}")
+                    return
                 dias=max(0,(agora.normalize()-lib.normalize()).days)
                 prox=lib.normalize()+pd.Timedelta(days=intervalo)
                 st.markdown(f"<div style='font-size:27px;font-weight:900'>{lib.strftime('%d/%m/%Y')}</div>",unsafe_allow_html=True)
                 st.markdown(f"Há **{dias} dia(s)** • Próxima por tempo: **{prox.strftime('%d/%m/%Y')}**")
-                st.caption(f"Liberação: {lib.strftime('%d/%m/%Y %H:%M')}")
+                st.caption(f"Liberação da OS: {lib.strftime('%d/%m/%Y %H:%M')}")
 
-    preventiva_card(c1,"ÚLTIMA ITR",r_itr,"🔵",30)
+    preventiva_card(c1,"ÚLTIMA ITR",r_itr,"🔵",20)
     preventiva_card(c2,"ÚLTIMA REVISÃO",r_rev,"🟣",120)
 
     st.markdown("#### Histórico de atendimentos")
