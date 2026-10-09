@@ -15,6 +15,8 @@ import streamlit as st
 
 st.set_page_config(page_title="10 Sul | Estoque COCB", page_icon="📦", layout="wide")
 
+UNIDADES = ("ARA", "MUC", "COCB", "NAN")
+
 MATERIAIS = [
     ("27179902", "Válvula relê Facchini"),
     ("27174139", "Parafuso Facchini"),
@@ -81,6 +83,7 @@ class BaseGitHub:
             dados = json.loads(base64.b64decode(arquivo["content"]))
             if dados.get("schema") != 1 or not isinstance(dados.get("itens"), dict) or not isinstance(dados.get("movimentos"), list):
                 raise ValueError()
+            normalizar(dados)
             return dados, arquivo["sha"]
         except (ValueError, KeyError, TypeError):
             raise ErroEstoque("Base de estoque inválida. Nenhuma informação foi modificada.") from None
@@ -91,6 +94,19 @@ class BaseGitHub:
         if sha:
             payload["sha"] = sha
         self.requisitar(self.path, "PUT", payload)
+
+
+def normalizar(dados):
+    """Preserva o saldo legado em COCB; as demais unidades começam vazias."""
+    for item in dados["itens"].values():
+        if "unidades" not in item:
+            item["unidades"] = {
+                u: {"saldo": item.get("saldo", 0) if u == "COCB" else 0,
+                    "estoque_inicial": item.get("estoque_inicial") if u == "COCB" else None,
+                    "minimo": item.get("minimo") if u == "COCB" else None,
+                    "maximo": item.get("maximo") if u == "COCB" else None}
+                for u in UNIDADES
+            }
 
 def situacao(item):
     minimo, maximo = item.get("minimo"), item.get("maximo")
@@ -104,19 +120,32 @@ def situacao(item):
     return "🟢 Dentro dos limites"
 
 def itens_tabela(dados):
-    return pd.DataFrame([{"NI": ni, "DESCRIÇÃO": item["descricao"],
-                          "ESTOQUE INICIAL": item["estoque_inicial"],
-                          "SALDO ATUAL": item["saldo"], "MÍNIMO": item.get("minimo"), "MÁXIMO": item.get("maximo"), "SITUAÇÃO": situacao(item)}
-                         for ni, item in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"])])
+    normalizar(dados)
+    linhas = []
+    for ni, item in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"]):
+        registro = item["unidades"][unidade]
+        linhas.append({"NI": ni, "DESCRIÇÃO": item["descricao"],
+                       **{u: item["unidades"][u]["saldo"] for u in UNIDADES},
+                       "TOTAL": sum(item["unidades"][u]["saldo"] for u in UNIDADES),
+                       "UNIDADE": unidade, "SALDO ATUAL": registro["saldo"],
+                       "ESTOQUE INICIAL": registro["estoque_inicial"],
+                       "MÍNIMO": registro.get("minimo"), "MÁXIMO": registro.get("maximo"),
+                       "SITUAÇÃO": situacao(registro)})
+    return pd.DataFrame(linhas, columns=["NI", "DESCRIÇÃO", *UNIDADES, "TOTAL", "UNIDADE",
+                                        "SALDO ATUAL", "ESTOQUE INICIAL", "MÍNIMO", "MÁXIMO", "SITUAÇÃO"])
 
-def registrar(dados, ni, tipo, quantidade, obs):
-    item = dados["itens"].get(ni)
-    if item is None:
+def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB"):
+    normalizar(dados)
+    material = dados["itens"].get(ni)
+    if material is None:
         raise ErroEstoque("Material não encontrado.")
+    if unidade not in UNIDADES or tipo not in ("ENTRADA", "SAÍDA"):
+        raise ErroEstoque("Unidade ou movimento inválido.")
+    item = material["unidades"][unidade]
     if quantidade <= 0:
         raise ErroEstoque("Informe uma quantidade positiva.")
     if tipo == "SAÍDA" and item["estoque_inicial"] is None:
-        raise ErroEstoque("É necessário registrar a primeira ENTRADA antes de realizar saídas.")
+        raise ErroEstoque("Registre a primeira ENTRADA nesta unidade antes de realizar saídas.")
     saldo = item["saldo"] + (quantidade if tipo == "ENTRADA" else -quantidade)
     if saldo < 0:
         raise ErroEstoque(f"Saldo insuficiente. Disponível: {item['saldo']}.")
@@ -124,14 +153,17 @@ def registrar(dados, ni, tipo, quantidade, obs):
     if primeira:
         item["estoque_inicial"] = quantidade
     item["saldo"] = saldo
+    if unidade == "COCB":
+        material["saldo"] = saldo
+        material["estoque_inicial"] = item["estoque_inicial"]
     dados["movimentos"].append({
         "data_hora": datetime.now(timezone.utc).isoformat(),
-        "ni": ni, "descricao": item["descricao"], "movimento": tipo,
+        "ni": ni, "descricao": material["descricao"], "unidade": unidade, "movimento": tipo,
         "quantidade": quantidade, "saldo_apos": saldo,
         "primeira_entrada": primeira, "observacao": obs.strip()})
     return primeira, saldo
 
-st.title("📦 10 SUL • CONTROLE DE ESTOQUE COCB")
+st.title("📦 10 SUL • CONTROLE DE ESTOQUE")
 st.caption("Desenvolvido por Evandro Junior")
 try:
     base = BaseGitHub()
@@ -140,6 +172,9 @@ try:
 except ErroEstoque as exc:
     st.error(str(exc))
     st.stop()
+
+normalizar(dados)
+unidade = st.selectbox("Unidade para movimentações e limites", UNIDADES, index=2)
 
 pagina = st.query_params.get("pagina", "painel")
 if pagina not in ("painel", "cadastro", "movimentacao"):
@@ -150,10 +185,10 @@ b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
 c.link_button("📦 Movimentação", "?pagina=movimentacao", use_container_width=True)
 
 if pagina == "painel":
-    st.subheader("Painel de Estoque COCB")
+    st.subheader("Painel de Estoque — " + unidade)
     tabela = itens_tabela(dados)
     criticos = tabela[tabela["SITUAÇÃO"] == "🔴 Abaixo do mínimo"].copy()
-    configurados = sum(x.get("minimo") is not None and x.get("maximo") is not None for x in dados["itens"].values())
+    configurados = sum(x["unidades"][unidade].get("minimo") is not None and x["unidades"][unidade].get("maximo") is not None for x in dados["itens"].values())
     a1, a2, a3 = st.columns(3)
     a1.metric("Materiais", len(dados["itens"]))
     a2.metric("Abaixo do mínimo", len(criticos))
@@ -165,6 +200,19 @@ if pagina == "painel":
         criticos["REPOR ATÉ MÍNIMO"] = criticos["MÍNIMO"] - criticos["SALDO ATUAL"]
         st.dataframe(criticos[["NI", "DESCRIÇÃO", "SALDO ATUAL", "MÍNIMO", "MÁXIMO", "REPOR ATÉ MÍNIMO"]], hide_index=True, use_container_width=True)
         st.download_button("Exportar itens críticos", criticos.to_csv(index=False).encode("utf-8-sig"), "estoque_critico.csv")
+    st.subheader("Alertas de todas as unidades")
+    alertas = []
+    for ni, material in dados["itens"].items():
+        for u in UNIDADES:
+            estoque = material["unidades"][u]
+            if situacao(estoque) == "🔴 Abaixo do mínimo":
+                alertas.append({"NI": ni, "DESCRIÇÃO": material["descricao"], "UNIDADE": u,
+                                "ATUAL": estoque["saldo"], "MÍNIMO": estoque["minimo"],
+                                "MÁXIMO": estoque["maximo"]})
+    if alertas:
+        st.dataframe(pd.DataFrame(alertas), hide_index=True, use_container_width=True)
+    else:
+        st.info("Nenhum item abaixo do mínimo nas quatro unidades.")
     st.subheader("Consulta geral")
     apenas_criticos = st.checkbox("Mostrar apenas itens abaixo do mínimo")
     st.dataframe(criticos if apenas_criticos else tabela, hide_index=True, use_container_width=True)
@@ -187,31 +235,38 @@ elif pagina == "cadastro":
             st.error("O máximo não pode ser menor que o mínimo.")
         else:
             dados["itens"][ni] = {"descricao": descricao, "estoque_inicial": None, "saldo": 0, "minimo": None, "maximo": None}
+            normalizar(dados)
+            dados["itens"][ni]["unidades"][unidade].update(minimo=int(minimo_novo), maximo=int(maximo_novo))
             try:
                 base.salvar(dados, sha)
                 st.success("Material cadastrado.")
                 st.rerun()
             except ErroEstoque as exc:
                 st.error(str(exc))
-    st.subheader("Configurar estoque mínimo e máximo")
+    st.subheader("Editar item e limites — " + unidade)
     if dados["itens"]:
         escolhas = {f"{ni} | {item['descricao']}": ni for ni, item in sorted(dados["itens"].items())}
-        with st.form("limites"):
-            escolhido_limite = st.selectbox("Material para configurar", list(escolhas))
-            item_limite = dados["itens"][escolhas[escolhido_limite]]
+        escolhido_limite = st.selectbox("Material para editar", list(escolhas))
+        ni_editar = escolhas[escolhido_limite]
+        material = dados["itens"][ni_editar]
+        item_limite = material["unidades"][unidade]
+        with st.form("limites_" + ni_editar + "_" + unidade):
+            descricao_editada = st.text_input("Descrição do item", value=material["descricao"])
             col_min, col_max = st.columns(2)
             minimo = col_min.number_input("Estoque mínimo", min_value=0, value=int(item_limite.get("minimo") or 0), step=1)
             maximo = col_max.number_input("Estoque máximo", min_value=0, value=int(item_limite.get("maximo") or 0), step=1)
-            salvar_limites = st.form_submit_button("Salvar limites", type="primary")
+            salvar_limites = st.form_submit_button("Salvar alterações", type="primary")
         if salvar_limites:
-            if maximo < minimo:
+            if not descricao_editada.strip():
+                st.error("Informe a descrição.")
+            elif maximo < minimo:
                 st.error("O estoque máximo não pode ser menor que o mínimo.")
             else:
+                material["descricao"] = descricao_editada.strip()
                 item_limite["minimo"] = int(minimo)
                 item_limite["maximo"] = int(maximo)
                 try:
                     base.salvar(dados, sha)
-                    st.success("Limites atualizados.")
                     st.rerun()
                 except ErroEstoque as exc:
                     st.error(str(exc))
@@ -266,7 +321,7 @@ elif pagina == "movimentacao":
             confirmar = st.form_submit_button("Registrar movimentação", type="primary")
         if confirmar:
             try:
-                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao)
+                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade)
                 base.salvar(dados, sha)
                 st.success(f"{'Estoque inicial registrado!' if primeira else 'Movimentação registrada!'} Saldo: {saldo}")
                 st.rerun()
@@ -274,5 +329,8 @@ elif pagina == "movimentacao":
                 st.error(str(exc))
     st.subheader("Histórico")
     movimentos = pd.DataFrame(reversed(dados["movimentos"]))
+    if not movimentos.empty:
+        movimentos["unidade"] = movimentos.get("unidade", pd.Series("COCB", index=movimentos.index)).fillna("COCB")
+        movimentos = movimentos[movimentos["unidade"] == unidade]
     st.dataframe(movimentos, use_container_width=True, hide_index=True)
     st.download_button("Exportar histórico", movimentos.to_csv(index=False).encode("utf-8-sig"), "historico_cocb.csv")
