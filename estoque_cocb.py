@@ -29,6 +29,7 @@ if central:
     st.title("10 SUL")
     st.caption("Desenvolvido por Evandro Junior")
     st.subheader("Central de sistemas")
+    st.link_button("Estoque de pneus", "https://10sul-estoque-cocb.streamlit.app/?pagina=pneus", use_container_width=True)
     st.link_button("📦 Estoque Socorro", "https://10sul-estoque-cocb.streamlit.app/?pagina=painel", use_container_width=True)
     st.link_button("🔧 Monitor Oficina", "https://10sul-monitor-gerencial-tah7ewvdikufrddrrysy56.streamlit.app/", use_container_width=True)
     st.info("Para ter um ícone no celular, adicione esta página à tela inicial com o nome 10 SUL.")
@@ -446,8 +447,15 @@ def abrir_relatorio_reposicao(dados, unidade):
     st.download_button("Baixar imagem PNG", png, "reposicao_todas_unidades.png", mime="image/png")
 
 
+if st.query_params.get("pagina", "") == "pneus":
+    from estoque_pneus import renderizar
+    st.image(logo_10sul, width=150)
+    renderizar(st, BaseGitHub, ErroEstoque)
+    st.stop()
+
 st.title("📦 10 SUL • CONTROLE DE ESTOQUE")
 st.caption("Desenvolvido por Evandro Junior")
+st.link_button("Estoque de pneus", "?pagina=pneus", use_container_width=True)
 try:
     base = BaseGitHub()
     base.verificar_privado()
