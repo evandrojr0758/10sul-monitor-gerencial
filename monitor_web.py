@@ -118,9 +118,13 @@ def _mensagem_liberacao(frota, evento, quando):
 
 def _nome_coluna_fim_10sul(colunas):
     """Reconhece a coluna existente sem confundir fim ASN ou fim do laudo."""
-    normalizados = {re.sub(r"[^a-z0-9]", "", str(c).lower()): c for c in colunas}
-    for nome in ["fim_10sul", "fim_10_sul", "fim_liberacao_10sul"]:
-        encontrado = normalizados.get(re.sub(r"[^a-z0-9]", "", nome))
+    import unicodedata
+    def normalizar(nome):
+        texto = unicodedata.normalize("NFKD", str(nome).lower())
+        return re.sub(r"[^a-z0-9]", "", texto)
+    normalizados = {normalizar(c): c for c in colunas}
+    for nome in ["liberacao_10sul", "liberacao_10_sul", "fim_10sul", "fim_10_sul", "fim_liberacao_10sul"]:
+        encontrado = normalizados.get(normalizar(nome))
         if encontrado:
             return encontrado
     return None
