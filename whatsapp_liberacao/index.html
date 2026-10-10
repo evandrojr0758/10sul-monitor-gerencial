@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<style>
+body{margin:0;font-family:Arial,sans-serif;color:#475569}
+button{background:#ff4b4b;color:white;border:0;border-radius:9px;padding:14px 18px;font-size:16px;cursor:pointer}
+button:disabled{opacity:.65;cursor:wait}#status{font-size:13px;margin-top:8px;line-height:1.4}
+a{color:#167a56}
+</style></head><body>
+<button id="registrar" type="button">Registrar baixa e abrir WhatsApp</button>
+<div id="status" role="status" aria-live="polite"></div>
+<script>
+const button=document.getElementById("registrar"), status=document.getElementById("status");
+let pending=null, popup=null, confirmedUrl=null, handled=null;
+function send(type,data){window.parent.postMessage({isStreamlitMessage:true,type,...data},"*")}
+function height(){send("streamlit:setFrameHeight",{height:100})}
+function reset(){pending=null;button.disabled=false;button.textContent="Registrar baixa e abrir WhatsApp"}
+button.addEventListener("click",()=>{
+  if(confirmedUrl){window.open(confirmedUrl,"_blank","noopener,noreferrer");return}
+  if(pending)return;
+  // Reserve the window during the user's click. No message is sent before DB confirmation.
+  popup=window.open("about:blank","_blank");
+  if(!popup){
+    status.textContent="Permita a abertura de janelas para este site e toque em registrar novamente.";
+    height();return;
+  }
+  try {
+    popup.opener=null;
+    popup.document.title="Registrando baixa — 10 Sul";
+    popup.document.body.innerHTML="<p style='font:16px Arial;padding:24px'>Registrando baixa. O WhatsApp será aberto após a confirmação.</p>";
+  } catch(e){}
+  pending=String(Date.now())+"_"+Math.random().toString(36).slice(2);
+  button.disabled=true;status.textContent="Registrando baixa…";
+  send("streamlit:setComponentValue",{value:{nonce:pending},dataType:"json"});
+});
+window.addEventListener("message",event=>{
+  if(event.source!==window.parent || event.data.type!=="streamlit:render")return;
+  const args=event.data.args||{}, result=args.result;
+  if(result && result.nonce!==handled && result.nonce===pending){
+    handled=result.nonce;
+    if(result.error){
+      try{if(popup&&!popup.closed)popup.close()}catch(e){}
+      status.textContent=result.error;reset();
+    }else if(result.url){
+      confirmedUrl=result.url;
+      status.textContent="Baixa registrada. Escolha o grupo e confirme o envio no WhatsApp.";
+      button.disabled=false;button.textContent="Abrir WhatsApp novamente";
+      try{if(popup&&!popup.closed){popup.location.replace(result.url)}else{status.textContent="Baixa registrada. Toque para abrir o WhatsApp.";}}catch(e){status.textContent="Baixa registrada. Toque para abrir o WhatsApp."}
+      pending=null;
+    }
+  }
+  height();
+});
+send("streamlit:componentReady",{apiVersion:1});height();
+</script></body></html>
