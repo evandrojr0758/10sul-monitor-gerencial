@@ -1423,14 +1423,19 @@ sos_acima_3h = (
 )
 sos_em_alerta = not sos_acima_3h.empty
 import html as _html_sos
-sos_detalhes_card = "".join(
-    "<div style='display:flex;justify-content:space-between;gap:8px'>"
-    f"<span>Frota {_html_sos.escape(str(r['frota']))}</span>"
-    f"<strong>{hhmm(r['horas_aberto'])}</strong></div>"
-    for _, r in sos_acima_3h.head(3).iterrows()
-)
+sos_detalhes_card = (
+    "<div class='sos-mini-table' role='table' aria-label='SOS acima de 3 horas'>"
+    "<div class='sos-mini-row sos-mini-head' role='row'>"
+    "<span role='columnheader'>FROTA</span><span role='columnheader'>TEMPO</span></div>"
+    + "".join(
+        "<div class='sos-mini-row' role='row'>"
+        f"<span role='cell'>{_html_sos.escape(str(r['frota']))}</span>"
+        f"<strong role='cell'>{hhmm(r['horas_aberto'])}</strong></div>"
+        for _, r in sos_acima_3h.head(3).iterrows()
+    ) + "</div>"
+) if sos_em_alerta else ""
 if len(sos_acima_3h) > 3:
-    sos_detalhes_card += f"<div style='margin-top:3px'>+ {len(sos_acima_3h) - 3} frotas • toque no card</div>"
+    sos_detalhes_card += f"<div class='sos-mini-more'>+ {len(sos_acima_3h) - 3} frotas</div>"
 if sos_em_alerta:
     st.markdown("""
     <style>
@@ -1438,12 +1443,40 @@ if sos_em_alerta:
         0%, 100% {background-color:#dc2626; border-color:#dc2626;}
         50% {background-color:#991b1b; border-color:#991b1b;}
     }
-    .st-key-card_sos div[data-testid="stButton"] > button {
+    .st-key-card_sos {
         background-color:#dc2626;
-        border-color:#dc2626;
-        color:#ffffff!important;
+        border:1px solid #dc2626;
+        border-radius:11px;
+        padding:4px 8px 10px;
+        gap:0!important;
         animation:sos_card_piscar 1.4s ease-in-out infinite;
     }
+    .st-key-card_sos div[data-testid="stButton"] > button {
+        background:transparent!important;
+        border:0!important;
+        box-shadow:none!important;
+        color:#ffffff!important;
+        min-height:76px!important;
+        padding:6px!important;
+    }
+    .sos-mini-table {
+        width:min(100%,220px);
+        margin:0 auto;
+        color:#ffffff;
+        font-size:12px;
+        line-height:1.5;
+        text-align:center;
+    }
+    .sos-mini-row {
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:8px;
+        padding:2px 0;
+        border-bottom:1px solid rgba(255,255,255,.22);
+    }
+    .sos-mini-head {font-size:10px;font-weight:600;letter-spacing:.4px;}
+    .sos-mini-more {color:#ffffff;font-size:11px;text-align:center;margin-top:4px;}
+
     .st-key-card_sos div[data-testid="stButton"] > button * {
         color:#ffffff!important;
     }
@@ -1452,18 +1485,12 @@ if sos_em_alerta:
 cols=st.columns(7,gap="small")
 for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
     with col:
-        # Contêiner estável permite colorir todo o botão SOS sem perder o clique.
+        # O alerta colore o card inteiro, incluindo a tabela compacta de frotas.
         with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
             if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
                 modal_os_abertas(lab,dados_card)
             if i == 2 and sos_detalhes_card:
-                st.markdown(
-                    "<div style='margin-top:-5px;padding:7px 10px;border-radius:8px;"
-                    "background:#fff1f2;color:#991b1b;font-size:12px;line-height:1.5'>"
-                    "<div style='font-size:11px;margin-bottom:2px'>Acima de 3h</div>"
-                    f"{sos_detalhes_card}</div>",
-                    unsafe_allow_html=True,
-                )
+                st.markdown(sos_detalhes_card, unsafe_allow_html=True)
 
 render_medias_supervisor()
 
