@@ -305,6 +305,37 @@ def _salvar_previsao_10sul(registro, quando):
     carregar.clear()
     return _mensagem_previsao(frota, registro["evento"], confirmado)
 
+def _previsoes_do_card(dados, base):
+    """Obtém as previsões persistidas para as OS deste card ainda em atendimento."""
+    chaves = set(zip(dados["os_id"].astype(str), dados["frota"].apply(norm_frota)))
+    linhas = []
+    for _, row in base.iterrows():
+        chave = (str(row["os_id"]), norm_frota(row["frota"]))
+        if chave not in chaves:
+            continue
+        if "MANUT" not in str(row.get("status", "")).upper():
+            continue
+        if pd.notna(_hora_brasilia(row.get("fim_asn"))):
+            continue
+        if pd.notna(_hora_brasilia(row.get("fim_liberacao_10sul"))):
+            continue
+        linhas.append({
+            "os_id": chave[0], "frota": chave[1], "evento": str(row.get("evento", "")),
+            "previsao": _hora_brasilia(row.get("previsao_liberacao_10sul")),
+        })
+    return pd.DataFrame(linhas, columns=["os_id", "frota", "evento", "previsao"]).drop_duplicates(["os_id", "frota"])
+
+
+def _mensagem_previsoes_card(previsoes):
+    if previsoes.empty:
+        raise ValueError("Não há frotas em atendimento neste card.")
+    linhas = ["FROTA | EVENTO | PREVISÃO"]
+    for _, row in previsoes.sort_values(["frota", "evento"]).iterrows():
+        texto_previsao = pd.Timestamp(row["previsao"]).strftime("%d/%m/%Y %H:%M") if pd.notna(row["previsao"]) else "Ainda sem previsão"
+        linhas.append(f"{row['frota']} | {row['evento']} | {texto_previsao}")
+    return "\n".join(linhas)
+
+
 def _combinar_base_asn(historico, asn):
     """ASN prevalece nos dados da cliente; início salvo continua preservado."""
     def preparar(d):
@@ -1655,33 +1686,60 @@ def modal_os_abertas(titulo, dados, card_id):
                 p_data, p_hora = st.columns(2)
                 data_prev = p_data.date_input("Data prevista", value=inicial_prev.date(), min_value=agora.date(), key=f"{chave_registro}_previsao_data")
                 hora_prev = p_hora.time_input("Hora prevista", value=inicial_prev.time(), step=60, key=f"{chave_registro}_previsao_hora")
-                chave_resultado_prev = f"{chave_registro}_resultado_previsao"
-                resultado_prev = st.session_state.get(chave_resultado_prev)
-                pedido_prev = _registrar_baixa_whatsapp(
-                    result=resultado_prev,
-                    label="Registrar previsão e abrir WhatsApp",
-                    key=f"{chave_registro}_previsao_whatsapp",
+                if st.button("Registrar previsão", key=f"{chave_registro}_previsao_salvar", type="primary"):
+                    try:
+                        _salvar_previsao_10sul(registro, datetime.combine(data_prev, hora_prev))
+                        st.session_state[f"{chave_modal}_previsao_salva"] = str(registro["frota"])
+                        st.rerun(scope="fragment")
+                    except Exception as exc:
+                        st.error(str(exc))
+                st.caption("Salve as previsões desejadas e envie o resumo completo. As demais frotas vão como Ainda sem previsão.")
+
+            base_previsoes = carregar()
+            previsoes_card = _previsoes_do_card(dados, base_previsoes)
+            total_prev = len(previsoes_card)
+            informadas_prev = int(previsoes_card["previsao"].notna().sum())
+            frota_salva_prev = st.session_state.pop(f"{chave_modal}_previsao_salva", None)
+            if frota_salva_prev:
+                st.success(f"Previsão da frota {frota_salva_prev} salva.")
+            st.markdown(f"**Previsões registradas: {informadas_prev} de {total_prev}**")
+            if informadas_prev < total_prev:
+                faltam_prev = previsoes_card.loc[previsoes_card["previsao"].isna(), "frota"].astype(str).tolist()
+                st.caption("Ainda sem previsão: " + ", ".join(faltam_prev))
+            if total_prev:
+                mensagem_card = _mensagem_previsoes_card(previsoes_card)
+                st.text(mensagem_card)
+                import hashlib
+                versao_resumo = hashlib.sha256(mensagem_card.encode("utf-8")).hexdigest()[:16]
+                chave_envio_prev = f"{chave_modal}_previsoes_{versao_resumo}"
+                resultado_envio_prev = st.session_state.get(f"{chave_envio_prev}_resultado")
+                pedido_envio_prev = _registrar_baixa_whatsapp(
+                    result=resultado_envio_prev,
+                    label="Enviar todas as previsões no WhatsApp",
+                    key=chave_envio_prev,
                     default=None,
                 )
-                nonce_prev = pedido_prev.get("nonce") if isinstance(pedido_prev, dict) else None
-                processados_prev = st.session_state.setdefault("lib_10sul_pedidos_processados", set())
-                if isinstance(nonce_prev, str) and nonce_prev and nonce_prev not in processados_prev:
-                    processados_prev.add(nonce_prev)
+                nonce_envio_prev = pedido_envio_prev.get("nonce") if isinstance(pedido_envio_prev, dict) else None
+                processados_envio_prev = st.session_state.setdefault("lib_10sul_pedidos_processados", set())
+                if isinstance(nonce_envio_prev, str) and nonce_envio_prev and nonce_envio_prev not in processados_envio_prev:
+                    processados_envio_prev.add(nonce_envio_prev)
                     try:
-                        aviso_prev = _salvar_previsao_10sul(registro, datetime.combine(data_prev, hora_prev))
-                        st.session_state[chave_resultado_prev] = {
-                            "nonce": nonce_prev,
-                            "url": "https://wa.me/?text=" + quote(aviso_prev),
-                            "message": "Previsão registrada. Escolha o grupo e confirme o envio no WhatsApp.",
+                        carregar.clear()
+                        conferidas_prev = _previsoes_do_card(dados, carregar())
+                        texto_envio_prev = _mensagem_previsoes_card(conferidas_prev)
+                        if texto_envio_prev != mensagem_card:
+                            raise ValueError("As previsões mudaram. Confira o resumo atualizado e envie novamente.")
+                        st.session_state[f"{chave_envio_prev}_resultado"] = {
+                            "nonce": nonce_envio_prev,
+                            "url": "https://wa.me/?text=" + quote(texto_envio_prev),
+                            "message": "Resumo completo das frotas. Escolha o grupo no WhatsApp.",
                         }
                     except Exception as exc:
-                        st.session_state[chave_resultado_prev] = {"nonce": nonce_prev, "error": str(exc)}
+                        st.session_state[f"{chave_envio_prev}_resultado"] = {"nonce": nonce_envio_prev, "error": str(exc)}
                     st.rerun(scope="fragment")
-                if resultado_prev and resultado_prev.get("error"):
-                    st.error(resultado_prev["error"])
-                elif resultado_prev and resultado_prev.get("url"):
-                    st.success("Previsão registrada. O atendimento continua em manutenção.")
-                st.caption("A previsão não registra baixa nem altera as médias de manutenção.")
+            else:
+                st.caption("Não há frotas pendentes de liberação da 10 Sul neste card.")
+            st.caption("As frotas já liberadas pela 10 Sul não precisam de previsão. A previsão não altera as médias.")
 
         st.markdown("##### Registrar baixa 10 Sul")
         c_data, c_hora = st.columns(2)
