@@ -109,7 +109,34 @@ def calcular_oficina_agora(df):
             ("Outros", quantidade(~(itr | revisao | cnp | sos)))]
 
 
-def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds, motivos, leitura, medias, oficina):
+def calcular_tendencia_sos(df, agora):
+    """Mesmos períodos e agrupamento semanal utilizados na tendência CNP."""
+    evento = df["evento"].fillna("").astype(str).str.upper().str.strip()
+    base = df[evento.str.startswith("SOS", na=False)].copy()
+    base["ref"] = base["inicio"].fillna(base["parada"])
+    base = base[base["ref"].notna()].copy()
+    hoje = agora.normalize()
+    mes_ini = hoje.replace(day=1)
+    mes_ant_ini = (mes_ini-pd.offsets.MonthBegin(1)).normalize()
+    sem_ini = hoje-pd.Timedelta(days=hoje.weekday())
+    sem_ant_ini = sem_ini-pd.Timedelta(days=7)
+    q_mes = int(((base["ref"] >= mes_ini) & (base["ref"] <= agora)).sum())
+    q_mes_ant = int(((base["ref"] >= mes_ant_ini) & (base["ref"] < mes_ini)).sum())
+    q_sem = int(((base["ref"] >= sem_ini) & (base["ref"] <= agora)).sum())
+    q_sem_ant = int(((base["ref"] >= sem_ant_ini) & (base["ref"] < sem_ini)).sum())
+    def delta(a, b):
+        return None if b == 0 else (a-b)/b*100
+    wk = pd.DataFrame(columns=["SEMANA", "QTD", "LAB"])
+    if not base.empty:
+        base["SEMANA"] = base["ref"].dt.to_period("W-MON").apply(lambda x: x.start_time)
+        wk = base.groupby("SEMANA").size().sort_index().tail(8).reset_index(name="QTD")
+        wk["LAB"] = wk["SEMANA"].apply(lambda d: f"S{d.isocalendar().week:02d}")
+    return {"q_mes": q_mes, "q_mes_ant": q_mes_ant, "q_sem": q_sem,
+            "q_sem_ant": q_sem_ant, "dm": delta(q_mes, q_mes_ant),
+            "ds": delta(q_sem, q_sem_ant), "semanas": wk}
+
+
+def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds, motivos, leitura, medias, oficina, sos):
     from PIL import Image, ImageDraw, ImageFont
     largura = 1200
     imagem = Image.new("RGB", (largura, 4000), "#f3f6fa")
@@ -208,51 +235,55 @@ def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds,
             txt(215 + coluna * 132, y + 8, hhmm(valor), 21, cor, True)
         y += 44
     y += 32
-    y = titulo(y, "Tendência das CNP")
-
-    for x, qtd, ant, label, variacao in (
-        (50, q_mes, q_mes_ant, "CNP no mês", dm),
-        (620, q_sem, q_sem_ant, "CNP na semana", ds),
-    ):
-        draw.rounded_rectangle((x, y, x + 530, y + 190), radius=16, fill="white", outline="#dbe3ec", width=2)
-        txt(x + 24, y + 16, qtd, 55, azul, True)
-        txt(x + 24, y + 85, label, 26, texto, True)
-        txt(x + 24, y + 124, f"vs. {ant} no período anterior", 21, cinza)
-        valor, cor = delta(variacao)
-        txt(x + 24, y + 154, valor, 24, cor, True)
-    y += 215
+    y = titulo(y, "Tendências • CNP e SOS")
+    cnp = {"q_mes": q_mes, "q_mes_ant": q_mes_ant, "q_sem": q_sem,
+           "q_sem_ant": q_sem_ant, "dm": dm, "ds": ds}
+    for x, nome, dados in ((50, "CNP", cnp), (620, "SOS", sos)):
+        draw.rounded_rectangle((x, y, x + 530, y + 220), radius=16, fill="white", outline="#dbe3ec", width=2)
+        txt(x + 24, y + 12, nome, 27, azul, True)
+        for deslocamento, periodo, campo, anterior, dcampo in (
+            (24, "Mês", "q_mes", "q_mes_ant", "dm"),
+            (290, "Semana", "q_sem", "q_sem_ant", "ds"),
+        ):
+            xx = x + deslocamento
+            txt(xx, y + 57, periodo, 23, texto, True)
+            txt(xx, y + 86, dados[campo], 43, azul, True)
+            txt(xx, y + 140, f"vs. {dados[anterior]} anterior", 20, cinza)
+            valor, cor = delta(dados[dcampo])
+            txt(xx, y + 172, valor, 23, cor, True)
+    y += 240
     y = paragrafo("Comparação com mês e semana anteriores completos.",
-                  60, y, 1080, 21, cinza) + 22
-    txt(60, y, "CNP por semana • últimas 8 semanas com registros", 25, azul, True)
-    y += 55
-    if hunt.empty:
-        txt(60, y, "Sem dados no período.", 24, cinza)
-        y += 60
-    else:
+                  60, y, 1080, 21, cinza) + 20
+    wk_cnp = pd.DataFrame(columns=["SEMANA", "QTD", "LAB"])
+    if not hunt.empty:
         tw = hunt.copy()
         tw["SEMANA"] = tw["ref"].dt.to_period("W-MON").apply(lambda x: x.start_time)
-        wk = tw.groupby("SEMANA").size().sort_index().tail(8).reset_index(name="QTD")
-        wk["LAB"] = wk["SEMANA"].apply(lambda d: f"S{d.isocalendar().week:02d}")
-        chart_y = y
-        draw.rounded_rectangle((50, chart_y, 1150, chart_y + 310), radius=16, fill="white")
-        left, right, top, bottom = 115, 1080, chart_y + 45, chart_y + 240
+        wk_cnp = tw.groupby("SEMANA").size().sort_index().tail(8).reset_index(name="QTD")
+        wk_cnp["LAB"] = wk_cnp["SEMANA"].apply(lambda d: f"S{d.isocalendar().week:02d}")
+    for x, nome, wk, cor_linha in ((50, "CNP", wk_cnp, "#2583f7"), (620, "SOS", sos["semanas"], "#128c7e")):
+        draw.rounded_rectangle((x, y, x + 530, y + 270), radius=16, fill="white")
+        txt(x + 20, y + 12, nome + " • últimas 8 semanas com registros", 20, azul, True)
+        if wk.empty:
+            txt(x + 20, y + 110, "Sem dados no período.", 22, cinza)
+            continue
+        left, right, top, bottom = x + 55, x + 500, y + 72, y + 217
         maior = max(1, int(wk["QTD"].max()))
         for frac in (0, .5, 1):
             yy = bottom - frac * (bottom - top)
             draw.line((left, yy, right, yy), fill="#dbe3ec", width=2)
-            txt(60, yy - 12, round(maior * frac), 18, cinza)
+            txt(x + 10, yy - 9, round(maior * frac), 15, cinza)
         pontos = []
         for i, row in wk.iterrows():
             xx = (left + right) / 2 if len(wk) == 1 else left + i * (right - left) / (len(wk) - 1)
             yy = bottom - int(row["QTD"]) / maior * (bottom - top)
             pontos.append((xx, yy))
-            txt(xx - 24, bottom + 20, row["LAB"], 21, cinza)
-            txt(xx - 22, yy - 32, int(row["QTD"]), 21, azul, True)
+            txt(xx - 18, bottom + 18, row["LAB"], 16, cinza)
+            txt(xx - 16, yy - 25, int(row["QTD"]), 18, azul, True)
         if len(pontos) > 1:
-            draw.line(pontos, fill="#2583f7", width=5)
+            draw.line(pontos, fill=cor_linha, width=4)
         for xx, yy in pontos:
-            draw.ellipse((xx - 6, yy - 6, xx + 6, yy + 6), fill="#2583f7")
-        y += 340
+            draw.ellipse((xx - 5, yy - 5, xx + 5, yy + 5), fill=cor_linha)
+    y += 300
 
     y = titulo(y + 12, "Principais motivos das CNP — semana")
     draw.rectangle((50, y, 1150, y + 48), fill="#eaf0f4")
