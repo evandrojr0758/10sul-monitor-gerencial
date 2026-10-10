@@ -2,6 +2,8 @@
 import base64
 import re
 from io import BytesIO
+from pathlib import Path
+from functools import lru_cache
 import pandas as pd
 
 
@@ -92,14 +94,12 @@ def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds,
     draw = ImageDraw.Draw(imagem)
     azul, texto, cinza = "#15364b", "#243746", "#667085"
 
+    @lru_cache(maxsize=32)
     def fonte(size, bold=False):
-        nome = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
-        for caminho in (nome, "/usr/share/fonts/truetype/dejavu/" + nome):
-            try:
-                return ImageFont.truetype(caminho, size)
-            except OSError:
-                pass
-        return ImageFont.load_default(size=size)
+        nome = "monitor_font_bold.b64" if bold else "monitor_font.b64"
+        arquivo = Path(__file__).resolve().parent / "assets" / nome
+        dados = base64.b64decode(arquivo.read_text(encoding="ascii"), validate=True)
+        return ImageFont.truetype(BytesIO(dados), size)
 
     def txt(x, y, valor, size=24, color=texto, bold=False):
         draw.text((x, y), str(valor), font=fonte(size, bold), fill=color)
