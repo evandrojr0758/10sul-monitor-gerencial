@@ -1591,9 +1591,9 @@ with h3:
 
 @st.dialog("Resumo do Monitor Gerencial", width="large")
 def abrir_resumo_compartilhavel():
-    from monitor_share import gerar_imagem_resumo, botao_compartilhar_imagem, calcular_medias_monitor
+    from monitor_share import gerar_imagem_resumo, botao_compartilhar_imagem, calcular_medias_monitor, calcular_oficina_agora
     png = gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant,
-                             dm, ds, mot, leitura, calcular_medias_monitor(df, agora))
+                             dm, ds, mot, leitura, calcular_medias_monitor(df, agora), calcular_oficina_agora(df))
     st.image(png, use_container_width=True)
     botao_compartilhar_imagem(png)
     st.download_button("Baixar imagem PNG", png, "resumo_monitor_10sul.png", mime="image/png",
