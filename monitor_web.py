@@ -1524,6 +1524,7 @@ for cat,termos in familias.items():
 mot=sorted(mot,key=lambda x:(x[1],x[2]),reverse=True)
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>4. ALERTAS & HUNT</div><div class='mon-section-sub'>Corretivas não programadas e inteligência da operação</div></div>",unsafe_allow_html=True)
+acoes_compartilhar_cnp = st.empty()
 h1,h2,h3=st.columns([1,1.08,1])
 with h1:
     with st.container(border=True):
@@ -1586,6 +1587,22 @@ with h3:
             for fr,r in rr.iterrows():
                 st.markdown(f"<div class='reinc-row'><b>{fr}</b><span>{int(r['QTDE'])}</span><span>{r['ULTIMA'].strftime('%d/%m/%Y')}</span></div>",unsafe_allow_html=True)
         else: st.caption("Sem dados suficientes para identificar reincidências.")
+
+
+@st.dialog("Resumo do Monitor Gerencial", width="large")
+def abrir_resumo_compartilhavel():
+    from monitor_share import gerar_imagem_resumo, botao_compartilhar_imagem, calcular_medias_monitor
+    png = gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant,
+                             dm, ds, mot, leitura, calcular_medias_monitor(df, agora))
+    st.image(png, use_container_width=True)
+    botao_compartilhar_imagem(png)
+    st.download_button("Baixar imagem PNG", png, "resumo_monitor_10sul.png", mime="image/png",
+                       key="download_resumo_cnp")
+
+with acoes_compartilhar_cnp.container():
+    if st.button("📲 Compartilhar resumo no WhatsApp", use_container_width=True,
+                 key="compartilhar_resumo_cnp"):
+        abrir_resumo_compartilhavel()
 
 st.caption("Atualização automática a cada 60 segundos.")
 
