@@ -116,6 +116,29 @@ def _mensagem_liberacao(frota, evento, quando):
     )
 
 
+def _nome_coluna_fim_10sul(colunas):
+    """Reconhece a coluna existente sem confundir fim ASN ou fim do laudo."""
+    normalizados = {re.sub(r"[^a-z0-9]", "", str(c).lower()): c for c in colunas}
+    for nome in ["fim_10sul", "fim_10_sul", "fim_liberacao_10sul"]:
+        encontrado = normalizados.get(re.sub(r"[^a-z0-9]", "", nome))
+        if encontrado:
+            return encontrado
+    return None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _coluna_fim_10sul_banco():
+    registros = api_get("monitor_atendimentos", {"select": "*", "limit": 1})
+    coluna = _nome_coluna_fim_10sul(registros[0].keys()) if registros else None
+    if coluna is None:
+        raise RuntimeError(
+            "Não localizei a coluna Fim 10 Sul em monitor_atendimentos. "
+            "Precisamos confirmar o nome técnico e a tabela da coluna já usada pelo sistema. "
+            "Nenhuma nova coluna foi criada."
+        )
+    return coluna
+
+
 def _erro_gravacao_liberacao(resposta):
     """Diagnóstico do banco sem exibir credenciais nem dados da requisição."""
     try:
@@ -126,14 +149,12 @@ def _erro_gravacao_liberacao(resposta):
         codigo, mensagem = "", ""
     codigo = re.sub(r"[^A-Za-z0-9_]", "", codigo)[:30]
     detalhe = f"HTTP {resposta.status_code}" + (f" · {codigo}" if codigo else "")
-    if codigo in {"PGRST204", "42703"} and "fim_liberacao_10sul" in mensagem:
+    if codigo in {"PGRST204", "42703"}:
+        _coluna_fim_10sul_banco.clear()
         return (
-            "Falta a coluna de liberação 10 Sul no banco. "
-            "No SQL Editor do Supabase, execute:\n\n"
-            "ALTER TABLE public.monitor_atendimentos "
-            "ADD COLUMN IF NOT EXISTS fim_liberacao_10sul timestamptz;\n"
-            "NOTIFY pgrst, 'reload schema';\n\n"
-            f"Depois atualize o monitor e tente novamente. ({detalhe})"
+            "O banco não reconheceu a coluna de liberação selecionada. "
+            "Atualize o monitor para conferir novamente o nome da coluna Fim 10 Sul existente. "
+            f"Nenhuma nova coluna foi criada. ({detalhe})"
         )
     if resposta.status_code in {401, 403} or codigo == "42501":
         return (
@@ -166,7 +187,8 @@ def _salvar_liberacao_10sul(registro, quando):
     headers = {"apikey": chave_gravacao, "Authorization": f"Bearer {chave_gravacao}",
                "Prefer": "return=representation"}
     url = f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
-    payload = {"fim_liberacao_10sul": valor}
+    coluna_fim = _coluna_fim_10sul_banco()
+    payload = {coluna_fim: valor}
     resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
     if not resposta.ok:
         raise RuntimeError(_erro_gravacao_liberacao(resposta))
@@ -187,7 +209,7 @@ def _salvar_liberacao_10sul(registro, quando):
         salvos = resposta.json()
     if len(salvos) != 1:
         raise RuntimeError("A gravação não confirmou uma única OS. Atualize o monitor antes de tentar novamente.")
-    confirmado = _hora_brasilia(salvos[0].get("fim_liberacao_10sul"))
+    confirmado = _hora_brasilia(salvos[0].get(coluna_fim))
     if pd.isna(confirmado) or confirmado != quando:
         raise RuntimeError("A data/hora gravada não foi confirmada. Atualize o monitor.")
     carregar.clear()
@@ -210,6 +232,10 @@ def _combinar_base_asn(historico, asn):
     if historico.empty:
         return a.reset_index()
     h = preparar(historico)
+    coluna_fim_existente = _nome_coluna_fim_10sul(h.columns)
+    if coluna_fim_existente and coluna_fim_existente != "fim_liberacao_10sul":
+        # Nome interno padronizado; gravação na coluna original do banco.
+        h["fim_liberacao_10sul"] = h[coluna_fim_existente]
     # Fim histórico combinado não comprova a origem ASN ou liberação manual.
     for c in ["fim_asn", "fim_liberacao_10sul"]:
         if c not in h.columns:
