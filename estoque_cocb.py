@@ -164,9 +164,25 @@ def itens_tabela(dados):
                        "UNIDADE": unidade, "SALDO ATUAL": registro["saldo"],
                        "ESTOQUE INICIAL": registro["estoque_inicial"],
                        "MÍNIMO": registro.get("minimo"), "MÁXIMO": registro.get("maximo"),
+                       "REPOR ATÉ MÁXIMO": None if registro.get("maximo") is None else max(0, registro["maximo"] - registro["saldo"]),
                        "SITUAÇÃO": situacao(registro)})
     return pd.DataFrame(linhas, columns=["NI", "DESCRIÇÃO", "MÍNIMO", "MÁXIMO", *UNIDADES, "TOTAL", "UNIDADE",
-                                        "SALDO ATUAL", "ESTOQUE INICIAL", "SITUAÇÃO"])
+                                        "SALDO ATUAL", "REPOR ATÉ MÁXIMO", "ESTOQUE INICIAL", "SITUAÇÃO"])
+
+def destacar_estoque_atual(tabela):
+    """Vermelho estritamente abaixo do mínimo, por unidade."""
+    def pintar(linha):
+        minimo = linha.get("MÍNIMO")
+        cores = []
+        for coluna, valor in linha.items():
+            limite = minimo
+            if coluna == "TOTAL" and pd.notna(minimo):
+                limite = minimo * len(UNIDADES)
+            atual = coluna in (*UNIDADES, "TOTAL", "SALDO ATUAL", "ATUAL")
+            cores.append("color: #b42318; font-weight: bold" if atual and pd.notna(limite) and pd.notna(valor) and valor < limite else "")
+        return cores
+    return tabela.style.apply(pintar, axis=1)
+
 
 def alterar_ni(dados, ni_atual, novo_ni):
     novo_ni = str(novo_ni).strip()
@@ -245,6 +261,13 @@ def exportar_tabela_excel(tabela, titulo):
                 celula.fill = PatternFill("solid", fgColor="F0F4F7")
             if isinstance(celula.value, (int, float)):
                 celula.number_format = "#,##0"
+    if "MÍNIMO" in tabela.columns:
+        for numero, (_, item) in enumerate(tabela.iterrows(), start=2):
+            minimo = item["MÍNIMO"]
+            for indice, nome in enumerate(tabela.columns, start=1):
+                limite = minimo * len(UNIDADES) if nome == "TOTAL" and pd.notna(minimo) else minimo
+                if nome in (*UNIDADES, "TOTAL", "SALDO ATUAL", "ATUAL") and pd.notna(limite) and pd.notna(item[nome]) and item[nome] < limite:
+                    ws.cell(numero, indice).font = Font(bold=True, color="B42318")
     for indice, nome in enumerate(tabela.columns, 1):
         tamanho = max([len(str(nome)), *[len(str(v)) for v in tabela[nome].dropna()]])
         ws.column_dimensions[get_column_letter(indice)].width = min(55, max(15, tamanho + 3))
@@ -293,7 +316,9 @@ def exportar_criticos_excel(tabela, unidade):
                 c.fill = PatternFill("solid", fgColor="F0F4F7")
             if c.column in (3, 4, 5, 6):
                 c.number_format = "#,##0"
-        ws.cell(numero, 6).font = Font(bold=True, color="B42318")
+        if pd.notna(item["MÍNIMO"]) and atual < item["MÍNIMO"]:
+            ws.cell(numero, 5).font = Font(bold=True, color="B42318")
+        ws.cell(numero, 6).font = Font(bold=True, color="B76E00")
         ws.row_dimensions[numero].height = 30
     for coluna, largura in enumerate((16, 48, 13, 13, 19, 23, 13), start=1):
         ws.column_dimensions[get_column_letter(coluna)].width = largura
@@ -334,7 +359,7 @@ def gerar_imagem_reposicao(dados, unidade):
                 critico = limite is not None and estoque["saldo"] < limite
                 abaixo = abaixo or critico
                 maximo = estoque.get("maximo")
-                reposicao.append(estoque["saldo"] - limite if critico else None)
+                reposicao.append(max(0, limite - estoque["saldo"]) if limite is not None else None)
             if abaixo:
                 descricao = textwrap.wrap(material["descricao"], width=28) or [""]
                 linhas.append((ni, descricao, reposicao, [material["unidades"][u] for u in unidades_relatorio]))
@@ -360,7 +385,7 @@ def gerar_imagem_reposicao(dados, unidade):
     desenho.text((36, 25), "10 SUL | NECESSIDADE DE REPOSIÇÃO", font=fonte(32), fill="white")
     agora = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     desenho.text((36, 82), f"Unidades: MUC e COCB  |  Atualizado em {agora}", font=fonte(23), fill="white")
-    desenho.text((36, 155), "REPOR = ATUAL − MÁXIMO. Valores negativos indicam a quantidade que falta.", font=fonte(19), fill="#52616b")
+    desenho.text((36, 155), "A REPOR = MÁXIMO − ATUAL (mínimo zero). Atual vermelho: abaixo do mínimo.", font=fonte(19), fill="#52616b")
     y = 200
     for titulo, cor, linhas in grupos:
         desenho.text((36, y), f"{titulo} ({len(linhas)})", font=fonte(26), fill=cor)
@@ -389,9 +414,9 @@ def gerar_imagem_reposicao(dados, unidade):
                 numero = estoques[0].get(campo)
                 desenho.text((x, y + 10), "—" if numero is None else str(numero), font=fonte(22), fill="#243746")
             for x, estoque, repor in zip((1020, 1260), estoques, reposicao):
-                desenho.text((x, y + 10), str(estoque["saldo"]), font=fonte(22), fill="#243746")
+                desenho.text((x, y + 10), str(estoque["saldo"]), font=fonte(22), fill="#b42318" if estoque.get("minimo") is not None and estoque["saldo"] < estoque["minimo"] else "#243746")
                 desenho.text((x + 100, y + 10), "—" if repor is None else str(repor), font=fonte(22), fill=cor if repor else "#52616b")
-            desenho.text((830, y + 10), str(sum(estoque["saldo"] for estoque in estoques)), font=fonte(22), fill="#243746")
+            desenho.text((830, y + 10), str(sum(estoque["saldo"] for estoque in estoques)), font=fonte(22), fill="#b42318" if all(e.get("minimo") is not None for e in estoques) and sum(e["saldo"] for e in estoques) < sum(e["minimo"] for e in estoques) else "#243746")
             desenho.text((1500, y + 10), str(sum(n or 0 for n in reposicao)), font=fonte(22), fill=cor)
             totais = [total + (numero or 0) for total, numero in zip(totais, reposicao)]
             desenho.line((30, y + h - 1, imagem.width - 30, y + h - 1), fill="#c6d2dc", width=2)
@@ -485,8 +510,8 @@ if pagina == "painel":
     if criticos.empty:
         st.success("Nenhum material abaixo do mínimo.")
     else:
-        criticos["REPOR ATÉ MÍNIMO"] = criticos["MÍNIMO"] - criticos["SALDO ATUAL"]
-        st.dataframe(criticos[["NI", "DESCRIÇÃO", "SALDO ATUAL", "MÍNIMO", "MÁXIMO", "REPOR ATÉ MÍNIMO"]], hide_index=True, use_container_width=True)
+        criticos["REPOR ATÉ MÁXIMO"] = (criticos["MÁXIMO"] - criticos["SALDO ATUAL"]).clip(lower=0)
+        st.dataframe(destacar_estoque_atual(criticos[["NI", "DESCRIÇÃO", "SALDO ATUAL", "MÍNIMO", "MÁXIMO", "REPOR ATÉ MÁXIMO"]]), hide_index=True, use_container_width=True)
         st.download_button("Exportar itens críticos em Excel", exportar_criticos_excel(criticos, unidade), f"estoque_critico_{unidade}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.subheader("Alertas de todas as unidades")
     alertas = []
@@ -498,12 +523,12 @@ if pagina == "painel":
                                 "ATUAL": estoque["saldo"], "MÍNIMO": estoque["minimo"],
                                 "MÁXIMO": estoque["maximo"]})
     if alertas:
-        st.dataframe(pd.DataFrame(alertas), hide_index=True, use_container_width=True)
+        st.dataframe(destacar_estoque_atual(pd.DataFrame(alertas)), hide_index=True, use_container_width=True)
     else:
         st.info("Nenhum item abaixo do mínimo nas quatro unidades.")
     st.subheader("Consulta geral")
     apenas_criticos = st.checkbox("Mostrar apenas itens abaixo do mínimo")
-    st.dataframe(criticos if apenas_criticos else tabela, hide_index=True, use_container_width=True)
+    st.dataframe(destacar_estoque_atual(criticos if apenas_criticos else tabela), hide_index=True, use_container_width=True)
 elif pagina == "cadastro":
     st.subheader("Cadastro de materiais")
     st.info("A primeira ENTRADA de cada material definirá o estoque inicial.")
@@ -641,3 +666,4 @@ elif pagina == "movimentacao":
         movimentos = movimentos[movimentos["unidade"] == unidade]
     st.dataframe(movimentos, use_container_width=True, hide_index=True)
     st.download_button("Exportar histórico em Excel", exportar_tabela_excel(movimentos, "Histórico"), "historico_estoque.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
