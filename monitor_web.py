@@ -1,9 +1,9 @@
 import os
 import re
-import json
 from datetime import timedelta, datetime
 from zoneinfo import ZoneInfo
 from urllib.parse import quote
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -14,17 +14,9 @@ import streamlit.components.v1 as components
 MOBILE_READ_ONLY = bool(globals().get("MOBILE_READ_ONLY", False)) or st.query_params.get("mobile", "0") == "1"
 st.set_page_config(page_title="10 Sul • Consulta Mobile" if MOBILE_READ_ONLY else "Monitor Gerencial 10 Sul", page_icon="📊", layout="wide")
 
-def _abrir_whatsapp_liberacao(mensagem):
-    """Abre o compartilhamento apenas depois de uma gravação confirmada."""
-    destino = "whatsapp://send?text=" + quote(mensagem)
-    components.html(
-        "<script>"
-        "const destino = " + json.dumps(destino) + ";"
-        "window.location.href = destino;"
-        "</script>",
-        height=0,
-        scrolling=False,
-    )
+_registrar_baixa_whatsapp = components.declare_component(
+    "registrar_baixa_whatsapp", path=str(Path(__file__).parent / "whatsapp_liberacao")
+)
 
 def _secret(nome):
     try:
@@ -1467,17 +1459,6 @@ if MOBILE_READ_ONLY:
     @media(prefers-reduced-motion:reduce){.st-key-card_sos button{animation:none!important}}
     </style>""", unsafe_allow_html=True)
 
-if st.session_state.get("aviso_liberacao_10sul"):
-    st.success("Liberação 10 Sul registrada. A OS continua aberta, aguardando baixa do cliente.")
-    st.link_button("Avisar cliente no WhatsApp",
-        "https://wa.me/?text=" + quote(st.session_state["aviso_liberacao_10sul"]))
-    if st.session_state.pop("abrir_whatsapp_liberacao_10sul", False):
-        _abrir_whatsapp_liberacao(st.session_state["aviso_liberacao_10sul"])
-    st.caption("Escolha o grupo do cliente e confirme o envio no WhatsApp. Se o navegador bloquear a abertura automática, toque no botão acima.")
-    if st.button("Dispensar aviso", key="dispensar_aviso_liberacao"):
-        st.session_state.pop("aviso_liberacao_10sul", None)
-        st.rerun()
-
 st.markdown("#### 🔎 Consulta rápida de frota")
 
 @st.dialog("🔎 Histórico da frota", width="large")
@@ -1585,24 +1566,39 @@ def modal_os_abertas(titulo, dados, card_id):
         existente = _hora_brasilia(registro.get("fim_liberacao_10sul"))
         inicial = existente if pd.notna(existente) else agora.floor("min")
         chave_registro = f"{chave_modal}_{registro['os_id']}_{registro['frota']}"
-        with st.form(f"{chave_registro}_form"):
-            c_data, c_hora = st.columns(2)
-            data_lib = c_data.date_input("Data", value=inicial.date(), max_value=agora.date(), key=f"{chave_registro}_data")
-            hora_lib = c_hora.time_input("Hora", value=inicial.time(), step=60, key=f"{chave_registro}_hora")
-            confirmar_lib = st.form_submit_button("Registrar liberação 10 Sul", type="primary")
-        st.caption("A OS permanece aberta até a baixa do cliente. A data informada alimenta as médias da 10 Sul.")
-        if confirmar_lib:
+        c_data, c_hora = st.columns(2)
+        data_lib = c_data.date_input("Data", value=inicial.date(), max_value=agora.date(), key=f"{chave_registro}_data")
+        hora_lib = c_hora.time_input("Hora", value=inicial.time(), step=60, key=f"{chave_registro}_hora")
+        # O componente mantém a janela reservada no clique e recebe a confirmação do servidor.
+        chave_resultado = f"{chave_registro}_resultado_whatsapp"
+        resultado = st.session_state.get(chave_resultado)
+        pedido = _registrar_baixa_whatsapp(
+            result=resultado,
+            key=f"{chave_registro}_registrar_whatsapp",
+            default=None,
+        )
+        st.caption("A OS permanece aberta até a baixa do cliente. Ao registrar, escolha o grupo no WhatsApp.")
+        nonce = pedido.get("nonce") if isinstance(pedido, dict) else None
+        processados = st.session_state.setdefault("lib_10sul_pedidos_processados", set())
+        if isinstance(nonce, str) and nonce and nonce not in processados:
+            processados.add(nonce)
             try:
                 aviso = _salvar_liberacao_10sul(registro, datetime.combine(data_lib, hora_lib))
-                st.session_state["aviso_liberacao_10sul"] = aviso
-                st.session_state["abrir_whatsapp_liberacao_10sul"] = True
-                st.rerun()
+                st.session_state[chave_resultado] = {
+                    "nonce": nonce,
+                    "url": "https://wa.me/?text=" + quote(aviso),
+                }
             except Exception as exc:
-                st.error(str(exc))
-        if pd.notna(existente):
+                st.session_state[chave_resultado] = {"nonce": nonce, "error": str(exc)}
+            # A janela de registro permanece aberta; não retorna para o dashboard.
+            st.rerun(scope="fragment")
+        if resultado and resultado.get("error"):
+            st.error(resultado["error"])
+        elif resultado and resultado.get("url"):
+            st.success("Baixa registrada pela 10 Sul. A OS aguarda a baixa do cliente.")
+        elif pd.notna(existente):
             texto_aviso = _mensagem_liberacao(registro["frota"], registro["evento"], existente)
             st.link_button("Avisar cliente no WhatsApp", "https://wa.me/?text=" + quote(texto_aviso))
-            st.caption("Escolha o grupo do cliente e confirme o envio no WhatsApp.")
 
 cards=[
     (len(mon),"🔧 EM MANUTENÇÃO","",mon),
