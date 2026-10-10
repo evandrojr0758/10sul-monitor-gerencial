@@ -188,8 +188,10 @@ def _salvar_liberacao_10sul(registro, quando):
         raise ValueError("A cliente já deu baixa ou alterou esta OS. Atualize o monitor.")
     valor = quando.tz_localize("America/Sao_Paulo").isoformat()
     chave_gravacao = _secret("SUPABASE_WRITE_KEY") or SUPABASE_KEY
-    headers = {"apikey": chave_gravacao, "Authorization": f"Bearer {chave_gravacao}",
-               "Prefer": "return=representation"}
+    headers = {"apikey": chave_gravacao, "Prefer": "return=representation"}
+    # As novas chaves sb_secret_* usam somente apikey; JWT legado usa Bearer.
+    if not str(chave_gravacao).startswith(("sb_secret_", "sb_publishable_")):
+        headers["Authorization"] = f"Bearer {chave_gravacao}"
     url = f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
     coluna_fim = _coluna_fim_10sul_banco()
     payload = {coluna_fim: valor}
