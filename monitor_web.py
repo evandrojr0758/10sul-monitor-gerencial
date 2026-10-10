@@ -306,24 +306,22 @@ def _salvar_previsao_10sul(registro, quando):
     return _mensagem_previsao(frota, registro["evento"], confirmado)
 
 def _previsoes_do_card(dados, base):
-    """Obtém as previsões persistidas para as OS deste card ainda em atendimento."""
-    chaves = set(zip(dados["os_id"].astype(str), dados["frota"].apply(norm_frota)))
+    """Inclui todas as OS exibidas no card, sem descartar linhas sem previsão."""
+    atuais = {
+        (str(row["os_id"]), norm_frota(row["frota"])): row
+        for _, row in base.iterrows()
+    }
     linhas = []
-    for _, row in base.iterrows():
-        chave = (str(row["os_id"]), norm_frota(row["frota"]))
-        if chave not in chaves:
-            continue
-        if "MANUT" not in str(row.get("status", "")).upper():
-            continue
-        if pd.notna(_hora_brasilia(row.get("fim_asn"))):
-            continue
-        if pd.notna(_hora_brasilia(row.get("fim_liberacao_10sul"))):
-            continue
+    for _, exibida in dados.drop_duplicates(["os_id", "frota"]).iterrows():
+        chave = (str(exibida["os_id"]), norm_frota(exibida["frota"]))
+        row = atuais.get(chave)
+        if row is None:
+            raise ValueError("Não foi possível consultar todas as frotas do card. Atualize o monitor antes de enviar.")
         linhas.append({
-            "os_id": chave[0], "frota": chave[1], "evento": str(row.get("evento", "")),
+            "os_id": chave[0], "frota": chave[1], "evento": str(exibida.get("evento", "")),
             "previsao": _hora_brasilia(row.get("previsao_liberacao_10sul")),
         })
-    return pd.DataFrame(linhas, columns=["os_id", "frota", "evento", "previsao"]).drop_duplicates(["os_id", "frota"])
+    return pd.DataFrame(linhas, columns=["os_id", "frota", "evento", "previsao"])
 
 
 def _mensagem_previsoes_card(previsoes):
@@ -1715,7 +1713,7 @@ def modal_os_abertas(titulo, dados, card_id):
                 resultado_envio_prev = st.session_state.get(f"{chave_envio_prev}_resultado")
                 pedido_envio_prev = _registrar_baixa_whatsapp(
                     result=resultado_envio_prev,
-                    label="Enviar todas as previsões no WhatsApp",
+                    label=f"Enviar resumo completo ({total_prev} frotas) no WhatsApp",
                     key=chave_envio_prev,
                     default=None,
                 )
@@ -1739,7 +1737,7 @@ def modal_os_abertas(titulo, dados, card_id):
                     st.rerun(scope="fragment")
             else:
                 st.caption("Não há frotas pendentes de liberação da 10 Sul neste card.")
-            st.caption("As frotas já liberadas pela 10 Sul não precisam de previsão. A previsão não altera as médias.")
+            st.caption("O resumo inclui todas as frotas exibidas neste card. Sem data/hora: Ainda sem previsão.")
 
         st.markdown("##### Registrar baixa 10 Sul")
         c_data, c_hora = st.columns(2)
