@@ -87,7 +87,29 @@ def calcular_medias_monitor(df, agora):
     return resultado
 
 
-def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds, motivos, leitura, medias):
+def calcular_oficina_agora(df):
+    """Carretas distintas nas OS em manutenção, ainda sem liberação."""
+    status = df["status"].fillna("").astype(str).str.upper()
+    abertas = df[status.str.contains("MANUT", na=False) & df["fim"].isna()].copy()
+    abertas["_inicio"] = abertas["inicio"].fillna(abertas["parada"])
+    abertas = abertas.sort_values("_inicio", ascending=False).drop_duplicates("os_id", keep="first")
+    evento = abertas["evento"].fillna("").astype(str).str.upper().str.strip()
+    itr = evento.eq("ITR")
+    revisao = evento.str.contains("REVIS", na=False)
+    sos = evento.str.startswith("SOS", na=False)
+    cnp = evento.str.contains("CORRETIVA", na=False) & (
+        evento.str.contains("Ñ PROG", na=False) | evento.str.contains("NÃO PROG", na=False) |
+        evento.str.contains("NAO PROG", na=False))
+    def quantidade(mask=None):
+        valores = abertas["frota"] if mask is None else abertas.loc[mask, "frota"]
+        valores = valores.fillna("").astype(str).str.strip()
+        return int(valores[valores.ne("")].nunique())
+    return [("Total", quantidade()), ("ITR", quantidade(itr)), ("Revisão", quantidade(revisao)),
+            ("CNP", quantidade(cnp)), ("SOS", quantidade(sos)),
+            ("Outros", quantidade(~(itr | revisao | cnp | sos)))]
+
+
+def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds, motivos, leitura, medias, oficina):
     from PIL import Image, ImageDraw, ImageFont
     largura = 1200
     imagem = Image.new("RGB", (largura, 4000), "#f3f6fa")
@@ -142,7 +164,19 @@ def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds,
         minutos = max(0, int(round(float(valor) * 60)))
         return f"{minutos//60:02d}:{minutos%60:02d}"
 
-    y = titulo(210, "Médias de ITR e Revisão • mês acumulado")
+
+    y = titulo(210, "Carretas em manutenção • agora")
+    for indice, (nome, quantidade) in enumerate(oficina):
+        x = 50 + indice * 185
+        draw.rounded_rectangle((x, y, x + 175, y + 110), radius=12, fill=azul if indice == 0 else "white", outline="#dbe3ec", width=1)
+        cor = "white" if indice == 0 else azul
+        for yy, valor, size in ((y + 12, quantidade, 40), (y + 68, nome, 23)):
+            xx = x + (175 - draw.textlength(str(valor), font=fonte(size, True))) / 2
+            txt(xx, yy, valor, size, cor, True)
+    y = paragrafo("Carretas distintas por tipo; uma carreta pode constar em mais de um tipo.",
+                  60, y + 124, 1080, 20, cinza) + 18
+    y = titulo(y, "Médias de ITR e Revisão • mês acumulado")
+
     for x, dados in zip((50, 620), medias):
         draw.rounded_rectangle((x, y, x + 530, y + 220), radius=16, fill="white", outline="#dbe3ec", width=2)
         txt(x + 24, y + 16, dados["tipo"] + " • SLA " + hhmm(dados["sla"]), 27, azul, True)
@@ -154,22 +188,24 @@ def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds,
             txt(x + 310, yy - 6, hhmm(media), 32, cor, True)
             txt(x + 24, yy + 32, str(origem["quantidade"]) + " OS no mês", 20, cinza)
     y += 245
-    y = paragrafo("Suzano: parada até fim ASN. 10 Sul: início ajustado até fim ASN ou liberação manual da OS. Médias por liberação no mês.",
+    y = paragrafo("Mês pela liberação da OS • médias Suzano e 10 Sul • formato HH:MM.",
                   60, y, 1080, 21, cinza) + 18
     txt(60, y, "Média diária • tempo distribuído por dia • últimos 7 dias", 24, azul, True)
     y += 44
+    dias = pd.date_range(agora.normalize()-pd.Timedelta(days=6), agora.normalize())
     draw.rectangle((50, y, 1150, y + 44), fill="#eaf0f4")
-    for x, valor in ((70, "Dia"), (445, "ITR"), (790, "Revisão")):
-        txt(x, y + 8, valor, 23, azul, True)
+    txt(65, y + 8, "Dia", 21, azul, True)
+    for indice, dia in enumerate(dias):
+        txt(215 + indice * 132, y + 8, dia.strftime("%d/%m"), 21, azul, True)
     y += 44
-    series = [d["diaria"].set_index("DIA_DT")["MEDIA_H"] for d in medias]
-    for indice, dia in enumerate(pd.date_range(agora.normalize()-pd.Timedelta(days=6), agora.normalize())):
-        draw.rectangle((50, y, 1150, y + 44), fill="white" if indice % 2 == 0 else "#edf2f6")
-        txt(70, y + 8, dia.strftime("%d/%m"), 23)
-        for x, dados, serie in zip((445, 790), medias, series):
+    for indice, dados in enumerate(medias):
+        serie = dados["diaria"].set_index("DIA_DT")["MEDIA_H"]
+        draw.rectangle((50, y, 1150, y + 44), fill="white" if indice == 0 else "#edf2f6")
+        txt(65, y + 8, dados["tipo"], 21, azul, True)
+        for coluna, dia in enumerate(dias):
             valor = serie.get(dia)
             cor = cinza if valor is None or pd.isna(valor) else "#dc2626" if valor >= dados["sla"] else "#16a34a"
-            txt(x, y + 8, hhmm(valor), 23, cor, True)
+            txt(215 + coluna * 132, y + 8, hhmm(valor), 21, cor, True)
         y += 44
     y += 32
     y = titulo(y, "Tendência das CNP")
@@ -185,7 +221,7 @@ def gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant, dm, ds,
         valor, cor = delta(variacao)
         txt(x + 24, y + 154, valor, 24, cor, True)
     y += 215
-    y = paragrafo("Mês e semana em andamento comparados com os períodos anteriores completos, conforme o monitor.",
+    y = paragrafo("Comparação com mês e semana anteriores completos.",
                   60, y, 1080, 21, cinza) + 22
     txt(60, y, "CNP por semana • últimas 8 semanas com registros", 25, azul, True)
     y += 55
