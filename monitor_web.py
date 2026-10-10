@@ -1589,6 +1589,24 @@ with h3:
         else: st.caption("Sem dados suficientes para identificar reincidências.")
 
 
+
+# SOS: evolução no mesmo formato da tendência de CNP.
+import importlib as _importlib_sos
+_relatorio_sos = _importlib_sos.reload(_importlib_sos.import_module("monitor_share"))
+_tendencia_sos = _relatorio_sos.calcular_tendencia_sos(df, agora)
+with st.container(border=True):
+    st.markdown("<div class='hunt-title'>🆘 Tendência dos SOS</div>", unsafe_allow_html=True)
+    _sos_mes, _sos_semana = st.columns(2)
+    with _sos_mes:
+        st.markdown(f"<div class='hunt-kpi'>{_tendencia_sos['q_mes']}</div><b>SOS no mês</b><div class='hunt-compare'>vs. {_tendencia_sos['q_mes_ant']} no mês anterior</div>{dhtml(_tendencia_sos['dm'])}", unsafe_allow_html=True)
+    with _sos_semana:
+        st.markdown(f"<div class='hunt-kpi'>{_tendencia_sos['q_sem']}</div><b>SOS na semana</b><div class='hunt-compare'>vs. {_tendencia_sos['q_sem_ant']} na semana anterior</div>{dhtml(_tendencia_sos['ds'])}", unsafe_allow_html=True)
+    st.markdown("**SOS por semana • últimas 8 semanas com registros**")
+    if not _tendencia_sos["semanas"].empty:
+        st.line_chart(_tendencia_sos["semanas"].set_index("LAB")["QTD"], height=150, use_container_width=True)
+    else:
+        st.caption("Sem dados de SOS no período.")
+
 @st.dialog("Resumo do Monitor Gerencial", width="large")
 def abrir_resumo_compartilhavel():
     import importlib
@@ -1598,7 +1616,8 @@ def abrir_resumo_compartilhavel():
     png = relatorio.gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant,
                                       dm, ds, mot, leitura,
                                       relatorio.calcular_medias_monitor(df, agora),
-                                      relatorio.calcular_oficina_agora(df))
+                                      relatorio.calcular_oficina_agora(df),
+                                      relatorio.calcular_tendencia_sos(df, agora))
     st.image(png, use_container_width=True)
     relatorio.botao_compartilhar_imagem(png)
     st.download_button("Baixar imagem PNG", png, "resumo_monitor_10sul.png", mime="image/png",
