@@ -778,6 +778,11 @@ def evento_flags(s):
     )
     return e,itr,rev,sos,cnp
 
+# Consulta de leitura por GO para o aplicativo do socorro, usando os Secrets existentes.
+if st.query_params.get("socorro_historico", "0") == "1":
+    from socorro_history import render_consulta
+    render_consulta(carregar, _hora_brasilia)
+
 if st.button("↻ Atualizar", key="monitor_refresh_top", type="primary", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
