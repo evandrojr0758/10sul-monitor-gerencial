@@ -243,20 +243,26 @@ def _erro_gravacao_previsao(resposta):
         codigo = None
     if codigo in {"PGRST204", "42703"}:
         return (
-            "Falta disponibilizar o campo previsao_liberacao_10sul no banco da nuvem. "
+             "Falta disponibilizar os campos de previsão e observação no banco da nuvem. "
             "A previsão não foi salva nem encaminhada ao WhatsApp."
         )
     return _erro_gravacao_liberacao(resposta)
 
 
-def _salvar_previsao_10sul(registro, quando):
+def _salvar_previsao_10sul(registro, quando, observacao=""):
     """Grava somente a previsão; não altera fim, status nem cálculo de tempo."""
+    sem_previsao = quando is None
     quando = _hora_brasilia(quando)
+    observacao = " ".join(str(observacao or "").split())
+    if len(observacao) > 300:
+        raise ValueError("Use até 300 caracteres na observação.")
+    if not sem_previsao:
+        observacao = ""
     agora_local = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
     inicio = _hora_brasilia(registro.get("inicio_mon", registro.get("inicio")))
-    if pd.isna(quando) or quando < agora_local.floor("min"):
+    if not sem_previsao and (pd.isna(quando) or quando < agora_local.floor("min")):
         raise ValueError("Informe uma previsão válida, a partir do horário atual.")
-    if pd.notna(inicio) and quando < inicio:
+    if not sem_previsao and pd.notna(inicio) and quando < inicio:
         raise ValueError("A previsão não pode ser anterior ao início do atendimento.")
     os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
     filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
@@ -270,7 +276,7 @@ def _salvar_previsao_10sul(registro, quando):
         coluna_baixa = _nome_coluna_fim_10sul(atual.keys())
         if coluna_baixa and pd.notna(_hora_brasilia(atual.get(coluna_baixa))):
             raise ValueError("Esta frota já foi liberada pela 10 Sul. Atualize o monitor.")
-    valor = quando.tz_localize("America/Sao_Paulo").isoformat()
+    valor = None if sem_previsao else quando.tz_localize("America/Sao_Paulo").isoformat()
     chave_gravacao = _secret("SUPABASE_WRITE_KEY") or SUPABASE_KEY
     headers = {"apikey": chave_gravacao, "Prefer": "return=representation"}
     # As novas chaves sb_secret_* usam somente apikey; JWT legado usa Bearer.
@@ -278,7 +284,7 @@ def _salvar_previsao_10sul(registro, quando):
         headers["Authorization"] = f"Bearer {chave_gravacao}"
     url = f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
     coluna_fim = "previsao_liberacao_10sul"
-    payload = {coluna_fim: valor}
+    payload = {coluna_fim: valor, "observacao_previsao_10sul": observacao}
     resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
     if not resposta.ok:
         raise RuntimeError(_erro_gravacao_previsao(resposta))
@@ -300,10 +306,15 @@ def _salvar_previsao_10sul(registro, quando):
     if len(salvos) != 1:
         raise RuntimeError("A gravação não confirmou uma única OS. Atualize o monitor antes de tentar novamente.")
     confirmado = _hora_brasilia(salvos[0].get(coluna_fim))
-    if pd.isna(confirmado) or confirmado != quando:
+    if (sem_previsao and pd.notna(confirmado)) or (not sem_previsao and (pd.isna(confirmado) or confirmado != quando)):
         raise RuntimeError("A data/hora gravada não foi confirmada. Atualize o monitor.")
+    nota_confirmada = str(salvos[0].get("observacao_previsao_10sul") or "")
+    if nota_confirmada != observacao:
+        raise RuntimeError("A observação gravada não foi confirmada. Atualize o monitor.")
     carregar.clear()
-    return _mensagem_previsao(frota, registro["evento"], confirmado)
+    return _mensagem_previsoes_card(pd.DataFrame([{
+        "frota": frota, "evento": registro["evento"], "previsao": confirmado, "observacao": nota_confirmada,
+    }]))
 
 def _previsoes_do_card(dados, base):
     """Inclui todas as OS exibidas no card, sem descartar linhas sem previsão."""
@@ -320,8 +331,9 @@ def _previsoes_do_card(dados, base):
         linhas.append({
             "os_id": chave[0], "frota": chave[1], "evento": str(exibida.get("evento", "")),
             "previsao": _hora_brasilia(row.get("previsao_liberacao_10sul")),
+            "observacao": "" if pd.isna(row.get("observacao_previsao_10sul")) else " ".join(str(row.get("observacao_previsao_10sul")).split()),
         })
-    return pd.DataFrame(linhas, columns=["os_id", "frota", "evento", "previsao"])
+    return pd.DataFrame(linhas, columns=["os_id", "frota", "evento", "previsao", "observacao"])
 
 
 def _mensagem_previsoes_card(previsoes):
@@ -330,6 +342,9 @@ def _mensagem_previsoes_card(previsoes):
     linhas = ["FROTA | EVENTO | PREVISÃO"]
     for _, row in previsoes.sort_values(["frota", "evento"]).iterrows():
         texto_previsao = pd.Timestamp(row["previsao"]).strftime("%d/%m/%Y %H:%M") if pd.notna(row["previsao"]) else "Ainda sem previsão"
+        observacao = str(row.get("observacao") or "").strip()
+        if pd.isna(row["previsao"]) and observacao:
+            texto_previsao += " — " + observacao
         linhas.append(f"{row['frota']} | {row['evento']} | {texto_previsao}")
     return "\n".join(linhas)
 
@@ -1677,16 +1692,39 @@ def modal_os_abertas(titulo, dados, card_id):
             if pd.notna(existente):
                 st.info("A frota já foi liberada pela 10 Sul e aguarda a baixa do cliente.")
             else:
-                previsao_atual = _hora_brasilia(registro.get("previsao_liberacao_10sul"))
+                atual_prev = carregar()
+                atual_prev = atual_prev.loc[
+                    atual_prev["os_id"].astype(str).eq(str(registro["os_id"])) &
+                    atual_prev["frota"].apply(norm_frota).eq(norm_frota(registro["frota"]))
+                ]
+                registro_prev = atual_prev.iloc[0] if not atual_prev.empty else registro
+                previsao_atual = _hora_brasilia(registro_prev.get("previsao_liberacao_10sul"))
+                nota_atual = registro_prev.get("observacao_previsao_10sul")
+                nota_atual = "" if pd.isna(nota_atual) else str(nota_atual)
                 if pd.notna(previsao_atual):
                     st.caption(f"Previsão registrada: {previsao_atual.strftime('%d/%m/%Y %H:%M')}")
-                inicial_prev = previsao_atual if pd.notna(previsao_atual) and previsao_atual >= agora.floor("min") else agora.ceil("min") + pd.Timedelta(hours=1)
-                p_data, p_hora = st.columns(2)
-                data_prev = p_data.date_input("Data prevista", value=inicial_prev.date(), min_value=agora.date(), key=f"{chave_registro}_previsao_data")
-                hora_prev = p_hora.time_input("Hora prevista", value=inicial_prev.time(), step=60, key=f"{chave_registro}_previsao_hora")
-                if st.button("Registrar previsão", key=f"{chave_registro}_previsao_salvar", type="primary"):
+                situacao_prev = st.radio(
+                    "Situação da previsão", ["Com data/hora", "Ainda sem previsão"],
+                    index=0 if pd.notna(previsao_atual) else 1,
+                    key=f"{chave_registro}_previsao_situacao",
+                )
+                quando_prev, observacao_prev = None, ""
+                if situacao_prev == "Com data/hora":
+                    inicial_prev = previsao_atual if pd.notna(previsao_atual) and previsao_atual >= agora.floor("min") else agora.ceil("min") + pd.Timedelta(hours=1)
+                    p_data, p_hora = st.columns(2)
+                    data_prev = p_data.date_input("Data prevista", value=inicial_prev.date(), min_value=agora.date(), key=f"{chave_registro}_previsao_data")
+                    hora_prev = p_hora.time_input("Hora prevista", value=inicial_prev.time(), step=60, key=f"{chave_registro}_previsao_hora")
+                    quando_prev = datetime.combine(data_prev, hora_prev)
+                else:
+                    observacao_prev = st.text_area(
+                        "Por que ainda não há previsão? (opcional)",
+                        value=nota_atual, max_chars=300,
+                        placeholder="Ex.: aguardando peça ou avaliação técnica.",
+                        key=f"{chave_registro}_previsao_observacao",
+                    )
+                if st.button("Salvar previsão / observação", key=f"{chave_registro}_previsao_salvar", type="primary"):
                     try:
-                        _salvar_previsao_10sul(registro, datetime.combine(data_prev, hora_prev))
+                        _salvar_previsao_10sul(registro, quando_prev, observacao_prev)
                         st.session_state[f"{chave_modal}_previsao_salva"] = str(registro["frota"])
                         st.rerun(scope="fragment")
                     except Exception as exc:
