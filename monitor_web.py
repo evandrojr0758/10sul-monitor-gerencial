@@ -112,10 +112,23 @@ def _hora_brasilia(valor):
         return pd.NaT
 
 
+def _evento_resumido_whatsapp(evento):
+    import unicodedata
+    texto = str(evento or "").strip()
+    normalizado = unicodedata.normalize("NFKD", texto.upper()).encode("ascii", "ignore").decode()
+    if re.search(r"\bCNP\b", normalizado) or ("CORRETIV" in normalizado and re.search(r"\b(?:N|NAO)\s+PROG", normalizado)):
+        return "CNP"
+    if re.search(r"\bREV(?:ISAO|ISOES)?\b", normalizado):
+        return "REV"
+    if re.search(r"\bITR\b", normalizado):
+        return "ITR"
+    return texto
+
+
 def _mensagem_liberacao(frota, evento, quando):
     hora = _hora_brasilia(quando)
     return (
-        f"Frota: {norm_frota(frota)}\nEvento: {evento}\n"
+        f"Frota: {norm_frota(frota)}\nEvento: {_evento_resumido_whatsapp(evento)}\n"
         f"Data/hora baixa: {hora.strftime('%d/%m/%Y %H:%M')}\n"
         "Status: Liberado pela 10 Sul\n"
         "Aguardando baixa do cliente."
@@ -231,7 +244,7 @@ def _salvar_liberacao_10sul(registro, quando):
 def _mensagem_previsao(frota, evento, quando):
     return (
         "FROTA | EVENTO | PREVISÃO\n"
-        f"{frota} | {evento} | {pd.Timestamp(quando).strftime('%d/%m/%Y %H:%M')}"
+        f"{frota} | {_evento_resumido_whatsapp(evento)} | {pd.Timestamp(quando).strftime('%d/%m %H:%M')}"
     )
 
 
@@ -341,11 +354,13 @@ def _mensagem_previsoes_card(previsoes):
         raise ValueError("Não há frotas em atendimento neste card.")
     linhas = ["FROTA | EVENTO | PREVISÃO"]
     for _, row in previsoes.sort_values(["frota", "evento"]).iterrows():
-        texto_previsao = pd.Timestamp(row["previsao"]).strftime("%d/%m/%Y %H:%M") if pd.notna(row["previsao"]) else "Ainda sem previsão"
-        observacao = str(row.get("observacao") or "").strip()
-        if pd.isna(row["previsao"]) and observacao:
-            texto_previsao += " — " + observacao
-        linhas.append(f"{row['frota']} | {row['evento']} | {texto_previsao}")
+        if pd.notna(row["previsao"]):
+            texto_previsao = pd.Timestamp(row["previsao"]).strftime("%d/%m %H:%M")
+        else:
+            observacao = row.get("observacao")
+            texto_previsao = " ".join(str(observacao).split()) if pd.notna(observacao) and str(observacao).strip() else "—"
+        evento = _evento_resumido_whatsapp(row["evento"])
+        linhas.append(f"{row['frota']} | {evento} | {texto_previsao}")
     return "\n".join(linhas)
 
 
@@ -1729,7 +1744,7 @@ def modal_os_abertas(titulo, dados, card_id):
                         st.rerun(scope="fragment")
                     except Exception as exc:
                         st.error(str(exc))
-                st.caption("Salve as previsões desejadas e envie o resumo completo. As demais frotas vão como Ainda sem previsão.")
+                st.caption("Salve e envie o resumo completo. Sem previsão, será enviada apenas a observação.")
 
             base_previsoes = carregar()
             previsoes_card = _previsoes_do_card(dados, base_previsoes)
@@ -1775,7 +1790,7 @@ def modal_os_abertas(titulo, dados, card_id):
                     st.rerun(scope="fragment")
             else:
                 st.caption("Não há frotas pendentes de liberação da 10 Sul neste card.")
-            st.caption("O resumo inclui todas as frotas exibidas neste card. Sem data/hora: Ainda sem previsão.")
+            st.caption("O resumo inclui todas as frotas do card. Sem data/hora, mostra a observação; sem observação, mostra —.")
 
         st.markdown("##### Registrar baixa 10 Sul")
         c_data, c_hora = st.columns(2)
