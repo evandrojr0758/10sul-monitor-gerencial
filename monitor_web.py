@@ -1,6 +1,8 @@
 import os
 import re
-from datetime import timedelta
+from datetime import timedelta, datetime
+from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 import altair as alt
 import pandas as pd
@@ -93,6 +95,75 @@ def _ler_atendimentos(table):
     return pd.DataFrame(todos)
 
 
+def _hora_brasilia(valor):
+    """Preserva horários locais sem fuso e converte valores com fuso para Brasília."""
+    try:
+        ts = pd.Timestamp(valor)
+        if pd.isna(ts):
+            return pd.NaT
+        return ts.tz_convert("America/Sao_Paulo").tz_localize(None) if ts.tzinfo else ts
+    except (ValueError, TypeError):
+        return pd.NaT
+
+
+def _mensagem_liberacao(frota, evento, quando):
+    hora = _hora_brasilia(quando)
+    return (
+        f"Frota: {norm_frota(frota)}\nEvento: {evento}\n"
+        f"Data/hora baixa: {hora.strftime('%d/%m/%Y %H:%M')}\n"
+        "Status: Liberado pela 10 Sul\n"
+        "Aguardando baixa do cliente."
+    )
+
+
+def _salvar_liberacao_10sul(registro, quando):
+    """Grava somente o fim da 10 Sul; não altera status nem baixa ASN."""
+    quando = _hora_brasilia(quando)
+    agora_local = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
+    inicio = _hora_brasilia(registro.get("inicio_mon", registro.get("inicio")))
+    if pd.isna(quando) or quando > agora_local:
+        raise ValueError("Informe uma data/hora válida, até o horário atual.")
+    if pd.notna(inicio) and quando < inicio:
+        raise ValueError("A liberação não pode ser anterior ao início do atendimento.")
+    os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
+    filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
+    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim"})
+    if len(origem) != 1:
+        raise RuntimeError("Não foi possível identificar uma única OS na ASN. Atualize o monitor.")
+    if pd.notna(_hora_brasilia(origem[0].get("fim"))) or "MANUT" not in str(origem[0].get("status", "")).upper():
+        raise ValueError("A cliente já deu baixa ou alterou esta OS. Atualize o monitor.")
+    valor = quando.tz_localize("America/Sao_Paulo").isoformat()
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+               "Prefer": "return=representation"}
+    url = f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
+    payload = {"fim_liberacao_10sul": valor}
+    resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
+    if not resposta.ok:
+        raise RuntimeError("Não foi possível salvar a liberação 10 Sul. Confira a coluna fim_liberacao_10sul e a permissão de gravação no banco.")
+    salvos = resposta.json()
+    if not salvos:
+        # A ASN pode conter uma OS nova ainda não importada para o histórico.
+        campos = ["os_id", "frota", "evento", "status", "descricao", "modal", "unidade"]
+        novo = {c: str(registro.get(c) or "") for c in campos}
+        for c in ["parada", "inicio"]:
+            hora = _hora_brasilia(registro.get(c))
+            novo[c] = hora.tz_localize("America/Sao_Paulo").isoformat() if pd.notna(hora) else None
+        novo.update(payload)
+        resposta = requests.post(url, headers=headers, json=novo, timeout=45)
+        if resposta.status_code == 409:
+            resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
+        if not resposta.ok:
+            raise RuntimeError("Não foi possível registrar a liberação no histórico. Confira a permissão de gravação no banco.")
+        salvos = resposta.json()
+    if len(salvos) != 1:
+        raise RuntimeError("A gravação não confirmou uma única OS. Atualize o monitor antes de tentar novamente.")
+    confirmado = _hora_brasilia(salvos[0].get("fim_liberacao_10sul"))
+    if pd.isna(confirmado) or confirmado != quando:
+        raise RuntimeError("A data/hora gravada não foi confirmada. Atualize o monitor.")
+    carregar.clear()
+    return _mensagem_liberacao(frota, registro["evento"], confirmado)
+
+
 def _combinar_base_asn(historico, asn):
     """ASN prevalece nos dados da cliente; início salvo continua preservado."""
     def preparar(d):
@@ -113,7 +184,7 @@ def _combinar_base_asn(historico, asn):
     for c in ["fim_asn", "fim_liberacao_10sul"]:
         if c not in h.columns:
             h[c] = pd.NaT
-    h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"], errors="coerce"))
+    h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"].map(_hora_brasilia), errors="coerce"))
     resultado = h.reindex(h.index.union(a.index)).copy()
     # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
     for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "fim_asn", "sincronizado_em"]:
@@ -126,7 +197,7 @@ def _combinar_base_asn(historico, asn):
     resultado.loc[novos, "inicio"] = a.loc[novos, "inicio"]
     sem_inicio = a.index[salvo.reindex(a.index).isna()]
     resultado.loc[sem_inicio, "inicio"] = a.loc[sem_inicio, "inicio"]
-    resultado["fim"] = pd.to_datetime(resultado["fim_asn"], errors="coerce").fillna(pd.to_datetime(resultado["fim_liberacao_10sul"], errors="coerce"))
+    resultado["fim"] = pd.to_datetime(resultado["fim_asn"], errors="coerce").fillna(pd.to_datetime(resultado["fim_liberacao_10sul"].map(_hora_brasilia), errors="coerce"))
     return resultado.reset_index()
 
 
@@ -478,9 +549,9 @@ if df.empty:
     st.warning("A base do monitor está vazia. Confira a sincronização da Lista ASN no Power Automate.")
     st.stop()
 
-for c in ["parada","inicio","fim"]:
+for c in ["parada","inicio","fim","fim_asn","fim_liberacao_10sul"]:
     if c in df.columns:
-        df[c]=pd.to_datetime(df[c],errors="coerce")
+        df[c]=pd.to_datetime(df[c].map(_hora_brasilia),errors="coerce")
 for c in ["os_id","frota","evento","status","descricao","modal","unidade"]:
     if c not in df.columns: df[c]=""
 df["frota"]=df["frota"].apply(norm_frota)
@@ -1286,18 +1357,22 @@ def render_relatorio_gerencial_laudos():
     st.dataframe(det[["FROTA","OS/ID","COMP.","ATIVIDADE","TIPO","EXECUTANTE","TEMPO"]],hide_index=True,use_container_width=True,height=330)
 
 
-# OFICINA AGORA: mesma lógica-base do app principal: status manutenção + sem fim.
+# Oficina agora segue a baixa ASN: conclusão 10 Sul mantém a OS na relação.
 status=df["status"].fillna("").astype(str).str.upper()
-mon=df[status.str.contains("MANUT",na=False)&df["fim"].isna()].copy()
+fim_cliente = pd.to_datetime(df.get("fim_asn", df["fim"]), errors="coerce")
+mon=df[status.str.contains("MANUT",na=False)&fim_cliente.isna()].copy()
+mon["fim_liberacao_10sul"]=pd.to_datetime(
+    mon.get("fim_liberacao_10sul", pd.Series(pd.NaT, index=mon.index)), errors="coerce")
+mon["finalizada_10sul"]=mon["fim_liberacao_10sul"].notna()
 mon["inicio_mon"]=mon["inicio"].fillna(mon["parada"])
-mon["horas_aberto"]=((agora-mon["inicio_mon"]).dt.total_seconds()/3600).clip(lower=0)
+mon["horas_aberto"]=((mon["fim_liberacao_10sul"].fillna(agora)-mon["inicio_mon"]).dt.total_seconds()/3600).clip(lower=0)
 mon=mon.sort_values("inicio_mon",ascending=False).drop_duplicates("os_id",keep="first")
 mev,mitr,mrev,msos,mcnp=evento_flags(mon["evento"])
 mon["sla_h"]=pd.NA
 mon.loc[mitr,"sla_h"]=12.0
 mon.loc[mrev,"sla_h"]=24.0
 mon["sla_h"]=pd.to_numeric(mon["sla_h"],errors="coerce")
-mon["acima_sla"]=mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
+mon["acima_sla"]=~mon["finalizada_10sul"]&mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 
 st.markdown(f"<div class='mon-title'>{"📊 10 SUL • CONSULTA MOBILE" if MOBILE_READ_ONLY else "📺 MONITOR DA OFICINA"}</div>",unsafe_allow_html=True)
 st.markdown("<div class='mon-sub'>Desenvolvido por Evandro Junior</div>", unsafe_allow_html=True)
@@ -1315,6 +1390,15 @@ if MOBILE_READ_ONLY:
     }
     @media(prefers-reduced-motion:reduce){.st-key-card_sos button{animation:none!important}}
     </style>""", unsafe_allow_html=True)
+
+if st.session_state.get("aviso_liberacao_10sul"):
+    st.success("Liberação 10 Sul registrada. A OS continua aberta, aguardando baixa do cliente.")
+    st.link_button("Avisar cliente no WhatsApp",
+        "https://wa.me/?text=" + quote(st.session_state["aviso_liberacao_10sul"]))
+    st.caption("Escolha o grupo do cliente e confirme o envio no WhatsApp.")
+    if st.button("Dispensar aviso", key="dispensar_aviso_liberacao"):
+        st.session_state.pop("aviso_liberacao_10sul", None)
+        st.rerun()
 
 st.markdown("#### 🔎 Consulta rápida de frota")
 
@@ -1401,10 +1485,43 @@ def modal_os_abertas(titulo, dados):
     x["TEMPO ABERTO"]=x["horas_aberto"].apply(hhmm)
     x["PARADA"]=pd.to_datetime(x["parada"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informada")
     x["INÍCIO"]=pd.to_datetime(x["inicio_mon"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
-    x["SITUAÇÃO"]=x["acima_sla"].map({True:"🔴 SLA ULTRAPASSADO",False:"🟢 EM MANUTENÇÃO"})
+    x["SITUAÇÃO"]=x["acima_sla"].map({True:"🔴 SLA ULTRAPASSADO",False:"EM ATENDIMENTO"})
+    x.loc[x["finalizada_10sul"], "SITUAÇÃO"]="🟢 FINALIZADA 10 SUL · AGUARDANDO BAIXA CLIENTE"
+    x["LIBERAÇÃO 10 SUL"]=x["fim_liberacao_10sul"].dt.strftime("%d/%m/%Y %H:%M").fillna("—")
     x=x.rename(columns={"os_id":"OS/ID","frota":"FROTA","evento":"EVENTO","descricao":"DESCRIÇÃO DO EVENTO"})
-    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","SITUAÇÃO"]
-    st.dataframe(x[cols_show],use_container_width=True,hide_index=True)
+    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","LIBERAÇÃO 10 SUL","SITUAÇÃO"]
+    destaque = x[cols_show].style.apply(
+        lambda linha: ["background-color:#e7f5ed;color:#145c3b" if "FINALIZADA 10 SUL" in str(linha["SITUAÇÃO"]) else "" for _ in linha],
+        axis=1,
+    )
+    st.dataframe(destaque,use_container_width=True,hide_index=True)
+    st.caption("Verde: concluída pela 10 Sul, aguardando baixa ASN. O tempo considera a conclusão informada.")
+    if not MOBILE_READ_ONLY:
+        st.markdown("#### Informar liberação 10 Sul")
+        opcoes = list(range(len(dados)))
+        pos = st.selectbox("Frota / atendimento", opcoes,
+            format_func=lambda i: f"{dados.iloc[i]['frota']} · {dados.iloc[i]['evento']} · OS {dados.iloc[i]['os_id']}",
+            key="lib_10sul_atendimento")
+        registro = dados.iloc[pos]
+        existente = _hora_brasilia(registro.get("fim_liberacao_10sul"))
+        inicial = existente if pd.notna(existente) else agora.floor("min")
+        with st.form("form_liberacao_10sul"):
+            c_data, c_hora = st.columns(2)
+            data_lib = c_data.date_input("Data", value=inicial.date(), max_value=agora.date())
+            hora_lib = c_hora.time_input("Hora", value=inicial.time(), step=60)
+            confirmar_lib = st.form_submit_button("Registrar liberação 10 Sul", type="primary")
+        st.caption("A OS permanece aberta até a baixa do cliente. A data informada alimenta as médias da 10 Sul.")
+        if confirmar_lib:
+            try:
+                aviso = _salvar_liberacao_10sul(registro, datetime.combine(data_lib, hora_lib))
+                st.session_state["aviso_liberacao_10sul"] = aviso
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
+        if pd.notna(existente):
+            texto_aviso = _mensagem_liberacao(registro["frota"], registro["evento"], existente)
+            st.link_button("Avisar cliente no WhatsApp", "https://wa.me/?text=" + quote(texto_aviso))
+            st.caption("Escolha o grupo do cliente e confirme o envio no WhatsApp.")
 
 cards=[
     (len(mon),"🔧 EM MANUTENÇÃO","",mon),
@@ -1417,7 +1534,7 @@ cards=[
 ]
 # Alerta SOS: somente atendimentos ainda abertos, estritamente acima de 3 horas.
 sos_acima_3h = (
-    mon.loc[msos & mon["horas_aberto"].gt(3), ["frota", "horas_aberto"]]
+    mon.loc[msos & ~mon["finalizada_10sul"] & mon["horas_aberto"].gt(3), ["frota", "horas_aberto"]]
     .groupby("frota", as_index=False)["horas_aberto"].max()
     .sort_values(["horas_aberto", "frota"], ascending=[False, True])
 )
@@ -1489,6 +1606,14 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
             if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
                 modal_os_abertas(lab,dados_card)
+            finalizadas_card = int(dados_card["finalizada_10sul"].sum())
+            if finalizadas_card:
+                st.markdown(
+                    "<div style='background:#e7f5ed;color:#145c3b;border-radius:8px;"
+                    "padding:5px 8px;font-size:11px;text-align:center'>"
+                    f"🟢 {finalizadas_card} finalizada(s) 10 Sul · aguardando cliente</div>",
+                    unsafe_allow_html=True,
+                )
             if i == 2 and sos_detalhes_card:
                 st.markdown(sos_detalhes_card, unsafe_allow_html=True)
 
