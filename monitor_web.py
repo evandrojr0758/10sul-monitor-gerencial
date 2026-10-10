@@ -1532,7 +1532,8 @@ if pesquisar and frota_q.strip():
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 @st.dialog("Relação de carretas", width="large")
-def modal_os_abertas(titulo, dados):
+def modal_os_abertas(titulo, dados, card_id):
+    chave_modal = f"lib_10sul_card_{card_id}"
     st.markdown(f"### {titulo}")
     if dados is None or dados.empty:
         st.info("Nenhuma OS aberta neste card.")
@@ -1550,21 +1551,22 @@ def modal_os_abertas(titulo, dados):
         lambda linha: ["background-color:#e7f5ed;color:#145c3b" if "FINALIZADA 10 SUL" in str(linha["SITUAÇÃO"]) else "" for _ in linha],
         axis=1,
     )
-    st.dataframe(destaque,use_container_width=True,hide_index=True)
+    st.dataframe(destaque,use_container_width=True,hide_index=True,key=f"{chave_modal}_tabela")
     st.caption("Verde: concluída pela 10 Sul, aguardando baixa ASN. O tempo considera a conclusão informada.")
     if not MOBILE_READ_ONLY:
         st.markdown("#### Informar liberação 10 Sul")
         opcoes = list(range(len(dados)))
         pos = st.selectbox("Frota / atendimento", opcoes,
             format_func=lambda i: f"{dados.iloc[i]['frota']} · {dados.iloc[i]['evento']} · OS {dados.iloc[i]['os_id']}",
-            key="lib_10sul_atendimento")
+            key=f"{chave_modal}_atendimento")
         registro = dados.iloc[pos]
         existente = _hora_brasilia(registro.get("fim_liberacao_10sul"))
         inicial = existente if pd.notna(existente) else agora.floor("min")
-        with st.form("form_liberacao_10sul"):
+        chave_registro = f"{chave_modal}_{registro['os_id']}_{registro['frota']}"
+        with st.form(f"{chave_registro}_form"):
             c_data, c_hora = st.columns(2)
-            data_lib = c_data.date_input("Data", value=inicial.date(), max_value=agora.date())
-            hora_lib = c_hora.time_input("Hora", value=inicial.time(), step=60)
+            data_lib = c_data.date_input("Data", value=inicial.date(), max_value=agora.date(), key=f"{chave_registro}_data")
+            hora_lib = c_hora.time_input("Hora", value=inicial.time(), step=60, key=f"{chave_registro}_hora")
             confirmar_lib = st.form_submit_button("Registrar liberação 10 Sul", type="primary")
         st.caption("A OS permanece aberta até a baixa do cliente. A data informada alimenta as médias da 10 Sul.")
         if confirmar_lib:
@@ -1661,7 +1663,7 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         # O alerta colore o card inteiro, incluindo a tabela compacta de frotas.
         with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
             if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
-                modal_os_abertas(lab,dados_card)
+                modal_os_abertas(lab,dados_card,i)
             finalizadas_card = int(dados_card["finalizada_10sul"].sum())
             if finalizadas_card:
                 st.markdown(
