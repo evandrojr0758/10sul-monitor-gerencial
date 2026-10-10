@@ -1591,11 +1591,16 @@ with h3:
 
 @st.dialog("Resumo do Monitor Gerencial", width="large")
 def abrir_resumo_compartilhavel():
-    from monitor_share import gerar_imagem_resumo, botao_compartilhar_imagem, calcular_medias_monitor, calcular_oficina_agora
-    png = gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant,
-                             dm, ds, mot, leitura, calcular_medias_monitor(df, agora), calcular_oficina_agora(df))
+    import importlib
+    # O Streamlit reexecuta a página, mas mantém módulos importados na sessão.
+    # Recarrega o relatório para usar também as funções novas após uma publicação.
+    relatorio = importlib.reload(importlib.import_module("monitor_share"))
+    png = relatorio.gerar_imagem_resumo(hunt, agora, q_mes, q_mes_ant, q_sem, q_sem_ant,
+                                      dm, ds, mot, leitura,
+                                      relatorio.calcular_medias_monitor(df, agora),
+                                      relatorio.calcular_oficina_agora(df))
     st.image(png, use_container_width=True)
-    botao_compartilhar_imagem(png)
+    relatorio.botao_compartilhar_imagem(png)
     st.download_button("Baixar imagem PNG", png, "resumo_monitor_10sul.png", mime="image/png",
                        key="download_resumo_cnp")
 
