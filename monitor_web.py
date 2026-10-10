@@ -16,11 +16,11 @@ st.set_page_config(page_title="10 Sul • Consulta Mobile" if MOBILE_READ_ONLY e
 
 def _abrir_whatsapp_liberacao(mensagem):
     """Abre o compartilhamento apenas depois de uma gravação confirmada."""
-    destino = "https://wa.me/?text=" + quote(mensagem)
+    destino = "whatsapp://send?text=" + quote(mensagem)
     components.html(
         "<script>"
         "const destino = " + json.dumps(destino) + ";"
-        "window.open(destino, '_blank', 'noopener,noreferrer');"
+        "window.location.href = destino;"
         "</script>",
         height=0,
         scrolling=False,
