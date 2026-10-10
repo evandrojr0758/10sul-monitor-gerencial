@@ -1,5 +1,6 @@
 import os
 import re
+import json
 from datetime import timedelta, datetime
 from zoneinfo import ZoneInfo
 from urllib.parse import quote
@@ -8,9 +9,22 @@ import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 MOBILE_READ_ONLY = bool(globals().get("MOBILE_READ_ONLY", False)) or st.query_params.get("mobile", "0") == "1"
 st.set_page_config(page_title="10 Sul • Consulta Mobile" if MOBILE_READ_ONLY else "Monitor Gerencial 10 Sul", page_icon="📊", layout="wide")
+
+def _abrir_whatsapp_liberacao(mensagem):
+    """Abre o compartilhamento apenas depois de uma gravação confirmada."""
+    destino = "https://wa.me/?text=" + quote(mensagem)
+    components.html(
+        "<script>"
+        "const destino = " + json.dumps(destino) + ";"
+        "window.open(destino, '_blank', 'noopener,noreferrer');"
+        "</script>",
+        height=0,
+        scrolling=False,
+    )
 
 def _secret(nome):
     try:
@@ -1457,7 +1471,9 @@ if st.session_state.get("aviso_liberacao_10sul"):
     st.success("Liberação 10 Sul registrada. A OS continua aberta, aguardando baixa do cliente.")
     st.link_button("Avisar cliente no WhatsApp",
         "https://wa.me/?text=" + quote(st.session_state["aviso_liberacao_10sul"]))
-    st.caption("Escolha o grupo do cliente e confirme o envio no WhatsApp.")
+    if st.session_state.pop("abrir_whatsapp_liberacao_10sul", False):
+        _abrir_whatsapp_liberacao(st.session_state["aviso_liberacao_10sul"])
+    st.caption("Escolha o grupo do cliente e confirme o envio no WhatsApp. Se o navegador bloquear a abertura automática, toque no botão acima.")
     if st.button("Dispensar aviso", key="dispensar_aviso_liberacao"):
         st.session_state.pop("aviso_liberacao_10sul", None)
         st.rerun()
@@ -1579,6 +1595,7 @@ def modal_os_abertas(titulo, dados, card_id):
             try:
                 aviso = _salvar_liberacao_10sul(registro, datetime.combine(data_lib, hora_lib))
                 st.session_state["aviso_liberacao_10sul"] = aviso
+                st.session_state["abrir_whatsapp_liberacao_10sul"] = True
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
