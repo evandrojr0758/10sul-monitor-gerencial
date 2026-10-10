@@ -169,7 +169,7 @@ def _erro_gravacao_liberacao(resposta):
     if resposta.status_code in {401, 403} or codigo == "42501":
         return (
             "O banco recusou a permissão de gravação. A chave de leitura não permite "
-            "registrar esta liberação. Confira as permissões da conta usada pelo monitor "
+            "registrar esta informação. Confira as permissões da conta usada pelo monitor "
             "ou configure SUPABASE_WRITE_KEY nos Secrets com uma chave autorizada de servidor. "
             f"Não cole a chave no chat. ({detalhe})"
         )
@@ -227,6 +227,83 @@ def _salvar_liberacao_10sul(registro, quando):
     carregar.clear()
     return _mensagem_liberacao(frota, registro["evento"], confirmado)
 
+
+def _mensagem_previsao(frota, evento, quando):
+    return (
+        "FROTA | EVENTO | PREVISÃO\n"
+        f"{frota} | {evento} | {pd.Timestamp(quando).strftime('%d/%m/%Y %H:%M')}"
+    )
+
+
+def _erro_gravacao_previsao(resposta):
+    try:
+        erro = resposta.json()
+        codigo = erro.get("code") if isinstance(erro, dict) else None
+    except (ValueError, TypeError):
+        codigo = None
+    if codigo in {"PGRST204", "42703"}:
+        return (
+            "Falta disponibilizar o campo previsao_liberacao_10sul no banco da nuvem. "
+            "A previsão não foi salva nem encaminhada ao WhatsApp."
+        )
+    return _erro_gravacao_liberacao(resposta)
+
+
+def _salvar_previsao_10sul(registro, quando):
+    """Grava somente a previsão; não altera fim, status nem cálculo de tempo."""
+    quando = _hora_brasilia(quando)
+    agora_local = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
+    inicio = _hora_brasilia(registro.get("inicio_mon", registro.get("inicio")))
+    if pd.isna(quando) or quando < agora_local.floor("min"):
+        raise ValueError("Informe uma previsão válida, a partir do horário atual.")
+    if pd.notna(inicio) and quando < inicio:
+        raise ValueError("A previsão não pode ser anterior ao início do atendimento.")
+    os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
+    filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
+    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim"})
+    if len(origem) != 1:
+        raise RuntimeError("Não foi possível identificar uma única OS na ASN. Atualize o monitor.")
+    if pd.notna(_hora_brasilia(origem[0].get("fim"))) or "MANUT" not in str(origem[0].get("status", "")).upper():
+        raise ValueError("A cliente já deu baixa ou alterou esta OS. Atualize o monitor.")
+    atuais = api_get("monitor_atendimentos", {**filtros, "select": "*"})
+    for atual in atuais:
+        coluna_baixa = _nome_coluna_fim_10sul(atual.keys())
+        if coluna_baixa and pd.notna(_hora_brasilia(atual.get(coluna_baixa))):
+            raise ValueError("Esta frota já foi liberada pela 10 Sul. Atualize o monitor.")
+    valor = quando.tz_localize("America/Sao_Paulo").isoformat()
+    chave_gravacao = _secret("SUPABASE_WRITE_KEY") or SUPABASE_KEY
+    headers = {"apikey": chave_gravacao, "Prefer": "return=representation"}
+    # As novas chaves sb_secret_* usam somente apikey; JWT legado usa Bearer.
+    if not str(chave_gravacao).startswith(("sb_secret_", "sb_publishable_")):
+        headers["Authorization"] = f"Bearer {chave_gravacao}"
+    url = f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
+    coluna_fim = "previsao_liberacao_10sul"
+    payload = {coluna_fim: valor}
+    resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
+    if not resposta.ok:
+        raise RuntimeError(_erro_gravacao_previsao(resposta))
+    salvos = resposta.json()
+    if not salvos:
+        # A ASN pode conter uma OS nova ainda não importada para o histórico.
+        campos = ["os_id", "frota", "evento", "status", "descricao", "modal", "unidade"]
+        novo = {c: str(registro.get(c) or "") for c in campos}
+        for c in ["parada", "inicio"]:
+            hora = _hora_brasilia(registro.get(c))
+            novo[c] = hora.tz_localize("America/Sao_Paulo").isoformat() if pd.notna(hora) else None
+        novo.update(payload)
+        resposta = requests.post(url, headers=headers, json=novo, timeout=45)
+        if resposta.status_code == 409:
+            resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
+        if not resposta.ok:
+            raise RuntimeError(_erro_gravacao_previsao(resposta))
+        salvos = resposta.json()
+    if len(salvos) != 1:
+        raise RuntimeError("A gravação não confirmou uma única OS. Atualize o monitor antes de tentar novamente.")
+    confirmado = _hora_brasilia(salvos[0].get(coluna_fim))
+    if pd.isna(confirmado) or confirmado != quando:
+        raise RuntimeError("A data/hora gravada não foi confirmada. Atualize o monitor.")
+    carregar.clear()
+    return _mensagem_previsao(frota, registro["evento"], confirmado)
 
 def _combinar_base_asn(historico, asn):
     """ASN prevalece nos dados da cliente; início salvo continua preservado."""
@@ -617,7 +694,7 @@ if df.empty:
     st.warning("A base do monitor está vazia. Confira a sincronização da Lista ASN no Power Automate.")
     st.stop()
 
-for c in ["parada","inicio","fim","fim_asn","fim_liberacao_10sul"]:
+for c in ["parada","inicio","fim","fim_asn","fim_liberacao_10sul","previsao_liberacao_10sul"]:
     if c in df.columns:
         df[c]=pd.to_datetime(df[c].map(_hora_brasilia),errors="coerce")
 for c in ["os_id","frota","evento","status","descricao","modal","unidade"]:
@@ -1548,8 +1625,9 @@ def modal_os_abertas(titulo, dados, card_id):
     x["SITUAÇÃO"]=x["acima_sla"].map({True:"🔴 SLA ULTRAPASSADO",False:"EM ATENDIMENTO"})
     x.loc[x["finalizada_10sul"], "SITUAÇÃO"]="🟢 FINALIZADA 10 SUL · AGUARDANDO BAIXA CLIENTE"
     x["LIBERAÇÃO 10 SUL"]=x["fim_liberacao_10sul"].dt.strftime("%d/%m/%Y %H:%M").fillna("—")
+    x["PREVISÃO"]=pd.to_datetime(x.get("previsao_liberacao_10sul", pd.Series(pd.NaT, index=x.index)),errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("—")
     x=x.rename(columns={"os_id":"OS/ID","frota":"FROTA","evento":"EVENTO","descricao":"DESCRIÇÃO DO EVENTO"})
-    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","LIBERAÇÃO 10 SUL","SITUAÇÃO"]
+    cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","PREVISÃO","LIBERAÇÃO 10 SUL","SITUAÇÃO"]
     destaque = x[cols_show].style.apply(
         lambda linha: ["background-color:#e7f5ed;color:#145c3b" if "FINALIZADA 10 SUL" in str(linha["SITUAÇÃO"]) else "" for _ in linha],
         axis=1,
@@ -1557,7 +1635,7 @@ def modal_os_abertas(titulo, dados, card_id):
     st.dataframe(destaque,use_container_width=True,hide_index=True,key=f"{chave_modal}_tabela")
     st.caption("Verde: concluída pela 10 Sul, aguardando baixa ASN. O tempo considera a conclusão informada.")
     if not MOBILE_READ_ONLY:
-        st.markdown("#### Informar liberação 10 Sul")
+        st.markdown("#### Previsão e liberação 10 Sul")
         opcoes = list(range(len(dados)))
         pos = st.selectbox("Frota / atendimento", opcoes,
             format_func=lambda i: f"{dados.iloc[i]['frota']} · {dados.iloc[i]['evento']} · OS {dados.iloc[i]['os_id']}",
@@ -1566,6 +1644,46 @@ def modal_os_abertas(titulo, dados, card_id):
         existente = _hora_brasilia(registro.get("fim_liberacao_10sul"))
         inicial = existente if pd.notna(existente) else agora.floor("min")
         chave_registro = f"{chave_modal}_{registro['os_id']}_{registro['frota']}"
+        with st.expander("📅 Informar previsão de liberação", expanded=False):
+            if pd.notna(existente):
+                st.info("A frota já foi liberada pela 10 Sul e aguarda a baixa do cliente.")
+            else:
+                previsao_atual = _hora_brasilia(registro.get("previsao_liberacao_10sul"))
+                if pd.notna(previsao_atual):
+                    st.caption(f"Previsão registrada: {previsao_atual.strftime('%d/%m/%Y %H:%M')}")
+                inicial_prev = previsao_atual if pd.notna(previsao_atual) and previsao_atual >= agora.floor("min") else agora.ceil("min") + pd.Timedelta(hours=1)
+                p_data, p_hora = st.columns(2)
+                data_prev = p_data.date_input("Data prevista", value=inicial_prev.date(), min_value=agora.date(), key=f"{chave_registro}_previsao_data")
+                hora_prev = p_hora.time_input("Hora prevista", value=inicial_prev.time(), step=60, key=f"{chave_registro}_previsao_hora")
+                chave_resultado_prev = f"{chave_registro}_resultado_previsao"
+                resultado_prev = st.session_state.get(chave_resultado_prev)
+                pedido_prev = _registrar_baixa_whatsapp(
+                    result=resultado_prev,
+                    label="Registrar previsão e abrir WhatsApp",
+                    key=f"{chave_registro}_previsao_whatsapp",
+                    default=None,
+                )
+                nonce_prev = pedido_prev.get("nonce") if isinstance(pedido_prev, dict) else None
+                processados_prev = st.session_state.setdefault("lib_10sul_pedidos_processados", set())
+                if isinstance(nonce_prev, str) and nonce_prev and nonce_prev not in processados_prev:
+                    processados_prev.add(nonce_prev)
+                    try:
+                        aviso_prev = _salvar_previsao_10sul(registro, datetime.combine(data_prev, hora_prev))
+                        st.session_state[chave_resultado_prev] = {
+                            "nonce": nonce_prev,
+                            "url": "https://wa.me/?text=" + quote(aviso_prev),
+                            "message": "Previsão registrada. Escolha o grupo e confirme o envio no WhatsApp.",
+                        }
+                    except Exception as exc:
+                        st.session_state[chave_resultado_prev] = {"nonce": nonce_prev, "error": str(exc)}
+                    st.rerun(scope="fragment")
+                if resultado_prev and resultado_prev.get("error"):
+                    st.error(resultado_prev["error"])
+                elif resultado_prev and resultado_prev.get("url"):
+                    st.success("Previsão registrada. O atendimento continua em manutenção.")
+                st.caption("A previsão não registra baixa nem altera as médias de manutenção.")
+
+        st.markdown("##### Registrar baixa 10 Sul")
         c_data, c_hora = st.columns(2)
         data_lib = c_data.date_input("Data", value=inicial.date(), max_value=agora.date(), key=f"{chave_registro}_data")
         hora_lib = c_hora.time_input("Hora", value=inicial.time(), step=60, key=f"{chave_registro}_hora")
