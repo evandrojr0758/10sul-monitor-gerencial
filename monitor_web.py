@@ -116,6 +116,35 @@ def _mensagem_liberacao(frota, evento, quando):
     )
 
 
+def _erro_gravacao_liberacao(resposta):
+    """Diagnóstico do banco sem exibir credenciais nem dados da requisição."""
+    try:
+        erro = resposta.json()
+        codigo = str(erro.get("code") or "") if isinstance(erro, dict) else ""
+        mensagem = str(erro.get("message") or "") if isinstance(erro, dict) else ""
+    except (ValueError, TypeError):
+        codigo, mensagem = "", ""
+    codigo = re.sub(r"[^A-Za-z0-9_]", "", codigo)[:30]
+    detalhe = f"HTTP {resposta.status_code}" + (f" · {codigo}" if codigo else "")
+    if codigo in {"PGRST204", "42703"} and "fim_liberacao_10sul" in mensagem:
+        return (
+            "Falta a coluna de liberação 10 Sul no banco. "
+            "No SQL Editor do Supabase, execute:\n\n"
+            "ALTER TABLE public.monitor_atendimentos "
+            "ADD COLUMN IF NOT EXISTS fim_liberacao_10sul timestamptz;\n"
+            "NOTIFY pgrst, 'reload schema';\n\n"
+            f"Depois atualize o monitor e tente novamente. ({detalhe})"
+        )
+    if resposta.status_code in {401, 403} or codigo == "42501":
+        return (
+            "O banco recusou a permissão de gravação. A chave de leitura não permite "
+            "registrar esta liberação. Confira as permissões da conta usada pelo monitor "
+            "ou configure SUPABASE_WRITE_KEY nos Secrets com uma chave autorizada de servidor. "
+            f"Não cole a chave no chat. ({detalhe})"
+        )
+    return f"O banco recusou a liberação 10 Sul. Código de diagnóstico: {detalhe}."
+
+
 def _salvar_liberacao_10sul(registro, quando):
     """Grava somente o fim da 10 Sul; não altera status nem baixa ASN."""
     quando = _hora_brasilia(quando)
@@ -133,13 +162,14 @@ def _salvar_liberacao_10sul(registro, quando):
     if pd.notna(_hora_brasilia(origem[0].get("fim"))) or "MANUT" not in str(origem[0].get("status", "")).upper():
         raise ValueError("A cliente já deu baixa ou alterou esta OS. Atualize o monitor.")
     valor = quando.tz_localize("America/Sao_Paulo").isoformat()
-    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
+    chave_gravacao = _secret("SUPABASE_WRITE_KEY") or SUPABASE_KEY
+    headers = {"apikey": chave_gravacao, "Authorization": f"Bearer {chave_gravacao}",
                "Prefer": "return=representation"}
     url = f"{SUPABASE_URL}/rest/v1/monitor_atendimentos"
     payload = {"fim_liberacao_10sul": valor}
     resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
     if not resposta.ok:
-        raise RuntimeError("Não foi possível salvar a liberação 10 Sul. Confira a coluna fim_liberacao_10sul e a permissão de gravação no banco.")
+        raise RuntimeError(_erro_gravacao_liberacao(resposta))
     salvos = resposta.json()
     if not salvos:
         # A ASN pode conter uma OS nova ainda não importada para o histórico.
@@ -153,7 +183,7 @@ def _salvar_liberacao_10sul(registro, quando):
         if resposta.status_code == 409:
             resposta = requests.patch(url, headers=headers, params=filtros, json=payload, timeout=45)
         if not resposta.ok:
-            raise RuntimeError("Não foi possível registrar a liberação no histórico. Confira a permissão de gravação no banco.")
+            raise RuntimeError(_erro_gravacao_liberacao(resposta))
         salvos = resposta.json()
     if len(salvos) != 1:
         raise RuntimeError("A gravação não confirmou uma única OS. Atualize o monitor antes de tentar novamente.")
