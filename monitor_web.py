@@ -1416,7 +1416,21 @@ cards=[
     (int(mon["acima_sla"].sum()),"⏱️ ACIMA SLA","red",mon[mon["acima_sla"]]),
 ]
 # Alerta SOS: somente atendimentos ainda abertos, estritamente acima de 3 horas.
-sos_em_alerta = bool(mon.loc[msos, "horas_aberto"].gt(3).any())
+sos_acima_3h = (
+    mon.loc[msos & mon["horas_aberto"].gt(3), ["frota", "horas_aberto"]]
+    .groupby("frota", as_index=False)["horas_aberto"].max()
+    .sort_values(["horas_aberto", "frota"], ascending=[False, True])
+)
+sos_em_alerta = not sos_acima_3h.empty
+import html as _html_sos
+sos_detalhes_card = "".join(
+    "<div style='display:flex;justify-content:space-between;gap:8px'>"
+    f"<span>Frota {_html_sos.escape(str(r['frota']))}</span>"
+    f"<strong>{hhmm(r['horas_aberto'])}</strong></div>"
+    for _, r in sos_acima_3h.head(3).iterrows()
+)
+if len(sos_acima_3h) > 3:
+    sos_detalhes_card += f"<div style='margin-top:3px'>+ {len(sos_acima_3h) - 3} frotas • toque no card</div>"
 if sos_em_alerta:
     st.markdown("""
     <style>
@@ -1442,6 +1456,14 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
             if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
                 modal_os_abertas(lab,dados_card)
+            if i == 2 and sos_detalhes_card:
+                st.markdown(
+                    "<div style='margin-top:-5px;padding:7px 10px;border-radius:8px;"
+                    "background:#fff1f2;color:#991b1b;font-size:12px;line-height:1.5'>"
+                    "<div style='font-size:11px;margin-bottom:2px'>Acima de 3h</div>"
+                    f"{sos_detalhes_card}</div>",
+                    unsafe_allow_html=True,
+                )
 
 render_medias_supervisor()
 
