@@ -1808,36 +1808,22 @@ def modal_os_abertas(titulo, dados, card_id):
                 faltam_prev = previsoes_card.loc[previsoes_card["previsao"].isna(), "frota"].astype(str).tolist()
                 st.caption("Ainda sem previsão: " + ", ".join(faltam_prev))
             if total_prev:
-                mensagem_card = _mensagem_previsoes_card(previsoes_card)
-                st.text(mensagem_card)
-                import hashlib
-                versao_resumo = hashlib.sha256(mensagem_card.encode("utf-8")).hexdigest()[:16]
-                chave_envio_prev = f"{chave_modal}_previsoes_{versao_resumo}"
-                resultado_envio_prev = st.session_state.get(f"{chave_envio_prev}_resultado")
-                pedido_envio_prev = _registrar_baixa_whatsapp(
-                    result=resultado_envio_prev,
-                    label=f"Enviar resumo completo ({total_prev} frotas) no WhatsApp",
-                    key=chave_envio_prev,
-                    default=None,
+                import importlib
+                import previsao_share
+                import monitor_share
+                importlib.reload(previsao_share)
+                imagem_previsoes = previsao_share.gerar_imagem_previsoes(
+                    previsoes_card,
+                    pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None),
+                    _evento_resumido_whatsapp,
                 )
-                nonce_envio_prev = pedido_envio_prev.get("nonce") if isinstance(pedido_envio_prev, dict) else None
-                processados_envio_prev = st.session_state.setdefault("lib_10sul_pedidos_processados", set())
-                if isinstance(nonce_envio_prev, str) and nonce_envio_prev and nonce_envio_prev not in processados_envio_prev:
-                    processados_envio_prev.add(nonce_envio_prev)
-                    try:
-                        carregar.clear()
-                        conferidas_prev = _previsoes_do_card(dados, carregar())
-                        texto_envio_prev = _mensagem_previsoes_card(conferidas_prev)
-                        if texto_envio_prev != mensagem_card:
-                            raise ValueError("As previsões mudaram. Confira o resumo atualizado e envie novamente.")
-                        st.session_state[f"{chave_envio_prev}_resultado"] = {
-                            "nonce": nonce_envio_prev,
-                            "url": "https://wa.me/?text=" + quote(texto_envio_prev),
-                            "message": "Resumo completo das frotas. Escolha o grupo no WhatsApp.",
-                        }
-                    except Exception as exc:
-                        st.session_state[f"{chave_envio_prev}_resultado"] = {"nonce": nonce_envio_prev, "error": str(exc)}
-                    st.rerun(scope="fragment")
+                st.image(imagem_previsoes, use_container_width=True)
+                monitor_share.botao_compartilhar_imagem(imagem_previsoes)
+                st.download_button(
+                    "Baixar imagem PNG", imagem_previsoes,
+                    file_name="previsoes_frotas_10sul.png", mime="image/png",
+                    key=f"{chave_modal}_baixar_previsoes_png",
+                )
             else:
                 st.caption("Não há frotas pendentes de liberação da 10 Sul neste card.")
             st.caption("O resumo inclui todas as frotas do card. Sem data/hora, mostra a observação; sem observação, mostra —.")
