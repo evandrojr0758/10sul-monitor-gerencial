@@ -241,6 +241,45 @@ def _salvar_liberacao_10sul(registro, quando):
     return _mensagem_liberacao(frota, registro["evento"], confirmado)
 
 
+def _desfazer_liberacao_10sul(registro):
+    """Retira somente a liberação manual da OS selecionada, mantendo a ASN intacta."""
+    os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
+    filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
+    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim"})
+    if len(origem) != 1:
+        raise RuntimeError("Não foi possível identificar uma única OS na ASN. Atualize o monitor.")
+    if pd.notna(_hora_brasilia(origem[0].get("fim"))) or "MANUT" not in str(origem[0].get("status", "")).upper():
+        raise ValueError("O cliente já deu baixa ou alterou esta OS. A baixa ASN não pode ser desfeita aqui.")
+    coluna_fim = _coluna_fim_10sul_banco()
+    atuais = api_get("monitor_atendimentos", {**filtros, "select": "*"})
+    if len(atuais) != 1:
+        raise RuntimeError("Não foi possível identificar uma única liberação 10 Sul. Atualize o monitor.")
+    valor_atual = atuais[0].get(coluna_fim)
+    hora_atual = _hora_brasilia(valor_atual)
+    if pd.isna(hora_atual):
+        raise ValueError("Esta OS já está sem liberação 10 Sul. Atualize o monitor.")
+    exibida = _hora_brasilia(registro.get("fim_liberacao_10sul"))
+    if pd.isna(exibida) or exibida != hora_atual:
+        raise ValueError("A liberação mudou desde que a janela foi aberta. Atualize antes de desfazer.")
+    chave_gravacao = _secret("SUPABASE_WRITE_KEY") or SUPABASE_KEY
+    headers = {"apikey": chave_gravacao, "Prefer": "return=representation"}
+    if not str(chave_gravacao).startswith(("sb_secret_", "sb_publishable_")):
+        headers["Authorization"] = f"Bearer {chave_gravacao}"
+    # Só altera a versão da baixa que foi conferida; não desfaz uma atualização concorrente.
+    filtros[coluna_fim] = f"eq.{valor_atual}"
+    resposta = requests.patch(
+        f"{SUPABASE_URL}/rest/v1/monitor_atendimentos",
+        headers=headers, params=filtros, json={coluna_fim: None}, timeout=45,
+    )
+    if not resposta.ok:
+        raise RuntimeError(_erro_gravacao_liberacao(resposta))
+    salvos = resposta.json()
+    if len(salvos) != 1 or salvos[0].get(coluna_fim) is not None:
+        raise RuntimeError("Não foi possível confirmar o desfazimento. Atualize o monitor.")
+    carregar.clear()
+    return frota
+
+
 def _mensagem_previsao(frota, evento, quando):
     return (
         "FROTA | EVENTO | PREVISÃO\n"
@@ -1595,6 +1634,10 @@ if MOBILE_READ_ONLY:
     @media(prefers-reduced-motion:reduce){.st-key-card_sos button{animation:none!important}}
     </style>""", unsafe_allow_html=True)
 
+if st.session_state.get("liberacao_10sul_desfeita"):
+    frota_desfeita = st.session_state.pop("liberacao_10sul_desfeita")
+    st.success(f"Pedido de baixa 10 Sul da frota {frota_desfeita} desfeito. A contagem do tempo foi retomada.")
+
 st.markdown("#### 🔎 Consulta rápida de frota")
 
 @st.dialog("🔎 Histórico da frota", width="large")
@@ -1699,7 +1742,14 @@ def modal_os_abertas(titulo, dados, card_id):
         pos = st.selectbox("Frota / atendimento", opcoes,
             format_func=lambda i: f"{dados.iloc[i]['frota']} · {dados.iloc[i]['evento']} · OS {dados.iloc[i]['os_id']}",
             key=f"{chave_modal}_atendimento")
-        registro = dados.iloc[pos]
+        registro = dados.iloc[pos].copy()
+        base_registro_atual = carregar()
+        atual_selecionado = base_registro_atual.loc[
+            base_registro_atual["os_id"].astype(str).eq(str(registro["os_id"])) &
+            base_registro_atual["frota"].apply(norm_frota).eq(norm_frota(registro["frota"]))
+        ]
+        if len(atual_selecionado) == 1:
+            registro["fim_liberacao_10sul"] = atual_selecionado.iloc[0].get("fim_liberacao_10sul")
         existente = _hora_brasilia(registro.get("fim_liberacao_10sul"))
         inicial = existente if pd.notna(existente) else agora.floor("min")
         chave_registro = f"{chave_modal}_{registro['os_id']}_{registro['frota']}"
@@ -1791,6 +1841,17 @@ def modal_os_abertas(titulo, dados, card_id):
             else:
                 st.caption("Não há frotas pendentes de liberação da 10 Sul neste card.")
             st.caption("O resumo inclui todas as frotas do card. Sem data/hora, mostra a observação; sem observação, mostra —.")
+
+        if pd.notna(existente):
+            st.caption(f"Liberação 10 Sul: {existente.strftime('%d/%m/%Y %H:%M')}")
+            if st.button("Desfazer pedido de baixa 10 Sul", key=f"{chave_registro}_desfazer"):
+                try:
+                    frota_desfeita = _desfazer_liberacao_10sul(registro)
+                    st.session_state.pop(f"{chave_registro}_resultado_whatsapp", None)
+                    st.session_state["liberacao_10sul_desfeita"] = frota_desfeita
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
 
         st.markdown("##### Registrar baixa 10 Sul")
         c_data, c_hora = st.columns(2)
