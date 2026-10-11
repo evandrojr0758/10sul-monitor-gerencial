@@ -452,6 +452,47 @@ def _combinar_base_asn(historico, asn):
     return resultado.reset_index()
 
 
+def _inconsistencias_asn(base):
+    """Sinais de conferência na origem; não conclui atendimento nem altera OS."""
+    colunas = ["FROTA","OS/ID","EVENTO","PARADA ASN","FIM ASN","STATUS ASN","OS RELACIONADA","EVENTO RELACIONADO","PARADA RELACIONADA","FIM RELACIONADO","SITUAÇÃO"]
+    if base.empty:
+        return pd.DataFrame(columns=colunas)
+    b = base.copy()
+    # Histórico sem registro na cópia ASN não confirma a situação da origem.
+    b = b.loc[b.get("sincronizado_em", pd.Series(None, index=b.index, dtype=object)).notna()]
+    b = b.loc[b.get("excluida_asn_em", pd.Series(None, index=b.index, dtype=object)).isna()]
+    if b.empty:
+        return pd.DataFrame(columns=colunas)
+    b = b.drop_duplicates(["os_id","frota"], keep="last")
+    b["_parada"] = b["parada"].map(_hora_brasilia)
+    b["_fim"] = b["fim_asn"].map(_hora_brasilia)
+    registros = []
+    def incluir(r, situacao, outro=None):
+        registros.append({"FROTA":str(r["frota"]), "OS/ID":str(r["os_id"]), "EVENTO":r["evento"],
+            "PARADA ASN":r["_parada"], "FIM ASN":r["_fim"], "STATUS ASN":r["status"],
+            "OS RELACIONADA":str(outro["os_id"]) if outro is not None else "",
+            "EVENTO RELACIONADO":outro["evento"] if outro is not None else "",
+            "PARADA RELACIONADA":outro["_parada"] if outro is not None else pd.NaT,
+            "FIM RELACIONADO":outro["_fim"] if outro is not None else pd.NaT, "SITUAÇÃO":situacao})
+    for _, r in b.iterrows():
+        if pd.notna(r["_parada"]) and pd.notna(r["_fim"]) and r["_fim"] < r["_parada"]:
+            incluir(r, "Fim ASN anterior à parada — conferir horário na origem")
+        elif "MANUT" in str(r["status"]).upper() and pd.notna(r["_fim"]):
+            incluir(r, "Status em manutenção com fim preenchido — conferir na origem")
+        elif "LIBER" in str(r["status"]).upper() and pd.isna(r["_fim"]):
+            incluir(r, "Status liberado sem data de fim — conferir na origem")
+    for _, grupo in b.loc[b["_parada"].notna()].groupby("frota", sort=False):
+        linhas = [r for _, r in grupo.sort_values(["_parada","os_id"]).iterrows()]
+        for anterior, posterior in zip(linhas, linhas[1:]):
+            fim = anterior["_fim"]
+            aberto = "MANUT" in str(anterior["status"]).upper() and pd.isna(fim)
+            if aberto:
+                incluir(anterior, "OS sem baixa com outro atendimento da mesma frota — conferir pendência na ASN", posterior)
+            elif pd.notna(fim) and fim >= anterior["_parada"] and fim > posterior["_parada"]:
+                incluir(anterior, "Períodos de OS sobrepostos na ASN — conferir horários", posterior)
+    return pd.DataFrame(registros, columns=colunas)
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar():
     historico = _ler_atendimentos("monitor_atendimentos")
@@ -838,6 +879,8 @@ df["frota"]=df["frota"].apply(norm_frota)
 mascara_excluidas = df.get("excluida_asn_em", pd.Series(None, index=df.index, dtype=object)).notna()
 os_excluidas = df.loc[mascara_excluidas].copy()
 df = df.loc[~mascara_excluidas].copy()
+
+inconsistencias_asn = _inconsistencias_asn(df)
 
 agora=pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
 ev, is_itr_all,is_rev_all,is_sos_all,is_cnp_all=evento_flags(df["evento"])
@@ -1685,6 +1728,10 @@ def modal_historico_frota(fq):
     hist=pd.concat([df[df["frota"].eq(fq)], os_excluidas[os_excluidas["frota"].eq(fq)]], ignore_index=True).sort_values("inicio",ascending=False)
     hist["excluida_asn"] = hist.get("excluida_asn_em", pd.Series(None, index=hist.index, dtype=object)).notna()
     st.markdown(f"### Frota {fq}")
+    conferir = inconsistencias_asn.loc[inconsistencias_asn["FROTA"].eq(fq)]
+    if not conferir.empty:
+        st.warning("Há registros desta frota que precisam de conferência na ASN. OS pendente não confirma atendimento ainda em andamento.")
+        st.dataframe(conferir, hide_index=True, use_container_width=True)
     if hist.empty:
         st.warning("Frota não encontrada na base sincronizada.")
         return
@@ -2022,6 +2069,22 @@ def modal_os_excluidas():
     show.columns = ["OS/ID","FROTA","EVENTO","DESCRIÇÃO","PARADA","INÍCIO","EXCLUSÃO CONFIRMADA EM"]
     tabela = show.style.format(escape="html", na_rep="—").set_properties(**{"text-decoration":"line-through","color":"#6b7280","padding":"8px","border-bottom":"1px solid #e5e7eb"}).hide(axis="index").to_html()
     st.markdown("<div style='overflow-x:auto;max-width:100%'>" + tabela + "</div>", unsafe_allow_html=True)
+
+@st.dialog("⚠️ OS para conferir na ASN", width="large")
+def modal_inconsistencias_asn():
+    st.warning("Dados da origem que precisam de conferência. Uma OS sem baixa pode ser pendência de registro; a sobreposição não comprova dois atendimentos em andamento.")
+    st.caption("Somente consulta • os registros e horários da Lista ASN permanecem intactos.")
+    if inconsistencias_asn.empty:
+        st.info("Nenhuma inconsistência identificada nos registros ASN disponíveis.")
+    else:
+        st.dataframe(inconsistencias_asn, hide_index=True, use_container_width=True)
+
+ids_conferir = set(inconsistencias_asn["OS/ID"]) | {v for v in inconsistencias_asn["OS RELACIONADA"] if v}
+with st.container(key="card_inconsistencias_asn"):
+    if st.button(f"{len(ids_conferir)}\n\n⚠️ OS PARA CONFERIR NA ASN", key="kpi_inconsistencias_asn", use_container_width=True):
+        modal_inconsistencias_asn()
+    if ids_conferir:
+        st.caption("OS sem baixa com outro atendimento • horários sobrepostos ou incoerentes. Abra para comparar as OS.")
 
 with st.container(key="card_os_excluidas_asn"):
     if st.button(f"{len(os_excluidas)}\n\n🗑️ OS EXCLUÍDAS NA LISTA ASN", key="kpi_os_excluidas_asn", use_container_width=True):
