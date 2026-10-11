@@ -787,6 +787,28 @@ if st.button("↻ Atualizar", key="monitor_refresh_top", type="primary", use_con
     st.cache_data.clear()
     st.rerun()
 
+atualizacao_automatica = st.toggle(
+    "Atualização automática a cada 1 minuto",
+    value=True,
+    key="monitor_auto_refresh",
+    help="Desative para pausar a atualização enquanto consulta ou preenche informações.",
+)
+
+# A primeira execução acompanha o carregamento normal da página. Só o
+# próximo disparo do fragmento limpa a consulta e atualiza o monitor inteiro.
+st.session_state["_monitor_auto_refresh_armed"] = False
+
+
+@st.fragment(run_every=60 if atualizacao_automatica else None)
+def _atualizar_monitor_automaticamente():
+    if st.session_state["_monitor_auto_refresh_armed"]:
+        carregar.clear()
+        st.rerun()
+    st.session_state["_monitor_auto_refresh_armed"] = True
+
+
+_atualizar_monitor_automaticamente()
+
 try:
     df=carregar()
 except Exception as e:
