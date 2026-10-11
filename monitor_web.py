@@ -200,9 +200,11 @@ def _salvar_liberacao_10sul(registro, quando):
         raise ValueError("A liberação não pode ser anterior ao início do atendimento.")
     os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
     filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
-    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim"})
+    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim,excluida_asn_em"})
     if len(origem) != 1:
         raise RuntimeError("Não foi possível identificar uma única OS na ASN. Atualize o monitor.")
+    if origem[0].get("excluida_asn_em"):
+        raise ValueError("Esta OS foi excluída na Lista ASN. Apenas consulta ao histórico disponível.")
     if pd.notna(_hora_brasilia(origem[0].get("fim"))) or "MANUT" not in str(origem[0].get("status", "")).upper():
         raise ValueError("A cliente já deu baixa ou alterou esta OS. Atualize o monitor.")
     valor = quando.tz_localize("America/Sao_Paulo").isoformat()
@@ -245,9 +247,11 @@ def _desfazer_liberacao_10sul(registro):
     """Retira somente a liberação manual da OS selecionada, mantendo a ASN intacta."""
     os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
     filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
-    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim"})
+    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim,excluida_asn_em"})
     if len(origem) != 1:
         raise RuntimeError("Não foi possível identificar uma única OS na ASN. Atualize o monitor.")
+    if origem[0].get("excluida_asn_em"):
+        raise ValueError("Esta OS foi excluída na Lista ASN. Apenas consulta ao histórico disponível.")
     if pd.notna(_hora_brasilia(origem[0].get("fim"))) or "MANUT" not in str(origem[0].get("status", "")).upper():
         raise ValueError("O cliente já deu baixa ou alterou esta OS. A baixa ASN não pode ser desfeita aqui.")
     coluna_fim = _coluna_fim_10sul_banco()
@@ -318,9 +322,11 @@ def _salvar_previsao_10sul(registro, quando, observacao=""):
         raise ValueError("A previsão não pode ser anterior ao início do atendimento.")
     os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
     filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
-    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim"})
+    origem = api_get("monitor_asn", {**filtros, "select": "os_id,frota,status,fim,excluida_asn_em"})
     if len(origem) != 1:
         raise RuntimeError("Não foi possível identificar uma única OS na ASN. Atualize o monitor.")
+    if origem[0].get("excluida_asn_em"):
+        raise ValueError("Esta OS foi excluída na Lista ASN. Apenas consulta ao histórico disponível.")
     if pd.notna(_hora_brasilia(origem[0].get("fim"))) or "MANUT" not in str(origem[0].get("status", "")).upper():
         raise ValueError("A cliente já deu baixa ou alterou esta OS. Atualize o monitor.")
     atuais = api_get("monitor_atendimentos", {**filtros, "select": "*"})
@@ -413,6 +419,8 @@ def _combinar_base_asn(historico, asn):
     if asn.empty:
         raise RuntimeError("monitor_asn não retornou registros. Confira a permissão de leitura dessa tabela.")
     a = preparar(asn)
+    if "excluida_asn_em" not in a.columns:
+        a["excluida_asn_em"] = None
     a["inicio_suzano"] = a["parada"]
     a["fim_asn"] = a["fim"]
     a["fim"] = pd.to_datetime(a["fim_asn"], errors="coerce")
@@ -430,7 +438,7 @@ def _combinar_base_asn(historico, asn):
     h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"].map(_hora_brasilia), errors="coerce"))
     resultado = h.reindex(h.index.union(a.index)).copy()
     # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
-    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "fim_asn", "sincronizado_em"]:
+    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "fim_asn", "sincronizado_em", "excluida_asn_em"]:
         if c not in resultado.columns:
             resultado[c] = None
         resultado.loc[a.index, c] = a[c]
@@ -825,6 +833,11 @@ for c in ["parada","inicio","fim","fim_asn","fim_liberacao_10sul","previsao_libe
 for c in ["os_id","frota","evento","status","descricao","modal","unidade"]:
     if c not in df.columns: df[c]=""
 df["frota"]=df["frota"].apply(norm_frota)
+
+# Exclusões confirmadas permanecem no histórico, fora de toda apuração operacional.
+mascara_excluidas = df.get("excluida_asn_em", pd.Series(None, index=df.index, dtype=object)).notna()
+os_excluidas = df.loc[mascara_excluidas].copy()
+df = df.loc[~mascara_excluidas].copy()
 
 agora=pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
 ev, is_itr_all,is_rev_all,is_sos_all,is_cnp_all=evento_flags(df["evento"])
@@ -1669,7 +1682,8 @@ st.markdown("#### 🔎 Consulta rápida de frota")
 
 @st.dialog("🔎 Histórico da frota", width="large")
 def modal_historico_frota(fq):
-    hist=df[df["frota"].eq(fq)].copy().sort_values("inicio",ascending=False)
+    hist=pd.concat([df[df["frota"].eq(fq)], os_excluidas[os_excluidas["frota"].eq(fq)]], ignore_index=True).sort_values("inicio",ascending=False)
+    hist["excluida_asn"] = hist.get("excluida_asn_em", pd.Series(None, index=hist.index, dtype=object)).notna()
     st.markdown(f"### Frota {fq}")
     if hist.empty:
         st.warning("Frota não encontrada na base sincronizada.")
@@ -1677,8 +1691,8 @@ def modal_historico_frota(fq):
 
     hev=hist["evento"].fillna("").astype(str).str.upper().str.strip()
     # No monitor original, a preventiva é referenciada pela liberação.
-    itr=hist[hev.eq("ITR")].copy()
-    rev=hist[hev.str.contains("REVIS",na=False)].copy()
+    itr=hist[hev.eq("ITR") & ~hist["excluida_asn"]].copy()
+    rev=hist[hev.str.contains("REVIS",na=False) & ~hist["excluida_asn"]].copy()
 
     def ultima_preventiva(x):
         if x.empty:
@@ -1728,7 +1742,9 @@ def modal_historico_frota(fq):
     st.markdown("#### Histórico de atendimentos")
     show=hist[["os_id","evento","descricao","parada","inicio","fim","status"]].copy()
     show.columns=["OS/ID","EVENTO","DESCRIÇÃO","PARADA","INÍCIO","FIM","STATUS"]
-    st.dataframe(show,use_container_width=True,hide_index=True)
+    show.loc[hist["excluida_asn"], "STATUS"] = "Excluída na Lista ASN"
+    estilos = show.style.apply(lambda row: ["text-decoration:line-through;color:#6b7280" if hist.loc[row.name, "excluida_asn"] else "" for _ in row], axis=1)
+    st.dataframe(estilos,use_container_width=True,hide_index=True)
 
 q1,q2=st.columns([5,1])
 with q1:
@@ -1994,6 +2010,21 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
                 )
             if i == 2 and sos_detalhes_card:
                 st.markdown(sos_detalhes_card, unsafe_allow_html=True)
+
+@st.dialog("OS excluídas na Lista ASN", width="large")
+def modal_os_excluidas():
+    st.caption("Histórico preservado • exclusão confirmada na origem • sem notificações ou indicadores de manutenção.")
+    if os_excluidas.empty:
+        st.info("Nenhuma OS com exclusão confirmada na Lista ASN.")
+        return
+    show = os_excluidas.sort_values("excluida_asn_em", ascending=False)[["os_id","frota","evento","descricao","parada","inicio","excluida_asn_em"]].copy()
+    show["excluida_asn_em"] = show["excluida_asn_em"].map(_hora_brasilia)
+    show.columns = ["OS/ID","FROTA","EVENTO","DESCRIÇÃO","PARADA","INÍCIO","EXCLUSÃO CONFIRMADA EM"]
+    st.dataframe(show.style.set_properties(**{"text-decoration":"line-through","color":"#6b7280"}), hide_index=True, use_container_width=True)
+
+with st.container(key="card_os_excluidas_asn"):
+    if st.button(f"{len(os_excluidas)}\n\n🗑️ OS EXCLUÍDAS NA LISTA ASN", key="kpi_os_excluidas_asn", use_container_width=True):
+        modal_os_excluidas()
 
 render_medias_supervisor()
 
