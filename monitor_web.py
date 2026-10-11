@@ -2020,7 +2020,8 @@ def modal_os_excluidas():
     show = os_excluidas.sort_values("excluida_asn_em", ascending=False)[["os_id","frota","evento","descricao","parada","inicio","excluida_asn_em"]].copy()
     show["excluida_asn_em"] = show["excluida_asn_em"].map(_hora_brasilia)
     show.columns = ["OS/ID","FROTA","EVENTO","DESCRIÇÃO","PARADA","INÍCIO","EXCLUSÃO CONFIRMADA EM"]
-    st.dataframe(show.style.set_properties(**{"text-decoration":"line-through","color":"#6b7280"}), hide_index=True, use_container_width=True)
+    tabela = show.style.format(escape="html", na_rep="—").set_properties(**{"text-decoration":"line-through","color":"#6b7280","padding":"8px","border-bottom":"1px solid #e5e7eb"}).hide(axis="index").to_html()
+    st.markdown("<div style='overflow-x:auto;max-width:100%'>" + tabela + "</div>", unsafe_allow_html=True)
 
 with st.container(key="card_os_excluidas_asn"):
     if st.button(f"{len(os_excluidas)}\n\n🗑️ OS EXCLUÍDAS NA LISTA ASN", key="kpi_os_excluidas_asn", use_container_width=True):
