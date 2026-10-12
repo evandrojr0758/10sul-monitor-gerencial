@@ -1686,7 +1686,9 @@ def render_relatorio_gerencial_laudos():
 # Oficina agora segue a baixa ASN: conclusão 10 Sul mantém a OS na relação.
 status=df["status"].fillna("").astype(str).str.upper()
 fim_cliente = pd.to_datetime(df.get("fim_asn", df["fim"]), errors="coerce")
-mon=df[status.str.contains("MANUT",na=False)&fim_cliente.isna()].copy()
+_, itr_oficina, revisao_oficina, sos_oficina, cnp_oficina = evento_flags(df["evento"])
+eventos_oficina = itr_oficina | revisao_oficina | sos_oficina | cnp_oficina
+mon=df[status.str.contains("MANUT",na=False)&fim_cliente.isna()&eventos_oficina].copy()
 mon["fim_liberacao_10sul"]=pd.to_datetime(
     mon.get("fim_liberacao_10sul", pd.Series(pd.NaT, index=mon.index)), errors="coerce")
 mon["finalizada_10sul"]=mon["fim_liberacao_10sul"].notna()
