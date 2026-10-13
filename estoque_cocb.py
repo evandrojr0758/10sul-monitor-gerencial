@@ -10,6 +10,8 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 
+from email_socorro import ArquivosEmail, destinatarios, CONFIG
+
 import pandas as pd
 import streamlit as st
 
@@ -530,12 +532,64 @@ button.onclick=async()=>{
 </script></html>""".replace("__PNG__", imagem_base64)
     components.html(html, height=120, scrolling=False)
 
+def painel_email_socorro():
+    arquivos = ArquivosEmail(base.requisitar, base.branch)
+    try:
+        cfg, cfg_sha = arquivos.configuracao()
+    except ErroEstoque as exc:
+        st.error(str(exc))
+        return
+    st.subheader("Enviar relatório por e-mail")
+    st.caption("Relatório de MUC e COCB. Automático: terça e quinta às 9h (Brasília), mesmo com o aplicativo fechado. O processamento pode atrasar no GitHub.")
+    with st.form("email_socorro"):
+        emails = st.text_area("Destinatários", value="\n".join(cfg["destinatarios"]),
+                              help="Separe por linha, vírgula ou ponto e vírgula. Você pode adicionar ou remover e-mails.")
+        automatico = st.checkbox("Manter envio automático", value=cfg.get("automatico", True))
+        salvar = st.form_submit_button("Salvar destinatários e agendamento")
+        enviar = st.form_submit_button("Enviar agora por Resend", type="primary")
+    if salvar or enviar:
+        try:
+            lista = destinatarios(emails)
+            if salvar:
+                arquivos.salvar(CONFIG, {"destinatarios": lista, "automatico": automatico,
+                    "atualizado_em": datetime.now(timezone.utc).isoformat()}, cfg_sha)
+                st.success("Destinatários e opção de envio automático salvos.")
+            else:
+                ident = arquivos.solicitar(lista)
+                st.session_state["socorro_ultimo_envio"] = ident
+                st.success("Envio solicitado. Aguarde o processamento e atualize o histórico para conferir o resultado.")
+                st.caption("Protocolo: " + ident)
+        except (ValueError, ErroEstoque) as exc:
+            st.error(str(exc))
+    st.subheader("Histórico de envios")
+    st.button("Atualizar histórico", key="atualizar_historico_email")
+    try:
+        registros = arquivos.historico()
+        pendente = st.session_state.get("socorro_ultimo_envio")
+        if pendente and not any(x.get("id") == pendente for x in registros):
+            st.info("Última solicitação na fila: " + pendente)
+        if registros:
+            tabela = pd.DataFrame([{
+                "Data (Brasília)": pd.to_datetime(x["solicitado_em"], utc=True).tz_convert("America/Sao_Paulo").strftime("%d/%m/%Y %H:%M"),
+                "Tipo": x.get("tipo", ""), "Destinatários": "; ".join(x.get("destinatarios", [])),
+                "Status": {"aceito": "Aceito pelo Resend", "falha": "Falha", "incerto": "Sem confirmação", "processando": "Processando"}.get(x.get("status"), x.get("status", "")),
+                "ID Resend": x.get("resend_id", ""), "Detalhes": x.get("erro", ""), "Protocolo": x.get("id", "")
+            } for x in registros])
+            st.dataframe(tabela, hide_index=True, use_container_width=True)
+            st.caption("Aceito pelo Resend confirma o recebimento pelo provedor. A entrega na caixa postal deve ser consultada no Resend.")
+        else:
+            st.info("Nenhum envio registrado nesta versão. Os testes anteriores permanecem no GitHub Actions.")
+    except ErroEstoque as exc:
+        st.error("Não foi possível consultar o histórico: " + str(exc))
+
+
 @st.dialog("Relatório de reposição", width="large")
 def abrir_relatorio_reposicao(dados, unidade):
     png = gerar_imagem_reposicao(dados, unidade)
     st.image(png, use_container_width=True)
     botao_compartilhar_imagem(png)
     st.download_button("Baixar imagem PNG", png, "reposicao_todas_unidades.png", mime="image/png")
+    st.caption("Para enviar por e-mail, use Envio por e-mail e histórico no painel.")
 
 
 st.title("📦 10 SUL • CONTROLE DE ESTOQUE")
@@ -572,6 +626,8 @@ else:
     d.link_button("🔎 Inventário", "?pagina=inventario", use_container_width=True)
 
 if pagina == "painel":
+    with st.expander("✉️ Envio por e-mail e histórico", expanded=False):
+        painel_email_socorro()
     st.subheader("Painel de Estoque — " + unidade)
     tabela = itens_tabela(dados)
     criticos = tabela[tabela["SITUAÇÃO"] == "🔴 Abaixo do mínimo"].copy()
