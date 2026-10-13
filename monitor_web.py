@@ -1843,16 +1843,29 @@ def html_impressao_relacao(titulo, tabela, emitido_em):
         linhas.append('<tr class="' + classe + '">' + celulas + "</tr>")
     bloqueado = " disabled" if tabela.empty else ""
     return """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relação de frotas</title><style>
-body{margin:0;font-family:Arial,sans-serif;color:#243746}button{box-sizing:border-box;width:100%;padding:10px 8px;border:1px solid #ccd6de;border-radius:8px;background:#fff;color:#15364b;font-size:13px;font-weight:600;cursor:pointer}button:disabled{opacity:.45;cursor:default}button:focus-visible{outline:3px solid #208991;outline-offset:2px}.relatorio{display:none}h1{font-size:18px;margin:0 0 6px}h2{font-size:14px;margin:8px 0}p{font-size:10px;margin:6px 0}table{width:100%;border-collapse:collapse;table-layout:auto;font-size:8px}th,td{padding:6px 4px;border:1px solid #ccd6de;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf0f4;text-align:left;color:#15364b}tr:nth-child(even){background:#f5f7f9}tr.finalizada{background:#e7f5ed;color:#145c3b}thead{display:table-header-group}tr{break-inside:avoid}
-@media print{button{display:none}.relatorio{display:block}th,tr{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-@page{size:A4 landscape;margin:10mm}
+body{margin:0;font-family:Arial,sans-serif;color:#243746}button{box-sizing:border-box;width:100%;padding:10px 8px;border:1px solid #ccd6de;border-radius:8px;background:#fff;color:#15364b;font-size:13px;font-weight:600;cursor:pointer}button:disabled{opacity:.45;cursor:default}button:focus-visible{outline:3px solid #208991;outline-offset:2px}.relatorio{display:none}h1{font-size:20pt;margin:0 0 8px}h2{font-size:15pt;margin:8px 0}p{font-size:10pt;margin:8px 0}table{width:100%;border-collapse:collapse;table-layout:auto;font-size:11pt}th,td{padding:6px 4px;border:1px solid #ccd6de;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf0f4;text-align:left;color:#15364b}tr:nth-child(even){background:#f5f7f9}tr.finalizada{background:#e7f5ed;color:#145c3b}thead{display:table-header-group}tr{break-inside:avoid}
+.pagina-impressao .relatorio{display:block}.pagina-impressao{padding:16px}.orientacao{font:14px Arial,sans-serif;color:#52616b;margin:12px 0}
+@media print{button,.orientacao{display:none!important}.pagina-impressao{padding:0}.relatorio{display:block;width:100%}th,tr{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+@page{size:A4 landscape;margin:8mm}
 </style></head><body><button id="imprimir" """ + bloqueado + """>🖨️ Imprimir relação</button><section class="relatorio">
 <h1>10 SUL · OFICINA ARACRUZ</h1><h2>""" + escape(str(titulo)) + """</h2>
 <p>Unidade: ARA | Emitido em """ + escape(str(emitido_em)) + """ (Brasília)</p>
 <p>""" + str(len(tabela)) + """ atendimento(s) · """ + str(total_frotas) + """ frota(s)</p>
 <table><thead><tr>""" + cabecalho + """</tr></thead><tbody>""" + "".join(linhas) + """</tbody></table>
 <p>Verde: finalizada pela 10 Sul, aguardando baixa do cliente. Relação conforme o card consultado.</p>
-<p>Desenvolvido por Evandro Junior</p></section><script>document.getElementById('imprimir').onclick=()=>window.print();</script></body></html>"""
+<p>Desenvolvido por Evandro Junior</p></section><p id="aviso-impressao" role="status" style="font:13px Arial,sans-serif"></p><script>
+document.getElementById('imprimir').onclick=()=>{
+    const pagina=window.open('', '_blank', 'width=1200,height=850');
+    if(!pagina){document.getElementById('aviso-impressao').textContent='Permita abrir uma nova janela para imprimir a relação em A4 deitado.';return;}
+    document.getElementById('aviso-impressao').textContent='';
+    pagina.document.open();
+    pagina.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>10 Sul · Relação de frotas</title><style>'+document.querySelector('style').textContent+'</style></head><body class="pagina-impressao"><button id="imprimir-pagina">🖨️ Imprimir / Salvar PDF</button><p class="orientacao">A4 · Paisagem (deitado) · Escala 100%. Se o navegador mantiver a orientação anterior, selecione Paisagem na impressão.</p>'+document.querySelector('.relatorio').outerHTML+'</body></html>');
+    pagina.document.close();
+    const imprimir=()=>{pagina.focus();pagina.print();};
+    pagina.document.getElementById('imprimir-pagina').onclick=imprimir;
+    pagina.document.fonts.ready.then(()=>pagina.requestAnimationFrame(()=>pagina.requestAnimationFrame(imprimir)));
+};
+</script></body></html>"""
 
 
 def imprimir_relacao_card(titulo, dados):
@@ -2345,6 +2358,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
