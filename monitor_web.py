@@ -419,6 +419,8 @@ def _combinar_base_asn(historico, asn):
     if asn.empty:
         raise RuntimeError("monitor_asn não retornou registros. Confira a permissão de leitura dessa tabela.")
     a = preparar(asn)
+    if "local_manutencao" not in a.columns:
+        a["local_manutencao"] = None
     if "excluida_asn_em" not in a.columns:
         a["excluida_asn_em"] = None
     a["inicio_suzano"] = a["parada"]
@@ -438,7 +440,7 @@ def _combinar_base_asn(historico, asn):
     h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"].map(_hora_brasilia), errors="coerce"))
     resultado = h.reindex(h.index.union(a.index)).copy()
     # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
-    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "fim_asn", "sincronizado_em", "excluida_asn_em"]:
+    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "fim_asn", "sincronizado_em", "excluida_asn_em", "local_manutencao"]:
         if c not in resultado.columns:
             resultado[c] = None
         resultado.loc[a.index, c] = a[c]
@@ -1806,9 +1808,12 @@ if pesquisar and frota_q.strip():
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 
-def tabela_relacao_os(dados):
+def tabela_relacao_os(dados, incluir_local=False):
     if dados is None or dados.empty:
-        return pd.DataFrame(columns=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","PREVISÃO","LIBERAÇÃO 10 SUL","SITUAÇÃO"])
+        colunas=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","PREVISÃO","LIBERAÇÃO 10 SUL","SITUAÇÃO"]
+        if incluir_local:
+            colunas.insert(3, "LOCAL DA MANUTENÇÃO")
+        return pd.DataFrame(columns=colunas)
     x=dados.copy()
     x["TEMPO ABERTO"]=x["horas_aberto"].apply(hhmm)
     x["PARADA"]=pd.to_datetime(x["parada"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informada")
@@ -1819,6 +1824,10 @@ def tabela_relacao_os(dados):
     x["PREVISÃO"]=pd.to_datetime(x.get("previsao_liberacao_10sul", pd.Series(pd.NaT, index=x.index)),errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("—")
     x=x.rename(columns={"os_id":"OS/ID","frota":"FROTA","evento":"EVENTO","descricao":"DESCRIÇÃO DO EVENTO"})
     cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","PREVISÃO","LIBERAÇÃO 10 SUL","SITUAÇÃO"]
+    if incluir_local:
+        local=x.get("local_manutencao", pd.Series(None, index=x.index, dtype=object))
+        x["LOCAL DA MANUTENÇÃO"]=local.fillna("").astype(str).str.strip().replace("", "Não informado")
+        cols_show.insert(3, "LOCAL DA MANUTENÇÃO")
 
     return x[cols_show]
 
@@ -1847,7 +1856,7 @@ body{margin:0;font-family:Arial,sans-serif;color:#243746}button{box-sizing:borde
 
 
 def imprimir_relacao_card(titulo, dados):
-    tabela = tabela_relacao_os(dados)
+    tabela = tabela_relacao_os(dados, incluir_local="SOS" in str(titulo).upper())
     emitido = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     components.html(html_impressao_relacao(titulo, tabela, emitido), height=48, scrolling=False)
 
@@ -1859,7 +1868,7 @@ def modal_os_abertas(titulo, dados, card_id):
     if dados is None or dados.empty:
         st.info("Nenhuma OS aberta neste card.")
         return
-    x=tabela_relacao_os(dados)
+    x=tabela_relacao_os(dados, incluir_local=card_id == 2)
     destaque = x.style.apply(
         lambda linha: ["background-color:#e7f5ed;color:#145c3b" if "FINALIZADA 10 SUL" in str(linha["SITUAÇÃO"]) else "" for _ in linha],
         axis=1,
@@ -2336,6 +2345,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
