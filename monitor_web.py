@@ -2110,7 +2110,6 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
             if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
                 modal_os_abertas(lab,dados_card,i)
-            imprimir_relacao_card(lab, dados_card)
             finalizadas_card = int(dados_card["finalizada_10sul"].sum())
             if finalizadas_card:
                 st.markdown(
