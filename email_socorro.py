@@ -69,6 +69,11 @@ class ArquivosEmail:
         # GitHub returns these UUID files by name, so timestamps decide ordering.
         arquivos = self.listar('historico')
         registros = [self.ler(x['path'])[0] for x in arquivos]
+        ids = {x['id'] for x in registros}
+        for arquivo in self.listar('solicitacoes'):
+            if arquivo['name'][:-5] not in ids:
+                pedido, _ = self.ler(arquivo['path'])
+                registros.append({**pedido, 'status': 'fila'})
         return sorted(registros, key=lambda x: x.get('solicitado_em', ''), reverse=True)[:limite]
 
 
