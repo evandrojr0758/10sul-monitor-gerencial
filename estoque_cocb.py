@@ -233,6 +233,36 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
 
 
 
+def registrar_inventario(dados, ni, quantidade, responsavel, obs, unidade="COCB"):
+    normalizar(dados)
+    material = dados["itens"].get(ni)
+    if material is None or unidade not in UNIDADES:
+        raise ErroEstoque("Material ou unidade inválido.")
+    if isinstance(quantidade, bool) or not isinstance(quantidade, int) or quantidade < 0:
+        raise ErroEstoque("Informe uma quantidade física inteira, igual ou maior que zero.")
+    responsavel = str(responsavel).strip()
+    if not responsavel:
+        raise ErroEstoque("Informe o responsável pela conferência.")
+    item = material["unidades"][unidade]
+    anterior = item["saldo"]
+    diferenca = quantidade - anterior
+    item["saldo"] = quantidade
+    if item["estoque_inicial"] is None:
+        item["estoque_inicial"] = quantidade
+    if unidade == "COCB":
+        material["saldo"] = quantidade
+        material["estoque_inicial"] = item["estoque_inicial"]
+    dados["movimentos"].append({
+        "data_hora": datetime.now(timezone.utc).isoformat(),
+        "ni": ni, "descricao": material["descricao"], "unidade": unidade,
+        "movimento": "INVENTÁRIO", "quantidade": abs(diferenca),
+        "saldo_anterior": anterior, "quantidade_fisica": quantidade,
+        "diferenca": diferenca, "saldo_apos": quantidade,
+        "responsavel": responsavel, "observacao": str(obs).strip(),
+        "primeira_entrada": False, "go_carreta": ""})
+    return anterior, diferenca
+
+
 def exportar_tabela_excel(tabela, titulo):
     """Gera o arquivo Excel no servidor para download pelo aplicativo."""
     from io import BytesIO
@@ -489,13 +519,14 @@ if not somente_movimentacao and st.button("📷 Relatório para enviar ao client
     abrir_relatorio_reposicao(dados, unidade)
 
 pagina = "movimentacao" if somente_movimentacao else st.query_params.get("pagina", "painel")
-if pagina not in ("painel", "cadastro", "movimentacao"):
+if pagina not in ("painel", "cadastro", "movimentacao", "inventario"):
     pagina = "painel"
 if not somente_movimentacao:
-    a, b, c = st.columns(3)
+    a, b, c, d = st.columns(4)
     a.link_button("📊 Painel", "?pagina=painel", use_container_width=True)
     b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
     c.link_button("📦 Movimentação", "?pagina=movimentacao", use_container_width=True)
+    d.link_button("🔎 Inventário", "?pagina=inventario", use_container_width=True)
 
 if pagina == "painel":
     st.subheader("Painel de Estoque — " + unidade)
@@ -633,6 +664,57 @@ elif pagina == "cadastro":
                         tabela["DESCRIÇÃO"].str.contains(busca, case=False, regex=False)]
     st.dataframe(tabela, use_container_width=True, hide_index=True)
     st.download_button("Exportar saldos em Excel", exportar_tabela_excel(tabela, "Saldos"), "saldos_estoque.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+elif pagina == "inventario":
+    st.subheader("Inventário — " + unidade)
+    st.caption("Informe a quantidade física conferida. Ao salvar, ela passa a ser o estoque atual desta unidade.")
+    if mensagem := st.session_state.pop("inventario_sucesso", None):
+        st.success(mensagem)
+    if not dados["itens"]:
+        st.info("Cadastre materiais antes de realizar o inventário.")
+    else:
+        opcoes = {f"{ni} | {item['descricao']}": ni
+                  for ni, item in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"])}
+        escolhido = st.selectbox("Material para conferência", list(opcoes), key="material_inventario")
+        ni_inventario = opcoes[escolhido]
+        chave = "inventario_base_" + unidade + "_" + ni_inventario
+        referencia = st.session_state.setdefault(chave, {
+            "sha": sha, "saldo": dados["itens"][ni_inventario]["unidades"][unidade]["saldo"]})
+        st.metric("Estoque no sistema", referencia["saldo"])
+        if st.button("Atualizar saldo para conferência"):
+            st.session_state.pop(chave, None)
+            st.rerun()
+        with st.form("inventario_" + unidade + "_" + ni_inventario + "_" + str(referencia["sha"])):
+            responsavel = st.text_input("Responsável pela conferência")
+            fisico = st.number_input("Quantidade física conferida", min_value=0,
+                                     value=int(referencia["saldo"]), step=1)
+            observacao = st.text_area("Observação da conferência (opcional)")
+            confirmar = st.form_submit_button("Salvar inventário e atualizar estoque", type="primary")
+        if confirmar:
+            try:
+                if referencia["sha"] != sha:
+                    raise ErroEstoque("O estoque foi atualizado durante a conferência. Clique em Atualizar saldo para conferência, confira novamente e repita o lançamento.")
+                anterior, diferenca = registrar_inventario(
+                    dados, ni_inventario, int(fisico), responsavel, observacao, unidade)
+                base.salvar(dados, sha)
+                st.session_state.pop(chave, None)
+                st.session_state["inventario_sucesso"] = (
+                    f"Inventário salvo. Estoque anterior: {anterior}. "
+                    f"Quantidade física e estoque atual: {int(fisico)}. Diferença: {diferenca:+d}.")
+                st.rerun()
+            except ErroEstoque as exc:
+                st.error(str(exc))
+    st.subheader("Histórico de inventários")
+    historico = [m for m in reversed(dados["movimentos"])
+                 if m.get("movimento") == "INVENTÁRIO" and m.get("unidade", "COCB") == unidade]
+    if historico:
+        tabela_inventarios = pd.DataFrame(historico).reindex(columns=[
+            "data_hora", "ni", "descricao", "unidade", "saldo_anterior",
+            "quantidade_fisica", "diferenca", "saldo_apos", "responsavel", "observacao"])
+        st.dataframe(tabela_inventarios, hide_index=True, use_container_width=True)
+    else:
+        st.info("Nenhum inventário registrado nesta unidade.")
+
 elif pagina == "movimentacao":
     st.subheader("Movimentação")
     tabela = itens_tabela(dados)
