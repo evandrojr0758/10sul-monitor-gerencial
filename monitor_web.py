@@ -1488,6 +1488,66 @@ def calcular_medias_periodicas_laudos(manut, piv):
     return agrupar("DIA"),agrupar("SEMANA")
 
 
+def atividades_da_manutencao_laudo(base, chave_os, frota):
+    """Mantém OS e frota juntas, inclusive quando a frota tem vários atendimentos."""
+    return base.loc[
+        base["CHAVE_OS"].astype(str).eq(str(chave_os)) &
+        base["FROTA"].astype(str).eq(str(frota))
+    ].copy().reset_index(drop=True)
+
+
+def render_atividades_evidencias_gerencial(base, chave_os, frota):
+    import json
+    import hashlib
+    atividades=atividades_da_manutencao_laudo(base,chave_os,frota)
+    if atividades.empty:
+        st.info("Nenhuma atividade de laudo encontrada para este atendimento.")
+        return
+    def arquivos(value):
+        try:
+            parsed=value if isinstance(value,list) else json.loads(value or "[]")
+            return [p for p in parsed if isinstance(p,str) and p.strip()] if isinstance(parsed,list) else []
+        except (TypeError,ValueError):
+            return []
+    for col in ["EVIDENCIAS","ATIVIDADE_ID","INICIO_ATIVIDADE","FIM_ATIVIDADE"]:
+        if col not in atividades: atividades[col]=""
+    contexto=hashlib.sha256(json.dumps([str(chave_os),str(frota),
+        atividades["ATIVIDADE_ID"].fillna("").astype(str).tolist(),
+        atividades["ATIVIDADE"].fillna("").astype(str).tolist()],ensure_ascii=False).encode()).hexdigest()[:20]
+    st.markdown(f"**Atividades — Frota {frota} · OS/ID {chave_os}**")
+    totais=atividades.groupby("CLASSIFICACAO")["HORAS"].sum()
+    st.caption(" · ".join(f"{tipo}: {hhmm(totais.get(tipo,0))}" for tipo in ["ITR","CNP","GM","OUTROS"]))
+    mostrar=atividades[["COMPARTIMENTO","ATIVIDADE","CLASSIFICACAO","EXECUTANTE"]].copy()
+    mostrar=mostrar.rename(columns={"COMPARTIMENTO":"COMP.","CLASSIFICACAO":"TIPO"})
+    for original,label in [("INICIO_ATIVIDADE","INÍCIO"),("FIM_ATIVIDADE","FIM")]:
+        mostrar[label]=pd.to_datetime(atividades[original],errors="coerce").dt.strftime("%d/%m %H:%M").fillna("")
+    mostrar["TEMPO"]=atividades["HORAS"].apply(hhmm)
+    mostrar["EVIDÊNCIAS"]=atividades["EVIDENCIAS"].apply(lambda value:len(arquivos(value)))
+    st.caption("Clique em uma atividade para abrir suas fotos, vídeos ou documentos.")
+    event=st.dataframe(mostrar,hide_index=True,use_container_width=True,
+        height=min(440,38+35*max(1,len(mostrar))),
+        on_select="rerun",selection_mode="single-row",key=f"rg_atividades_{contexto}")
+    selected=list(event.selection.rows) if hasattr(event,"selection") else []
+    if not selected or not 0 <= int(selected[0]) < len(atividades): return
+    row=atividades.iloc[int(selected[0])]
+    evidencias=arquivos(row.get("EVIDENCIAS"))
+    st.markdown(f"**Evidências — {row['ATIVIDADE']}**")
+    if not evidencias:
+        st.info("Nenhuma evidência anexada a esta atividade.")
+        return
+    for i,path in enumerate(evidencias):
+        data,content_type=baixar_evidencia_laudo_web(path)
+        if not data:
+            st.warning("Não foi possível abrir esta evidência. Clique em Atualizar para tentar novamente.")
+        elif content_type.startswith("image/"):
+            st.image(data,use_container_width=True)
+        elif content_type.startswith("video/"):
+            st.video(data)
+        else:
+            st.download_button("📄 Abrir/baixar evidência",data,file_name=path.split("/")[-1],
+                key=f"rg_evidencia_{contexto}_{int(selected[0])}_{i}")
+
+
 def render_relatorio_gerencial_laudos():
     d=carregar_laudos_manuais_web().copy()
     st.markdown("<div class='mon-section'><div class='mon-section-title'>📊 RELATÓRIO GERENCIAL — LAUDOS DE MANUTENÇÃO</div><div class='mon-section-sub'>Análise gerencial baseada exclusivamente nos laudos conferidos e publicados</div></div>",unsafe_allow_html=True)
@@ -1678,8 +1738,16 @@ def render_relatorio_gerencial_laudos():
     with t2:
         with st.container(border=True):
             st.markdown("**Carretas com maior tempo de manutenção**")
-            top=manut.sort_values("H_MANUT",ascending=False).head(10).copy(); top["TEMPO TOTAL"]=top["H_MANUT"].apply(hhmm); top["INÍCIO"]=top["INICIO"].dt.strftime("%d/%m %H:%M"); top["FIM"]=top["FIM"].dt.strftime("%d/%m %H:%M")
-            st.dataframe(top[["FROTA","INÍCIO","FIM","TEMPO TOTAL"]],hide_index=True,use_container_width=True)
+            top=manut.sort_values("H_MANUT",ascending=False).head(10).copy().reset_index(drop=True); top["TEMPO TOTAL"]=top["H_MANUT"].apply(hhmm); top["INÍCIO"]=top["INICIO"].dt.strftime("%d/%m %H:%M"); top["FIM"]=top["FIM"].dt.strftime("%d/%m %H:%M")
+            import hashlib
+            ranking_key=hashlib.sha256(top[["CHAVE_OS","FROTA","INÍCIO","FIM"]].to_json(orient="values").encode()).hexdigest()[:20]
+            st.caption("Clique na frota para ver as atividades e suas evidências.")
+            evento_top=st.dataframe(top[["FROTA","INÍCIO","FIM","TEMPO TOTAL"]],hide_index=True,use_container_width=True,
+                on_select="rerun",selection_mode="single-row",key=f"rg_maior_tempo_{ranking_key}")
+            selecionadas_top=list(evento_top.selection.rows) if hasattr(evento_top,"selection") else []
+            if selecionadas_top and 0 <= int(selecionadas_top[0]) < len(top):
+                manutencao=top.iloc[int(selecionadas_top[0])]
+                render_atividades_evidencias_gerencial(x,manutencao["CHAVE_OS"],manutencao["FROTA"])
     st.markdown("**Detalhamento dos laudos do período**")
     det=x[["FROTA","OS_ID","COMPARTIMENTO","ATIVIDADE","CLASSIFICACAO","EXECUTANTE","HORAS"]].copy(); det["TEMPO"]=det["HORAS"].apply(hhmm); det=det.rename(columns={"OS_ID":"OS/ID","COMPARTIMENTO":"COMP.","CLASSIFICACAO":"TIPO"})
     st.dataframe(det[["FROTA","OS/ID","COMP.","ATIVIDADE","TIPO","EXECUTANTE","TEMPO"]],hide_index=True,use_container_width=True,height=330)
@@ -2357,6 +2425,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
