@@ -572,7 +572,7 @@ def painel_email_socorro():
             tabela = pd.DataFrame([{
                 "Data (Brasília)": pd.to_datetime(x["solicitado_em"], utc=True).tz_convert("America/Sao_Paulo").strftime("%d/%m/%Y %H:%M"),
                 "Tipo": x.get("tipo", ""), "Destinatários": "; ".join(x.get("destinatarios", [])),
-                "Status": {"aceito": "Aceito pelo Resend", "falha": "Falha", "incerto": "Sem confirmação", "processando": "Processando", "validado": "Validado sem envio"}.get(x.get("status"), x.get("status", "")),
+                "Status": {"aceito": "Aceito pelo Resend", "falha": "Falha", "incerto": "Sem confirmação", "fila": "Na fila", "processando": "Processando", "validado": "Validado sem envio"}.get(x.get("status"), x.get("status", "")),
                 "ID Resend": x.get("resend_id", ""), "Detalhes": x.get("erro", ""), "Protocolo": x.get("id", "")
             } for x in registros])
             st.dataframe(tabela, hide_index=True, use_container_width=True)
