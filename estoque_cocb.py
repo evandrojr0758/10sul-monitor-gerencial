@@ -518,10 +518,16 @@ somente_movimentacao = (st.query_params.get("acesso", "") == "movimentacao"
 if not somente_movimentacao and st.button("📷 Relatório para enviar ao cliente", type="primary", use_container_width=True):
     abrir_relatorio_reposicao(dados, unidade)
 
-pagina = "movimentacao" if somente_movimentacao else st.query_params.get("pagina", "painel")
+pagina = st.query_params.get("pagina", "movimentacao" if somente_movimentacao else "painel")
+if somente_movimentacao and pagina not in ("movimentacao", "inventario"):
+    pagina = "movimentacao"
 if pagina not in ("painel", "cadastro", "movimentacao", "inventario"):
     pagina = "painel"
-if not somente_movimentacao:
+if somente_movimentacao:
+    a, b = st.columns(2)
+    a.link_button("📦 Movimentação", "?acesso=movimentacao&pagina=movimentacao", use_container_width=True)
+    b.link_button("🔎 Inventário", "?acesso=movimentacao&pagina=inventario", use_container_width=True)
+else:
     a, b, c, d = st.columns(4)
     a.link_button("📊 Painel", "?pagina=painel", use_container_width=True)
     b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
