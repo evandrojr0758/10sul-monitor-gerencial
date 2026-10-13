@@ -1566,6 +1566,93 @@ def atividades_da_manutencao_laudo(base, chave_os, frota):
     ].copy().reset_index(drop=True)
 
 
+def pendentes_da_frota_monitor(registros, laudos, frota):
+    import json
+    vinculadas=set()
+    for value in laudos.get("EVIDENCIAS",pd.Series(dtype=str)):
+        try:
+            paths=value if isinstance(value,list) else json.loads(value or "[]")
+            if isinstance(paths,list): vinculadas.update(p for p in paths if isinstance(p,str))
+        except (TypeError,ValueError): pass
+    vistos=set(); pendentes=[]
+    for item in registros:
+        path=item.get("path",""); identity=item.get("sha256") or path
+        if not identity or identity in vistos: continue
+        vistos.add(identity)
+        if item.get("armazenado") and path not in vinculadas and norm_frota(item.get("frota",""))==norm_frota(frota):
+            pendentes.append(item)
+    return pendentes
+
+
+def vincular_evidencia_no_monitor(atividade, path):
+    if MOBILE_READ_ONLY:
+        return False,"Esta versão permite somente consulta."
+    key=_secret("SUPABASE_WRITE_KEY") or _secret("SUPABASE_SERVICE_KEY") or SUPABASE_KEY
+    if not SUPABASE_URL or not key:
+        return False,"Acesso à gravação não configurado no monitor."
+    try:
+        payload={"p_id":int(atividade["id"]),"p_atividade_id":str(atividade["ATIVIDADE_ID"]),
+                 "p_os_id":str(atividade["OS_ID"]),"p_frota":norm_frota(atividade["FROTA"]),"p_path":path}
+        headers={"apikey":key,"Content-Type":"application/json"}
+        if not key.startswith(("sb_secret_","sb_publishable_")):
+            headers["Authorization"]=f"Bearer {key}"
+        response=requests.post(f"{SUPABASE_URL}/rest/v1/rpc/anexar_evidencia_itr",headers=headers,json=payload,timeout=45)
+        if response.status_code in (401,403):
+            return False,"O monitor está com acesso de leitura à base. É necessário configurar uma chave de servidor autorizada em SUPABASE_WRITE_KEY nos Secrets para confirmar vínculos."
+        if not response.ok:
+            try:message=response.json().get("message","")
+            except ValueError:message=""
+            return False,message or f"Não foi possível salvar o vínculo (HTTP {response.status_code})."
+        result=response.json()
+        if not isinstance(result,dict) or result.get("id")!=payload["p_id"] or path not in result.get("evidencias",[]):
+            return False,"O vínculo não foi confirmado pela base. Atualize o monitor e confira a atividade."
+        carregar_laudos_manuais_web.clear()
+        return True,"Evidência vinculada à atividade."
+    except (KeyError,TypeError,ValueError):
+        return False,"Atividade sem identificação válida. Atualize o monitor antes de vincular."
+    except Exception:
+        return False,"Não foi possível comunicar com a base. Tente novamente."
+
+
+def render_vinculo_pendente_monitor(atividades, frota, contexto, atividade_selecionada=None):
+    if st.session_state.pop("evidencia_vinculada_monitor",False):
+        st.success("✅ Evidência vinculada. A quantidade de pendências foi atualizada.")
+    imported=carregar_importacoes_evidencias_pendentes()
+    if imported["erro"]: return
+    pendentes=pendentes_da_frota_monitor(imported["registros"],carregar_laudos_manuais_web(),frota)
+    if not pendentes: return
+    with st.expander(f"📷 Resolver {len(pendentes)} evidência(s) pendente(s) aqui",expanded=True):
+        by_path={item["path"]:item for item in pendentes}
+        path=st.selectbox("Evidência pendente",list(by_path),
+            format_func=lambda p:f"{str(by_path[p].get('data',''))[:10]} · {by_path[p].get('arquivo',p.split('/')[-1])}",
+            key=f"rg_pendente_foto_{contexto}")
+        item=by_path[path]
+        data,content_type=baixar_evidencia_laudo_web(path)
+        if not data:
+            st.warning("Não foi possível abrir a evidência. Atualize o monitor e tente novamente.")
+            return
+        if content_type.startswith("image/"): st.image(data,use_container_width=True)
+        elif content_type.startswith("video/"): st.video(data)
+        else: st.download_button("Abrir evidência",data,file_name=item.get("arquivo","evidencia"),key=f"rg_pendente_arquivo_{contexto}")
+        st.write(item.get("legenda") or "Sem descrição na conversa.")
+        st.caption(f"Registro: {item.get('data','')} · Frota {frota}. Confira a data, o compartimento e a atividade antes de confirmar.")
+        if MOBILE_READ_ONLY:
+            st.info("Esta versão permite somente consultar as evidências."); return
+        choices=[None]+list(range(len(atividades)))
+        initial=atividade_selecionada+1 if atividade_selecionada is not None else 0
+        chosen=st.selectbox("Vincular à atividade deste laudo",choices,index=initial,
+            format_func=lambda pos:"Selecione a atividade" if pos is None else
+                f"{atividades.iloc[pos].get('COMPARTIMENTO','')} · {atividades.iloc[pos]['ATIVIDADE']} · {atividades.iloc[pos].get('CLASSIFICACAO','')}",
+            key=f"rg_pendente_atividade_{contexto}_{item.get('sha256','')}")
+        if st.button("✅ Confirmar vínculo nesta atividade",type="primary",disabled=chosen is None,
+            key=f"rg_pendente_confirmar_{contexto}_{item.get('sha256','')}"):
+            ok,message=vincular_evidencia_no_monitor(atividades.iloc[int(chosen)],path)
+            if ok:
+                st.session_state["evidencia_vinculada_monitor"]=True
+                st.rerun()
+            else:st.error(message)
+
+
 def render_atividades_evidencias_gerencial(base, chave_os, frota):
     import json
     import hashlib
@@ -1598,6 +1685,8 @@ def render_atividades_evidencias_gerencial(base, chave_os, frota):
         height=min(440,38+35*max(1,len(mostrar))),
         on_select="rerun",selection_mode="single-row",key=f"rg_atividades_{contexto}")
     selected=list(event.selection.rows) if hasattr(event,"selection") else []
+    selected_pos=int(selected[0]) if selected and 0 <= int(selected[0]) < len(atividades) else None
+    render_vinculo_pendente_monitor(atividades,frota,contexto,selected_pos)
     if not selected or not 0 <= int(selected[0]) < len(atividades): return
     row=atividades.iloc[int(selected[0])]
     evidencias=arquivos(row.get("EVIDENCIAS"))
@@ -1827,7 +1916,7 @@ def render_relatorio_gerencial_laudos():
             if selecionadas_top and 0 <= int(selecionadas_top[0]) < len(top):
                 manutencao=top.iloc[int(selecionadas_top[0])]
                 if pendencias and pendencias.get(str(manutencao["FROTA"]),0):
-                    st.warning(f"Frota {manutencao['FROTA']}: {pendencias[str(manutencao['FROTA'])]} evidência(s) aguardando conferência/vínculo na Central de Conferência de Laudos.")
+                    st.warning(f"Frota {manutencao['FROTA']}: {pendencias[str(manutencao['FROTA'])]} evidência(s) pendente(s). Confira e vincule abaixo, nesta mesma tela.")
                 render_atividades_evidencias_gerencial(x,manutencao["CHAVE_OS"],manutencao["FROTA"])
     st.markdown("**Detalhamento dos laudos do período**")
     det=x[["FROTA","OS_ID","COMPARTIMENTO","ATIVIDADE","CLASSIFICACAO","EXECUTANTE","HORAS"]].copy(); det["TEMPO"]=det["HORAS"].apply(hhmm); det=det.rename(columns={"OS_ID":"OS/ID","COMPARTIMENTO":"COMP.","CLASSIFICACAO":"TIPO"})
@@ -2506,6 +2595,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
