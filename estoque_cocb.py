@@ -263,6 +263,43 @@ def registrar_inventario(dados, ni, quantidade, responsavel, obs, unidade="COCB"
     return anterior, diferenca
 
 
+def registrar_inventario_lote(dados, linhas, responsavel, observacao="", unidade="COCB"):
+    """Confere vários itens sem aplicar ajustes parciais."""
+    import copy
+    import math
+    import uuid
+    preparados = []
+    usados = set()
+    for linha in linhas:
+        valor = linha.get("QUANTIDADE FÍSICA")
+        if valor is None or pd.isna(valor):
+            continue
+        if isinstance(valor, bool):
+            raise ErroEstoque("Informe quantidades físicas inteiras.")
+        try:
+            quantidade = float(valor)
+        except (ValueError, TypeError):
+            raise ErroEstoque("Informe quantidades físicas inteiras.") from None
+        if not math.isfinite(quantidade) or quantidade < 0 or quantidade != int(quantidade):
+            raise ErroEstoque("A quantidade física deve ser inteira, igual ou maior que zero.")
+        ni = str(linha.get("NI", "")).strip()
+        if ni in usados:
+            raise ErroEstoque("O mesmo material foi informado mais de uma vez.")
+        usados.add(ni)
+        obs = str(linha.get("OBSERVAÇÃO") or "").strip() or str(observacao).strip()
+        preparados.append((ni, int(quantidade), obs))
+    if not preparados:
+        raise ErroEstoque("Preencha a quantidade física de pelo menos um material.")
+    novos = copy.deepcopy(dados)
+    lote_id = str(uuid.uuid4())
+    alterados = 0
+    for ni, quantidade, obs in preparados:
+        _, diferenca = registrar_inventario(novos, ni, quantidade, responsavel, obs, unidade)
+        novos["movimentos"][-1]["lote_id"] = lote_id
+        alterados += int(diferenca != 0)
+    return novos, len(preparados), alterados
+
+
 def exportar_tabela_excel(tabela, titulo):
     """Gera o arquivo Excel no servidor para download pelo aplicativo."""
     from io import BytesIO
@@ -673,40 +710,49 @@ elif pagina == "cadastro":
 
 elif pagina == "inventario":
     st.subheader("Inventário — " + unidade)
-    st.caption("Informe a quantidade física conferida. Ao salvar, ela passa a ser o estoque atual desta unidade.")
     if mensagem := st.session_state.pop("inventario_sucesso", None):
         st.success(mensagem)
-    if not dados["itens"]:
+    st.caption("Preencha a quantidade física dos materiais conferidos. Campo vazio mantém o saldo; zero informa que não há estoque físico.")
+    tabela = itens_tabela(dados)
+    if tabela.empty:
         st.info("Cadastre materiais antes de realizar o inventário.")
     else:
-        opcoes = {f"{ni} | {item['descricao']}": ni
-                  for ni, item in sorted(dados["itens"].items(), key=lambda x: x[1]["descricao"])}
-        escolhido = st.selectbox("Material para conferência", list(opcoes), key="material_inventario")
-        ni_inventario = opcoes[escolhido]
-        chave = "inventario_base_" + unidade + "_" + ni_inventario
-        referencia = st.session_state.setdefault(chave, {
-            "sha": sha, "saldo": dados["itens"][ni_inventario]["unidades"][unidade]["saldo"]})
-        st.metric("Estoque no sistema", referencia["saldo"])
-        if st.button("Atualizar saldo para conferência"):
+        chave = "inventario_tabela_" + unidade
+        if chave not in st.session_state:
+            linhas = tabela[["NI", "DESCRIÇÃO", "SALDO ATUAL"]].copy()
+            linhas["QUANTIDADE FÍSICA"] = pd.Series(pd.NA, index=linhas.index, dtype="Int64")
+            linhas["OBSERVAÇÃO"] = ""
+            st.session_state[chave] = {"sha": sha, "linhas": linhas}
+        referencia = st.session_state[chave]
+        if st.button("Atualizar saldos e limpar conferência"):
             st.session_state.pop(chave, None)
             st.rerun()
-        with st.form("inventario_" + unidade + "_" + ni_inventario + "_" + str(referencia["sha"])):
+        with st.form("inventario_lote_" + unidade + "_" + str(referencia["sha"])):
             responsavel = st.text_input("Responsável pela conferência")
-            fisico = st.number_input("Quantidade física conferida", min_value=0,
-                                     value=int(referencia["saldo"]), step=1)
-            observacao = st.text_area("Observação da conferência (opcional)")
-            confirmar = st.form_submit_button("Salvar inventário e atualizar estoque", type="primary")
+            observacao = st.text_input("Observação geral (opcional)")
+            preenchida = st.data_editor(
+                referencia["linhas"], hide_index=True, use_container_width=True,
+                disabled=["NI", "DESCRIÇÃO", "SALDO ATUAL"], num_rows="fixed",
+                column_config={
+                    "NI": st.column_config.TextColumn("NI", width="small"),
+                    "DESCRIÇÃO": st.column_config.TextColumn("Material", width="large"),
+                    "SALDO ATUAL": st.column_config.NumberColumn("Saldo no sistema", format="%d"),
+                    "QUANTIDADE FÍSICA": st.column_config.NumberColumn("Quantidade física", min_value=0, step=1, format="%d"),
+                    "OBSERVAÇÃO": st.column_config.TextColumn("Observação"),
+                },
+                key="editor_" + chave + "_" + str(referencia["sha"]),
+                height=min(700, 40 + 35 * len(referencia["linhas"])))
+            confirmar = st.form_submit_button("Salvar todos os itens conferidos", type="primary")
         if confirmar:
             try:
                 if referencia["sha"] != sha:
-                    raise ErroEstoque("O estoque foi atualizado durante a conferência. Clique em Atualizar saldo para conferência, confira novamente e repita o lançamento.")
-                anterior, diferenca = registrar_inventario(
-                    dados, ni_inventario, int(fisico), responsavel, observacao, unidade)
-                base.salvar(dados, sha)
+                    raise ErroEstoque("O estoque mudou durante a conferência. Nenhum item foi ajustado. Atualize os saldos, confira novamente e repita o lançamento.")
+                novos, conferidos, alterados = registrar_inventario_lote(
+                    dados, preenchida.to_dict("records"), responsavel, observacao, unidade)
+                base.salvar(novos, sha)
                 st.session_state.pop(chave, None)
                 st.session_state["inventario_sucesso"] = (
-                    f"Inventário salvo. Estoque anterior: {anterior}. "
-                    f"Quantidade física e estoque atual: {int(fisico)}. Diferença: {diferenca:+d}.")
+                    f"Inventário salvo: {conferidos} item(ns) conferido(s), {alterados} saldo(s) corrigido(s).")
                 st.rerun()
             except ErroEstoque as exc:
                 st.error(str(exc))
