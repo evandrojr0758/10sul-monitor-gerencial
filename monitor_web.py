@@ -575,7 +575,7 @@ def carregar_laudos_manuais_web():
 
 def baixar_evidencia_laudo_web(path):
     try:
-        url=f"{SUPABASE_URL}/storage/v1/object/evidencias-desvios/{path}"
+        url=f"{SUPABASE_URL}/storage/v1/object/authenticated/evidencias-desvios/{path}"
         h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
         r=requests.get(url,headers=h,timeout=45)
         return (r.content,r.headers.get("content-type","")) if r.ok else (None,"")
@@ -2357,6 +2357,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
