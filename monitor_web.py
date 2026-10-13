@@ -599,6 +599,74 @@ def atualizar_atividade_laudo_web(atividade_id, dados):
         return True,"Alteração salva."
     except Exception as e:return False,str(e)
 
+@st.cache_data(ttl=60,show_spinner=False)
+def carregar_importacoes_evidencias_pendentes():
+    import json
+    import urllib.parse
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {"registros":[],"erro":"Acesso às evidências não configurado."}
+    headers={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}"}
+    storage=f"{SUPABASE_URL}/storage/v1"
+    registros=[]; offset=0
+    try:
+        while True:
+            response=requests.post(f"{storage}/object/list/evidencias-desvios",headers=headers,
+                json={"prefix":"avarias-itr/importacoes","limit":100,"offset":offset,
+                      "sortBy":{"column":"updated_at","order":"desc"}},timeout=30)
+            response.raise_for_status(); page=response.json()
+            for obj in page:
+                name=obj.get("name","")
+                if not name.endswith(".json"): continue
+                path=urllib.parse.quote("avarias-itr/importacoes/"+name,safe="/")
+                data=requests.get(f"{storage}/object/authenticated/evidencias-desvios/{path}",headers=headers,timeout=30)
+                data.raise_for_status(); registros.extend(data.json().get("evidencias",[]))
+            if len(page)<100: break
+            offset+=len(page)
+        return {"registros":registros,"erro":""}
+    except Exception as exc:
+        return {"registros":[],"erro":str(exc)}
+
+
+def contar_evidencias_pendentes(registros, laudos):
+    """Só conta arquivos armazenados ainda sem vínculo; não mistura ausência de foto com pendência."""
+    import json
+    vinculadas=set()
+    for value in laudos.get("EVIDENCIAS",pd.Series(dtype=str)):
+        try:
+            paths=value if isinstance(value,list) else json.loads(value or "[]")
+            if isinstance(paths,list): vinculadas.update(p for p in paths if isinstance(p,str))
+        except (TypeError,ValueError): pass
+    contagem={}; vistos=set(); sem_frota=0
+    for item in registros:
+        path=item.get("path",""); identity=item.get("sha256") or path
+        if not identity or identity in vistos: continue
+        vistos.add(identity)
+        if not item.get("armazenado") or path in vinculadas: continue
+        frota=norm_frota(item.get("frota",""))
+        if not frota or frota.lower() in ("nan","none","null","<na>"):
+            sem_frota+=1; continue
+        contagem[frota]=contagem.get(frota,0)+1
+    return contagem,sem_frota
+
+
+def status_evidencias_pendentes(laudos):
+    imported=carregar_importacoes_evidencias_pendentes()
+    if imported["erro"]:
+        st.warning("Não foi possível consultar as evidências pendentes. Clique em Atualizar para tentar novamente.")
+        return None,0
+    return contar_evidencias_pendentes(imported["registros"],laudos)
+
+
+def destacar_frotas_pendentes(tabela, contagem):
+    tabela=tabela.copy()
+    tabela["EVIDÊNCIAS PENDENTES"]=tabela["FROTA"].apply(
+        lambda frota: "Indisponível" if contagem is None else
+        (f"⚠️ {contagem[norm_frota(frota)]} pendentes" if contagem.get(norm_frota(frota),0) else "—"))
+    return tabela.style.apply(lambda row:
+        ["background-color: #fff3cd; color: #713f12; font-weight: 600" if
+         contagem is not None and contagem.get(norm_frota(row["FROTA"]),0)>0 else ""]*len(row),axis=1)
+
+
 def render_laudos_web():
     import json
     d=carregar_laudos_manuais_web()
@@ -660,8 +728,10 @@ def render_laudos_web():
     if _busca_frota and resumo.empty:
         st.info("Nenhuma frota encontrada para essa pesquisa.")
     st.caption("Selecione uma frota para abrir o detalhamento.")
+    pendencias,_=status_evidencias_pendentes(d)
+    st.caption("⚠️ Amarelo: a frota tem evidências importadas ainda pendentes de vínculo ou conferência.")
     ev=st.dataframe(
-        resumo,
+        destacar_frotas_pendentes(resumo,pendencias),
         use_container_width=True,
         hide_index=True,
         height=min(310, 38+35*max(1,len(resumo))),
@@ -1738,15 +1808,26 @@ def render_relatorio_gerencial_laudos():
     with t2:
         with st.container(border=True):
             st.markdown("**Carretas com maior tempo de manutenção**")
+            pendencias,sem_frota=status_evidencias_pendentes(d)
+            if pendencias is not None:
+                st.caption("⚠️ Amarelo: evidências pendentes de conferência/vínculo para a frota. A quantidade considera todas as importações.")
+                if pendencias or sem_frota:
+                    with st.expander(f"⚠️ Frotas com evidências pendentes ({len(pendencias)})",expanded=False):
+                        lista=pd.DataFrame([{"FROTA":f,"ARQUIVOS PENDENTES":q} for f,q in sorted(pendencias.items())],
+                            columns=["FROTA","ARQUIVOS PENDENTES"])
+                        st.dataframe(lista,hide_index=True,use_container_width=True)
+                        if sem_frota: st.caption(f"Outros {sem_frota} arquivos aguardam identificação da frota.")
             top=manut.sort_values("H_MANUT",ascending=False).head(10).copy().reset_index(drop=True); top["TEMPO TOTAL"]=top["H_MANUT"].apply(hhmm); top["INÍCIO"]=top["INICIO"].dt.strftime("%d/%m %H:%M"); top["FIM"]=top["FIM"].dt.strftime("%d/%m %H:%M")
             import hashlib
             ranking_key=hashlib.sha256(top[["CHAVE_OS","FROTA","INÍCIO","FIM"]].to_json(orient="values").encode()).hexdigest()[:20]
             st.caption("Clique na frota para ver as atividades e suas evidências.")
-            evento_top=st.dataframe(top[["FROTA","INÍCIO","FIM","TEMPO TOTAL"]],hide_index=True,use_container_width=True,
+            evento_top=st.dataframe(destacar_frotas_pendentes(top[["FROTA","INÍCIO","FIM","TEMPO TOTAL"]],pendencias),hide_index=True,use_container_width=True,
                 on_select="rerun",selection_mode="single-row",key=f"rg_maior_tempo_{ranking_key}")
             selecionadas_top=list(evento_top.selection.rows) if hasattr(evento_top,"selection") else []
             if selecionadas_top and 0 <= int(selecionadas_top[0]) < len(top):
                 manutencao=top.iloc[int(selecionadas_top[0])]
+                if pendencias and pendencias.get(str(manutencao["FROTA"]),0):
+                    st.warning(f"Frota {manutencao['FROTA']}: {pendencias[str(manutencao['FROTA'])]} evidência(s) aguardando conferência/vínculo na Central de Conferência de Laudos.")
                 render_atividades_evidencias_gerencial(x,manutencao["CHAVE_OS"],manutencao["FROTA"])
     st.markdown("**Detalhamento dos laudos do período**")
     det=x[["FROTA","OS_ID","COMPARTIMENTO","ATIVIDADE","CLASSIFICACAO","EXECUTANTE","HORAS"]].copy(); det["TEMPO"]=det["HORAS"].apply(hhmm); det=det.rename(columns={"OS_ID":"OS/ID","COMPARTIMENTO":"COMP.","CLASSIFICACAO":"TIPO"})
@@ -2425,6 +2506,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
