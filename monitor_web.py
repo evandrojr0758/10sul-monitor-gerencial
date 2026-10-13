@@ -1805,13 +1805,10 @@ if pesquisar and frota_q.strip():
 
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
-@st.dialog("Relação de carretas", width="large")
-def modal_os_abertas(titulo, dados, card_id):
-    chave_modal = f"lib_10sul_card_{card_id}"
-    st.markdown(f"### {titulo}")
+
+def tabela_relacao_os(dados):
     if dados is None or dados.empty:
-        st.info("Nenhuma OS aberta neste card.")
-        return
+        return pd.DataFrame(columns=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","PREVISÃO","LIBERAÇÃO 10 SUL","SITUAÇÃO"])
     x=dados.copy()
     x["TEMPO ABERTO"]=x["horas_aberto"].apply(hhmm)
     x["PARADA"]=pd.to_datetime(x["parada"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informada")
@@ -1822,11 +1819,53 @@ def modal_os_abertas(titulo, dados, card_id):
     x["PREVISÃO"]=pd.to_datetime(x.get("previsao_liberacao_10sul", pd.Series(pd.NaT, index=x.index)),errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("—")
     x=x.rename(columns={"os_id":"OS/ID","frota":"FROTA","evento":"EVENTO","descricao":"DESCRIÇÃO DO EVENTO"})
     cols_show=["OS/ID","FROTA","EVENTO","DESCRIÇÃO DO EVENTO","PARADA","INÍCIO","TEMPO ABERTO","PREVISÃO","LIBERAÇÃO 10 SUL","SITUAÇÃO"]
-    destaque = x[cols_show].style.apply(
+
+    return x[cols_show]
+
+
+def html_impressao_relacao(titulo, tabela, emitido_em):
+    from html import escape
+    total_frotas = tabela["FROTA"].nunique() if "FROTA" in tabela else 0
+    cabecalho = "".join("<th>" + escape(str(c)) + "</th>" for c in tabela.columns)
+    linhas = []
+    for _, linha in tabela.fillna("—").iterrows():
+        classe = "finalizada" if "FINALIZADA 10 SUL" in str(linha.get("SITUAÇÃO", "")) else ""
+        celulas = "".join("<td>" + escape(str(v)) + "</td>" for v in linha)
+        linhas.append('<tr class="' + classe + '">' + celulas + "</tr>")
+    bloqueado = " disabled" if tabela.empty else ""
+    return """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relação de frotas</title><style>
+body{margin:0;font-family:Arial,sans-serif;color:#243746}button{box-sizing:border-box;width:100%;padding:10px 8px;border:1px solid #ccd6de;border-radius:8px;background:#fff;color:#15364b;font-size:13px;font-weight:600;cursor:pointer}button:disabled{opacity:.45;cursor:default}button:focus-visible{outline:3px solid #208991;outline-offset:2px}.relatorio{display:none}h1{font-size:18px;margin:0 0 6px}h2{font-size:14px;margin:8px 0}p{font-size:10px;margin:6px 0}table{width:100%;border-collapse:collapse;table-layout:auto;font-size:8px}th,td{padding:6px 4px;border:1px solid #ccd6de;vertical-align:top;overflow-wrap:anywhere}th{background:#eaf0f4;text-align:left;color:#15364b}tr:nth-child(even){background:#f5f7f9}tr.finalizada{background:#e7f5ed;color:#145c3b}thead{display:table-header-group}tr{break-inside:avoid}
+@media print{button{display:none}.relatorio{display:block}th,tr{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+@page{size:A4 landscape;margin:10mm}
+</style></head><body><button id="imprimir" """ + bloqueado + """>🖨️ Imprimir relação</button><section class="relatorio">
+<h1>10 SUL · OFICINA ARACRUZ</h1><h2>""" + escape(str(titulo)) + """</h2>
+<p>Unidade: ARA | Emitido em """ + escape(str(emitido_em)) + """ (Brasília)</p>
+<p>""" + str(len(tabela)) + """ atendimento(s) · """ + str(total_frotas) + """ frota(s)</p>
+<table><thead><tr>""" + cabecalho + """</tr></thead><tbody>""" + "".join(linhas) + """</tbody></table>
+<p>Verde: finalizada pela 10 Sul, aguardando baixa do cliente. Relação conforme o card consultado.</p>
+<p>Desenvolvido por Evandro Junior</p></section><script>document.getElementById('imprimir').onclick=()=>window.print();</script></body></html>"""
+
+
+def imprimir_relacao_card(titulo, dados):
+    tabela = tabela_relacao_os(dados)
+    emitido = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
+    components.html(html_impressao_relacao(titulo, tabela, emitido), height=48, scrolling=False)
+
+
+@st.dialog("Relação de carretas", width="large")
+def modal_os_abertas(titulo, dados, card_id):
+    chave_modal = f"lib_10sul_card_{card_id}"
+    st.markdown(f"### {titulo}")
+    if dados is None or dados.empty:
+        st.info("Nenhuma OS aberta neste card.")
+        return
+    x=tabela_relacao_os(dados)
+    destaque = x.style.apply(
         lambda linha: ["background-color:#e7f5ed;color:#145c3b" if "FINALIZADA 10 SUL" in str(linha["SITUAÇÃO"]) else "" for _ in linha],
         axis=1,
     )
     st.dataframe(destaque,use_container_width=True,hide_index=True,key=f"{chave_modal}_tabela")
+    imprimir_relacao_card(titulo, dados)
     st.caption("Verde: concluída pela 10 Sul, aguardando baixa ASN. O tempo considera a conclusão informada.")
     if not MOBILE_READ_ONLY:
         st.markdown("#### Previsão e liberação 10 Sul")
@@ -2049,6 +2088,7 @@ for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
         with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
             if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
                 modal_os_abertas(lab,dados_card,i)
+            imprimir_relacao_card(lab, dados_card)
             finalizadas_card = int(dados_card["finalizada_10sul"].sum())
             if finalizadas_card:
                 st.markdown(
