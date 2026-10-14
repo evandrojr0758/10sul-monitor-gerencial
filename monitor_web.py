@@ -1923,6 +1923,31 @@ def render_relatorio_gerencial_laudos():
     st.dataframe(det[["FROTA","OS/ID","COMP.","ATIVIDADE","TIPO","EXECUTANTE","TEMPO"]],hide_index=True,use_container_width=True,height=330)
 
 
+def _retornos_pos_itr(base, agora):
+    """Última ITR concluída por frota; conta OS distintas até 120h após a liberação."""
+    cols = ["Frota", "Última ITR", "Qtd. paradas após ITR"]
+    b = base.copy()
+    if b.empty:
+        return pd.DataFrame(columns=cols), b
+    b = b.loc[b.get("excluida_asn_em", pd.Series(None, index=b.index, dtype=object)).isna()]
+    b = b.drop_duplicates(["os_id", "frota"], keep="last").copy()
+    ev = b["evento"].fillna("").astype(str).str.upper().str.strip()
+    # A liberação operacional 10 Sul prevalece para o intervalo de retorno.
+    lib = pd.to_datetime(b.get("fim_liberacao_10sul", pd.Series(pd.NaT, index=b.index)), errors="coerce")
+    b["_lib_itr"] = lib.fillna(pd.to_datetime(b["fim"], errors="coerce"))
+    itrs = b.loc[ev.eq("ITR") & b["_lib_itr"].notna() & b["_lib_itr"].le(agora)]
+    itrs = itrs.sort_values(["_lib_itr", "os_id"]).drop_duplicates("frota", keep="last")
+    ret = b.loc[ev.str.contains("CORRETIVA", regex=False) | ev.str.match(r"^(?:SOS\b|CNP\b)")].copy()
+    ret["_parada_retorno"] = pd.to_datetime(ret["parada"], errors="coerce").fillna(pd.to_datetime(ret["inicio"], errors="coerce"))
+    itrs = itrs[["frota", "os_id", "_lib_itr"]].rename(columns={"os_id":"OS ITR", "_lib_itr":"Última ITR"})
+    ret = ret.drop(columns=["_lib_itr"]).merge(itrs, on="frota", how="inner")
+    delta = ret["_parada_retorno"] - ret["Última ITR"]
+    ret = ret.loc[delta.ge(pd.Timedelta(0)) & delta.le(pd.Timedelta(days=5)) & ret["_parada_retorno"].le(agora) & ret["os_id"].ne(ret["OS ITR"])].copy()
+    resumo = ret.groupby(["frota", "Última ITR"], as_index=False).agg(**{"Qtd. paradas após ITR":("os_id", "nunique")})
+    resumo = resumo.rename(columns={"frota":"Frota"}).sort_values(["Qtd. paradas após ITR", "Frota"], ascending=[False,True])
+    return resumo[cols], ret
+
+
 # Oficina agora segue a baixa ASN: conclusão 10 Sul mantém a OS na relação.
 status=df["status"].fillna("").astype(str).str.upper()
 fim_cliente = pd.to_datetime(df.get("fim_asn", df["fim"]), errors="coerce")
@@ -2387,6 +2412,25 @@ with st.container(key="card_inconsistencias_asn"):
     if ids_conferir:
         st.caption("OS sem baixa com outro atendimento • horários sobrepostos ou incoerentes. Abra para comparar as OS.")
 
+# Retornos pós-ITR: mantém também as paradas já liberadas na contagem.
+retornos_itr, detalhes_retornos_itr = _retornos_pos_itr(df, agora)
+with st.container(key="card_retornos_itr", border=True):
+    st.markdown("### 🚨 Retornos após ITR — até 5 dias")
+    st.caption("CORRETIVA + SOS • última ITR concluída • intervalo da liberação até a parada • uma contagem por OS")
+    if retornos_itr.empty:
+        st.caption("Nenhuma carreta com retorno em até 5 dias após a última ITR.")
+    else:
+        st.markdown("""<style>
+        @keyframes retorno_itr_piscar {0%,100%{background:#fff1f2;border-color:#ef4444}50%{background:#fecaca;border-color:#991b1b}}
+        .st-key-card_retornos_itr{animation:retorno_itr_piscar 1.6s ease-in-out infinite;border:2px solid #ef4444!important;border-radius:12px}
+        @media(prefers-reduced-motion:reduce){.st-key-card_retornos_itr{animation:none!important}}
+        </style>""", unsafe_allow_html=True)
+        st.dataframe(retornos_itr, hide_index=True, use_container_width=True,
+                     column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+        with st.expander("Ver as paradas contabilizadas"):
+            det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
+            st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
+
 with st.container(key="card_os_excluidas_asn"):
     if st.button(f"{len(os_excluidas)}\n\n🗑️ OS EXCLUÍDAS NA LISTA ASN", key="kpi_os_excluidas_asn", use_container_width=True):
         modal_os_excluidas()
@@ -2595,6 +2639,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
