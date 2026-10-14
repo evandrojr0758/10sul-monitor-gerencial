@@ -585,16 +585,19 @@ def atualizar_atividade_laudo_web(atividade_id, dados):
     """Atualiza uma atividade já conferida na tabela public.laudos_monitor."""
     if MOBILE_READ_ONLY:
         return False, "Esta versão permite somente consulta."
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return False,"Supabase não configurado."
+    chave_escrita=_secret("SUPABASE_SERVICE_KEY")
+    if not SUPABASE_URL or not chave_escrita:
+        return False,"O Monitor está somente para leitura. Configure a credencial de escrita nos Secrets do servidor."
     aid=str(atividade_id or "").strip()
     if not aid:
         return False,"Atividade sem identificador; não é seguro editar."
     try:
         url=f"{SUPABASE_URL}/rest/v1/laudos_monitor"
-        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}","Content-Type":"application/json","Prefer":"return=minimal"}
-        r=requests.patch(url,headers=h,params={"atividade_id":f"eq.{aid}"},json=dados,timeout=45)
+        h={"apikey":chave_escrita,"Authorization":f"Bearer {chave_escrita}","Content-Type":"application/json","Prefer":"return=representation"}
+        r=requests.patch(url,headers=h,params={"atividade_id":f"eq.{aid}","select":"atividade_id"},json=dados,timeout=45)
         if not r.ok:return False,f"Supabase HTTP {r.status_code}: {r.text[:500]}"
+        if not r.json() or any(str(x.get("atividade_id"))!=aid for x in r.json()):
+            return False,"A atividade não foi gravada. Recarregue e confira as permissões de escrita."
         carregar_laudos_manuais_web.clear()
         return True,"Alteração salva."
     except Exception as e:return False,str(e)
