@@ -599,6 +599,30 @@ def atualizar_atividade_laudo_web(atividade_id, dados):
         return True,"Alteração salva."
     except Exception as e:return False,str(e)
 
+def atualizar_datas_laudo_web(ids, inicio, fim):
+    """Atualiza somente o período 10 Sul das linhas do laudo selecionado."""
+    if MOBILE_READ_ONLY:
+        return False, "Esta versão permite somente consulta."
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False, "Supabase não configurado."
+    try:
+        ids=sorted({int(i) for i in ids})
+        ini=pd.Timestamp(inicio); final=pd.Timestamp(fim)
+        if not ids or pd.isna(ini) or pd.isna(final) or final<ini:
+            return False, "Informe início e fim válidos; o fim não pode ser anterior ao início."
+        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}","Content-Type":"application/json","Prefer":"return=representation"}
+        r=requests.patch(f"{SUPABASE_URL}/rest/v1/laudos_monitor",headers=h,
+            params={"id":"in.("+",".join(map(str,ids))+")","select":"id"},
+            json={"inicio_manutencao":ini.strftime("%Y-%m-%dT%H:%M:%S"),"fim_manutencao":final.strftime("%Y-%m-%dT%H:%M:%S")},timeout=45)
+        if not r.ok: return False,f"Supabase HTTP {r.status_code}: {r.text[:500]}"
+        if {int(x["id"]) for x in r.json()}!=set(ids):
+            carregar_laudos_manuais_web.clear()
+            return False, "Nem todas as linhas foram atualizadas. Recarregue e confira o laudo."
+        carregar_laudos_manuais_web.clear()
+        return True, "Datas do laudo salvas."
+    except Exception as e:
+        return False,str(e)
+
 @st.cache_data(ttl=60,show_spinner=False)
 def carregar_importacoes_evidencias_pendentes():
     import json
@@ -770,12 +794,56 @@ def render_laudos_web():
     det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower()!="nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
 
     st.markdown(f"**Frota {det.iloc[0]['FROTA']} — detalhamento**")
-    liberacoes=pd.DataFrame({
-        "FIM INFORMADO — 10 SUL":pd.to_datetime(det["FIM_MANUTENCAO"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informado"),
-        "FIM CLIENTE":pd.to_datetime(det["FIM_CLIENTE"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("OS ainda sem baixa"),
-    }).drop_duplicates()
-    st.dataframe(liberacoes,hide_index=True,use_container_width=True)
-
+    if MOBILE_READ_ONLY:
+        liberacoes=pd.DataFrame({
+            "FIM INFORMADO — 10 SUL":pd.to_datetime(det["FIM_MANUTENCAO"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informado"),
+            "FIM CLIENTE":pd.to_datetime(det["FIM_CLIENTE"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("OS ainda sem baixa"),
+        }).drop_duplicates()
+        st.dataframe(liberacoes,hide_index=True,use_container_width=True)
+    else:
+        periodos=[]; ids_periodos=[]
+        # Um período por laudo, mantendo separados os compartimentos da mesma OS.
+        for (registro,comp,ini,fim), grupo in det.groupby(
+            ["REGISTRO","COMPARTIMENTO","INICIO_MANUTENCAO","FIM_MANUTENCAO"],dropna=False,sort=False):
+            periodos.append({
+                "LAUDO":str(registro), "COMPARTIMENTO":str(comp),
+                "INÍCIO INFORMADO — 10 SUL":pd.to_datetime(ini,errors="coerce"),
+                "FIM INFORMADO — 10 SUL":pd.to_datetime(fim,errors="coerce"),
+                "FIM CLIENTE":pd.to_datetime(grupo["FIM_CLIENTE"],errors="coerce").max(),
+            })
+            ids_periodos.append(grupo["id"].tolist())
+        datas_base=pd.DataFrame(periodos)
+        st.caption("Edite a data e hora de início ou fim do laudo nesta tabela e salve abaixo.")
+        datas_editadas=st.data_editor(datas_base,hide_index=True,use_container_width=True,num_rows="fixed",
+            disabled=["LAUDO","COMPARTIMENTO","FIM CLIENTE"],
+            column_config={
+                "LAUDO":st.column_config.TextColumn("Laudo",width="medium"),
+                "INÍCIO INFORMADO — 10 SUL":st.column_config.DatetimeColumn("INÍCIO INFORMADO — 10 SUL",format="DD/MM/YYYY HH:mm",required=True),
+                "FIM INFORMADO — 10 SUL":st.column_config.DatetimeColumn("FIM INFORMADO — 10 SUL",format="DD/MM/YYYY HH:mm",required=True),
+                "FIM CLIENTE":st.column_config.DatetimeColumn("FIM CLIENTE",format="DD/MM/YYYY HH:mm"),
+            },key=f"datas_laudo_{reg}_{frota_chave}")
+        if st.button("💾 SALVAR DATAS DO LAUDO",type="primary",key=f"salvar_datas_laudo_{reg}_{frota_chave}"):
+            planos=[]; erros_datas=[]
+            for i,linha in datas_editadas.iterrows():
+                ini=linha["INÍCIO INFORMADO — 10 SUL"]; fim=linha["FIM INFORMADO — 10 SUL"]
+                if pd.isna(ini) or pd.isna(fim) or fim<ini:
+                    erros_datas.append(f"Laudo {linha['LAUDO']}: informe datas válidas e fim igual ou posterior ao início.")
+                elif ini!=datas_base.iloc[i]["INÍCIO INFORMADO — 10 SUL"] or fim!=datas_base.iloc[i]["FIM INFORMADO — 10 SUL"]:
+                    planos.append((ids_periodos[i],ini,fim))
+            if erros_datas:
+                st.error(" | ".join(erros_datas))
+            else:
+                for ids,ini,fim in planos:
+                    ok,msg=atualizar_datas_laudo_web(ids,ini,fim)
+                    if not ok:
+                        erros_datas.append(msg);break
+                if erros_datas: st.error(" | ".join(erros_datas))
+                elif planos:
+                    st.session_state["datas_laudo_salvas"]=True
+                    st.rerun()
+                else: st.info("Nenhuma data foi alterada.")
+        if st.session_state.pop("datas_laudo_salvas",False):
+            st.success("Datas do laudo atualizadas. Os indicadores foram recalculados.")
 
     def _tem_evidencia_atual(v):
         try:
