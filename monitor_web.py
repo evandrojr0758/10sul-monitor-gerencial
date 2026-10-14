@@ -2427,6 +2427,33 @@ with st.container(key="card_retornos_itr", border=True):
         </style>""", unsafe_allow_html=True)
         st.dataframe(retornos_itr, hide_index=True, use_container_width=True,
                      column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+        st.markdown("#### Ranking de paradas por descrição do serviço")
+        ranking_servicos = detalhes_retornos_itr.drop_duplicates(["frota", "os_id"]).copy()
+        ranking_servicos["Descrição do serviço"] = (
+            ranking_servicos["descricao"].fillna("").astype(str)
+            .str.replace(r"\s+", " ", regex=True).str.strip().str.upper()
+            .replace("", "SEM DESCRIÇÃO INFORMADA")
+        )
+        ranking_servicos = (
+            ranking_servicos.groupby("Descrição do serviço", as_index=False)
+            .size().rename(columns={"size": "Qtd. paradas"})
+            .sort_values(["Qtd. paradas", "Descrição do serviço"], ascending=[False, True])
+        )
+        ordem_servicos = ranking_servicos["Descrição do serviço"].tolist()
+        barras_servicos = alt.Chart(ranking_servicos).encode(
+            y=alt.Y("Descrição do serviço:N", sort=ordem_servicos,
+                    axis=alt.Axis(title=None, labelLimit=320, labelFontSize=12)),
+            x=alt.X("Qtd. paradas:Q", axis=alt.Axis(title="Quantidade de paradas", tickMinStep=1),
+                    scale=alt.Scale(domainMin=0)),
+            tooltip=[alt.Tooltip("Descrição do serviço:N"), alt.Tooltip("Qtd. paradas:Q", format="d")],
+        )
+        grafico_servicos = (
+            barras_servicos.mark_bar(color="#dc2626", cornerRadiusEnd=4)
+            + barras_servicos.mark_text(align="left", dx=5, fontWeight="bold").encode(
+                text=alt.Text("Qtd. paradas:Q", format="d"))
+        ).properties(height=max(150, len(ranking_servicos) * 32), padding={"right":35})
+        st.altair_chart(grafico_servicos, use_container_width=True)
+        st.caption("Cada OS conta uma parada. Descrições iguais são agrupadas, ignorando diferenças de maiúsculas e espaços. Passe sobre a barra para ler a descrição completa.")
         with st.expander("Ver as paradas contabilizadas"):
             det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
             st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
