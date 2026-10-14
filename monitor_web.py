@@ -603,14 +603,15 @@ def atualizar_datas_laudo_web(ids, inicio, fim):
     """Atualiza somente o período 10 Sul das linhas do laudo selecionado."""
     if MOBILE_READ_ONLY:
         return False, "Esta versão permite somente consulta."
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return False, "Supabase não configurado."
+    chave_escrita=_secret("SUPABASE_SERVICE_KEY")
+    if not SUPABASE_URL or not chave_escrita:
+        return False, "O Monitor está configurado somente para leitura. Configure SUPABASE_SERVICE_KEY nos Secrets do servidor para salvar datas."
     try:
         ids=sorted({int(i) for i in ids})
         ini=pd.Timestamp(inicio); final=pd.Timestamp(fim)
         if not ids or pd.isna(ini) or pd.isna(final) or final<ini:
             return False, "Informe início e fim válidos; o fim não pode ser anterior ao início."
-        h={"apikey":SUPABASE_KEY,"Authorization":f"Bearer {SUPABASE_KEY}","Content-Type":"application/json","Prefer":"return=representation"}
+        h={"apikey":chave_escrita,"Authorization":f"Bearer {chave_escrita}","Content-Type":"application/json","Prefer":"return=representation"}
         r=requests.patch(f"{SUPABASE_URL}/rest/v1/laudos_monitor",headers=h,
             params={"id":"in.("+",".join(map(str,ids))+")","select":"id"},
             json={"inicio_manutencao":ini.strftime("%Y-%m-%dT%H:%M:%S"),"fim_manutencao":final.strftime("%Y-%m-%dT%H:%M:%S")},timeout=45)
