@@ -2412,6 +2412,42 @@ with st.container(key="card_inconsistencias_asn"):
     if ids_conferir:
         st.caption("OS sem baixa com outro atendimento • horários sobrepostos ou incoerentes. Abra para comparar as OS.")
 
+@st.dialog("Atividades das paradas após ITR", width="large")
+def modal_atividades_retornos_itr(frota, paradas):
+    st.markdown(f"### 🚛 Frota {frota}")
+    paradas = paradas.loc[paradas["frota"].eq(frota)].sort_values("_parada_retorno").copy()
+    if paradas.empty:
+        st.info("Nenhuma parada contabilizada para esta frota.")
+        return
+    st.caption(f"Última ITR: {paradas['Última ITR'].iloc[0].strftime('%d/%m/%Y %H:%M')} • {paradas['os_id'].nunique()} parada(s) em até 5 dias")
+    laudos = carregar_laudos_manuais_web().copy()
+    if st.session_state.get("_erro_laudos_web"):
+        st.warning("Não foi possível consultar os laudos agora. As descrições das OS continuam disponíveis abaixo.")
+    for numero, (_, parada) in enumerate(paradas.iterrows(), 1):
+        with st.container(border=True):
+            data = parada["_parada_retorno"].strftime("%d/%m/%Y %H:%M")
+            st.markdown(f"**{numero}ª parada • OS {parada['os_id']} • {parada['evento']}**")
+            st.caption(f"Parada: {data} • Status: {parada.get('status', '')}")
+            valor_descricao = parada.get("descricao", "")
+            descricao = "" if pd.isna(valor_descricao) else str(valor_descricao).strip()
+            st.markdown("**Descrição do serviço na OS**")
+            st.write(descricao or "Descrição não informada.")
+            if laudos.empty or not {"FROTA", "OS_ID"}.issubset(laudos.columns):
+                atividades = pd.DataFrame()
+            else:
+                atividades = laudos.loc[
+                    laudos["FROTA"].apply(norm_frota).eq(norm_frota(frota)) &
+                    laudos["OS_ID"].map(_chave_vinculo_laudo).eq(_chave_vinculo_laudo(parada["os_id"]))
+                ].copy()
+            st.markdown("**Atividades realizadas — laudos vinculados**")
+            if atividades.empty:
+                st.caption("Nenhuma atividade de laudo vinculada a esta OS e frota.")
+            else:
+                nomes = {"ATIVIDADE":"Atividade", "COMPARTIMENTO":"Compartimento", "CLASSIFICACAO":"Tipo", "EXECUTANTE":"Executante", "INICIO_ATIVIDADE":"Início", "FIM_ATIVIDADE":"Fim", "HORAS":"Horas"}
+                campos = [c for c in nomes if c in atividades.columns]
+                st.dataframe(atividades[campos].rename(columns=nomes), hide_index=True, use_container_width=True)
+
+
 # Retornos pós-ITR: mantém também as paradas já liberadas na contagem.
 retornos_itr, detalhes_retornos_itr = _retornos_pos_itr(df, agora)
 with st.container(key="card_retornos_itr", border=True):
@@ -2425,8 +2461,20 @@ with st.container(key="card_retornos_itr", border=True):
         .st-key-card_retornos_itr{animation:retorno_itr_piscar 1.6s ease-in-out infinite;border:2px solid #ef4444!important;border-radius:12px}
         @media(prefers-reduced-motion:reduce){.st-key-card_retornos_itr{animation:none!important}}
         </style>""", unsafe_allow_html=True)
-        st.dataframe(retornos_itr, hide_index=True, use_container_width=True,
-                     column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+        selecao_retorno_itr = st.dataframe(
+            retornos_itr.reset_index(drop=True), hide_index=True, use_container_width=True,
+            on_select="rerun", selection_mode="single-row", key="retornos_itr_selecao",
+            column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+        st.caption("Toque na linha da frota para abrir as atividades das paradas.")
+        linhas_retorno_itr = list(selecao_retorno_itr.selection.rows)
+        if linhas_retorno_itr and linhas_retorno_itr[0] < len(retornos_itr):
+            selecionada_itr = retornos_itr.iloc[linhas_retorno_itr[0]]
+            chave_selecao_itr = (selecionada_itr["Frota"], str(selecionada_itr["Última ITR"]))
+            if st.session_state.get("retorno_itr_modal_aberto") != chave_selecao_itr:
+                st.session_state["retorno_itr_modal_aberto"] = chave_selecao_itr
+                modal_atividades_retornos_itr(selecionada_itr["Frota"], detalhes_retornos_itr)
+        else:
+            st.session_state.pop("retorno_itr_modal_aberto", None)
         st.markdown("#### Ranking de paradas por descrição do serviço")
         ranking_servicos = detalhes_retornos_itr.drop_duplicates(["frota", "os_id"]).copy()
         ranking_servicos["Descrição do serviço"] = (
@@ -2439,21 +2487,25 @@ with st.container(key="card_retornos_itr", border=True):
             .size().rename(columns={"size": "Qtd. paradas"})
             .sort_values(["Qtd. paradas", "Descrição do serviço"], ascending=[False, True])
         )
-        ordem_servicos = ranking_servicos["Descrição do serviço"].tolist()
-        barras_servicos = alt.Chart(ranking_servicos).encode(
-            y=alt.Y("Descrição do serviço:N", sort=ordem_servicos,
-                    axis=alt.Axis(title=None, labelLimit=320, labelFontSize=12)),
-            x=alt.X("Qtd. paradas:Q", axis=alt.Axis(title="Quantidade de paradas", tickMinStep=1),
-                    scale=alt.Scale(domainMin=0)),
-            tooltip=[alt.Tooltip("Descrição do serviço:N"), alt.Tooltip("Qtd. paradas:Q", format="d")],
+        limite_ranking_itr = st.selectbox("Serviços no gráfico", [5, 10, 20], index=0, key="limite_ranking_itr", format_func=lambda n:f"{n} serviços com mais paradas")
+        grafico_ranking_itr = ranking_servicos.head(limite_ranking_itr).copy()
+        grafico_ranking_itr["Posição"] = [f"{n}º" for n in range(1, len(grafico_ranking_itr)+1)]
+        barras_servicos = alt.Chart(grafico_ranking_itr).encode(
+            x=alt.X("Posição:O", sort=grafico_ranking_itr["Posição"].tolist(),
+                    axis=alt.Axis(title="Serviços — veja as descrições abaixo", labelAngle=0, labelFontSize=13)),
+            y=alt.Y("Qtd. paradas:Q", axis=alt.Axis(title="Quantidade de paradas", tickMinStep=1),
+                    scale=alt.Scale(domainMin=0, padding=30)),
+            tooltip=[alt.Tooltip("Posição:O"), alt.Tooltip("Descrição do serviço:N"), alt.Tooltip("Qtd. paradas:Q", format="d")],
         )
         grafico_servicos = (
-            barras_servicos.mark_bar(color="#dc2626", cornerRadiusEnd=4)
-            + barras_servicos.mark_text(align="left", dx=5, fontWeight="bold").encode(
+            barras_servicos.mark_bar(color="#e53935", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+            + barras_servicos.mark_text(dy=-12, fontSize=17, fontWeight="bold", color="#10284a").encode(
                 text=alt.Text("Qtd. paradas:Q", format="d"))
-        ).properties(height=max(150, len(ranking_servicos) * 32), padding={"right":35})
+        ).properties(height=360, background="white").configure_view(strokeWidth=0).configure_axis(gridColor="#edf0f4", titleFontSize=12)
         st.altair_chart(grafico_servicos, use_container_width=True)
-        st.caption("Cada OS conta uma parada. Descrições iguais são agrupadas, ignorando diferenças de maiúsculas e espaços. Passe sobre a barra para ler a descrição completa.")
+        st.dataframe(grafico_ranking_itr[["Posição", "Descrição do serviço", "Qtd. paradas"]], hide_index=True, use_container_width=True,
+                     column_config={"Descrição do serviço":st.column_config.TextColumn(width="large")})
+        st.caption("Cada coluna representa um serviço. O número acima é a quantidade de paradas. Cada OS conta uma vez; maiúsculas e espaços não separam descrições iguais.")
         with st.expander("Ver as paradas contabilizadas"):
             det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
             st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
@@ -2666,6 +2718,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
