@@ -498,6 +498,7 @@ def _inconsistencias_asn(base):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar():
+    """Base ASN v2: preserva início original para confronto dos laudos."""
     historico = _ler_atendimentos("monitor_atendimentos")
     asn = _ler_atendimentos("monitor_asn")
     base = _combinar_base_asn(historico, asn)
