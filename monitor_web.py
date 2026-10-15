@@ -2582,9 +2582,14 @@ with st.container(key="card_retornos_itr", border=True):
                 det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
                 st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
 
-with st.container(key="card_os_excluidas_asn"):
-    if st.button(f"{len(os_excluidas)}\n\n🗑️ OS EXCLUÍDAS NA LISTA ASN", key="kpi_os_excluidas_asn", use_container_width=True):
-        modal_os_excluidas()
+@st.fragment
+def render_card_os_excluidas_asn():
+    # O clique executa somente este card, sem recarregar e recalcular o monitor.
+    with st.container(key="card_os_excluidas_asn"):
+        if st.button(f"{len(os_excluidas)}\n\n🗑️ OS EXCLUÍDAS NA LISTA ASN", key="kpi_os_excluidas_asn", use_container_width=True):
+            modal_os_excluidas()
+
+render_card_os_excluidas_asn()
 
 render_medias_supervisor()
 
