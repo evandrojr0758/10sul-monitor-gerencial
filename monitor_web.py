@@ -2523,64 +2523,64 @@ def modal_atividades_retornos_itr(frota, paradas):
 # Retornos pós-ITR: mantém também as paradas já liberadas na contagem.
 retornos_itr, detalhes_retornos_itr = _retornos_pos_itr(df, agora)
 with st.container(key="card_retornos_itr", border=True):
-    st.markdown("### 🚨 Retornos após ITR — até 5 dias")
-    st.caption("CORRETIVA + SOS • última ITR concluída • intervalo da liberação até a parada • uma contagem por OS")
-    if retornos_itr.empty:
-        st.caption("Nenhuma carreta com retorno em até 5 dias após a última ITR.")
-    else:
-        st.markdown("""<style>
-        @keyframes retorno_itr_piscar {0%,100%{background:#fff1f2;border-color:#ef4444}50%{background:#fecaca;border-color:#991b1b}}
-        .st-key-card_retornos_itr{animation:retorno_itr_piscar 1.6s ease-in-out infinite;border:2px solid #ef4444!important;border-radius:12px}
-        @media(prefers-reduced-motion:reduce){.st-key-card_retornos_itr{animation:none!important}}
-        </style>""", unsafe_allow_html=True)
-        selecao_retorno_itr = st.dataframe(
-            retornos_itr.reset_index(drop=True), hide_index=True, use_container_width=True,
-            on_select="rerun", selection_mode="single-row", key="retornos_itr_selecao",
-            column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
-        st.caption("Toque na linha da frota para abrir as atividades das paradas.")
-        linhas_retorno_itr = list(selecao_retorno_itr.selection.rows)
-        if linhas_retorno_itr and linhas_retorno_itr[0] < len(retornos_itr):
-            selecionada_itr = retornos_itr.iloc[linhas_retorno_itr[0]]
-            chave_selecao_itr = (selecionada_itr["Frota"], str(selecionada_itr["Última ITR"]))
-            if st.session_state.get("retorno_itr_modal_aberto") != chave_selecao_itr:
-                st.session_state["retorno_itr_modal_aberto"] = chave_selecao_itr
-                modal_atividades_retornos_itr(selecionada_itr["Frota"], detalhes_retornos_itr)
+    with st.expander("🚨 Retornos após ITR — até 5 dias", expanded=False):
+        st.caption("CORRETIVA + SOS • última ITR concluída • intervalo da liberação até a parada • uma contagem por OS")
+        if retornos_itr.empty:
+            st.caption("Nenhuma carreta com retorno em até 5 dias após a última ITR.")
         else:
-            st.session_state.pop("retorno_itr_modal_aberto", None)
-        st.markdown("#### Ranking de paradas por descrição do serviço")
-        ranking_servicos = detalhes_retornos_itr.drop_duplicates(["frota", "os_id"]).copy()
-        ranking_servicos["Descrição do serviço"] = (
-            ranking_servicos["descricao"].fillna("").astype(str)
-            .str.replace(r"\s+", " ", regex=True).str.strip().str.upper()
-            .replace("", "SEM DESCRIÇÃO INFORMADA")
-        )
-        ranking_servicos = (
-            ranking_servicos.groupby("Descrição do serviço", as_index=False)
-            .size().rename(columns={"size": "Qtd. paradas"})
-            .sort_values(["Qtd. paradas", "Descrição do serviço"], ascending=[False, True])
-        )
-        limite_ranking_itr = st.selectbox("Serviços no gráfico", [5, 10, 20], index=0, key="limite_ranking_itr", format_func=lambda n:f"{n} serviços com mais paradas")
-        grafico_ranking_itr = ranking_servicos.head(limite_ranking_itr).copy()
-        grafico_ranking_itr["Posição"] = [f"{n}º" for n in range(1, len(grafico_ranking_itr)+1)]
-        barras_servicos = alt.Chart(grafico_ranking_itr).encode(
-            x=alt.X("Posição:O", sort=grafico_ranking_itr["Posição"].tolist(),
-                    axis=alt.Axis(title="Serviços — veja as descrições abaixo", labelAngle=0, labelFontSize=13)),
-            y=alt.Y("Qtd. paradas:Q", axis=alt.Axis(title="Quantidade de paradas", tickMinStep=1),
-                    scale=alt.Scale(domainMin=0, padding=30)),
-            tooltip=[alt.Tooltip("Posição:O"), alt.Tooltip("Descrição do serviço:N"), alt.Tooltip("Qtd. paradas:Q", format="d")],
-        )
-        grafico_servicos = (
-            barras_servicos.mark_bar(color="#e53935", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
-            + barras_servicos.mark_text(dy=-12, fontSize=17, fontWeight="bold", color="#10284a").encode(
-                text=alt.Text("Qtd. paradas:Q", format="d"))
-        ).properties(height=360, background="white").configure_view(strokeWidth=0).configure_axis(gridColor="#edf0f4", titleFontSize=12)
-        st.altair_chart(grafico_servicos, use_container_width=True)
-        st.dataframe(grafico_ranking_itr[["Posição", "Descrição do serviço", "Qtd. paradas"]], hide_index=True, use_container_width=True,
-                     column_config={"Descrição do serviço":st.column_config.TextColumn(width="large")})
-        st.caption("Cada coluna representa um serviço. O número acima é a quantidade de paradas. Cada OS conta uma vez; maiúsculas e espaços não separam descrições iguais.")
-        with st.expander("Ver as paradas contabilizadas"):
-            det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
-            st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
+            st.markdown("""<style>
+            @keyframes retorno_itr_piscar {0%,100%{background:#fff1f2;border-color:#ef4444}50%{background:#fecaca;border-color:#991b1b}}
+            .st-key-card_retornos_itr{animation:retorno_itr_piscar 1.6s ease-in-out infinite;border:2px solid #ef4444!important;border-radius:12px}
+            @media(prefers-reduced-motion:reduce){.st-key-card_retornos_itr{animation:none!important}}
+            </style>""", unsafe_allow_html=True)
+            selecao_retorno_itr = st.dataframe(
+                retornos_itr.reset_index(drop=True), hide_index=True, use_container_width=True,
+                on_select="rerun", selection_mode="single-row", key="retornos_itr_selecao",
+                column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+            st.caption("Toque na linha da frota para abrir as atividades das paradas.")
+            linhas_retorno_itr = list(selecao_retorno_itr.selection.rows)
+            if linhas_retorno_itr and linhas_retorno_itr[0] < len(retornos_itr):
+                selecionada_itr = retornos_itr.iloc[linhas_retorno_itr[0]]
+                chave_selecao_itr = (selecionada_itr["Frota"], str(selecionada_itr["Última ITR"]))
+                if st.session_state.get("retorno_itr_modal_aberto") != chave_selecao_itr:
+                    st.session_state["retorno_itr_modal_aberto"] = chave_selecao_itr
+                    modal_atividades_retornos_itr(selecionada_itr["Frota"], detalhes_retornos_itr)
+            else:
+                st.session_state.pop("retorno_itr_modal_aberto", None)
+            st.markdown("#### Ranking de paradas por descrição do serviço")
+            ranking_servicos = detalhes_retornos_itr.drop_duplicates(["frota", "os_id"]).copy()
+            ranking_servicos["Descrição do serviço"] = (
+                ranking_servicos["descricao"].fillna("").astype(str)
+                .str.replace(r"\s+", " ", regex=True).str.strip().str.upper()
+                .replace("", "SEM DESCRIÇÃO INFORMADA")
+            )
+            ranking_servicos = (
+                ranking_servicos.groupby("Descrição do serviço", as_index=False)
+                .size().rename(columns={"size": "Qtd. paradas"})
+                .sort_values(["Qtd. paradas", "Descrição do serviço"], ascending=[False, True])
+            )
+            limite_ranking_itr = st.selectbox("Serviços no gráfico", [5, 10, 20], index=0, key="limite_ranking_itr", format_func=lambda n:f"{n} serviços com mais paradas")
+            grafico_ranking_itr = ranking_servicos.head(limite_ranking_itr).copy()
+            grafico_ranking_itr["Posição"] = [f"{n}º" for n in range(1, len(grafico_ranking_itr)+1)]
+            barras_servicos = alt.Chart(grafico_ranking_itr).encode(
+                x=alt.X("Posição:O", sort=grafico_ranking_itr["Posição"].tolist(),
+                        axis=alt.Axis(title="Serviços — veja as descrições abaixo", labelAngle=0, labelFontSize=13)),
+                y=alt.Y("Qtd. paradas:Q", axis=alt.Axis(title="Quantidade de paradas", tickMinStep=1),
+                        scale=alt.Scale(domainMin=0, padding=30)),
+                tooltip=[alt.Tooltip("Posição:O"), alt.Tooltip("Descrição do serviço:N"), alt.Tooltip("Qtd. paradas:Q", format="d")],
+            )
+            grafico_servicos = (
+                barras_servicos.mark_bar(color="#e53935", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                + barras_servicos.mark_text(dy=-12, fontSize=17, fontWeight="bold", color="#10284a").encode(
+                    text=alt.Text("Qtd. paradas:Q", format="d"))
+            ).properties(height=360, background="white").configure_view(strokeWidth=0).configure_axis(gridColor="#edf0f4", titleFontSize=12)
+            st.altair_chart(grafico_servicos, use_container_width=True)
+            st.dataframe(grafico_ranking_itr[["Posição", "Descrição do serviço", "Qtd. paradas"]], hide_index=True, use_container_width=True,
+                         column_config={"Descrição do serviço":st.column_config.TextColumn(width="large")})
+            st.caption("Cada coluna representa um serviço. O número acima é a quantidade de paradas. Cada OS conta uma vez; maiúsculas e espaços não separam descrições iguais.")
+            with st.expander("Ver as paradas contabilizadas"):
+                det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
+                st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
 
 with st.container(key="card_os_excluidas_asn"):
     if st.button(f"{len(os_excluidas)}\n\n🗑️ OS EXCLUÍDAS NA LISTA ASN", key="kpi_os_excluidas_asn", use_container_width=True):
