@@ -1,7 +1,7 @@
 import io
 import unittest
 import zipfile
-from reprovacoes_whatsapp import consolidar, importar_zip, ler_pdf, Repositorio
+from reprovacoes_whatsapp import consolidar, importar_zip, ler_pdf, Repositorio, extrair_itens, detalhar_itens
 
 
 def registro(id='r', placa='ABC1D23', resultado='REPROVADO', impressao='2026-10-01T10:00', dia='2026-10-01', numero='123'):
@@ -10,6 +10,34 @@ def registro(id='r', placa='ABC1D23', resultado='REPROVADO', impressao='2026-10-
 
 
 class TestReprovacoes(unittest.TestCase):
+    def test_itens_colunas_continuacao_e_fotos(self):
+        import pymupdf
+        d=pymupdf.open();p=d.new_page(width=794,height=595)
+        p.insert_text((138,540),'5.3. CIRCUITO DE FREIO:')
+        p.insert_text((138,558),'Mangotes e valvulas')
+        p.insert_text((286,540),'NÃO CONFORME')
+        p.insert_text((412,540),'5.4. TAMBOR:')
+        p.insert_text((412,558),'Conservacao.:')
+        p.insert_text((560,540),'CONFORME')
+        p=d.new_page(width=794,height=595)
+        p.insert_text((138,35),'Conexoes.:')
+        p.insert_text((138,50),'Observação:Fixar mangote')
+        p.insert_text((138,100),'5.5. ABS:')
+        p.insert_text((286,100),'NÃO CONFORME')
+        p.insert_text((138,200),'FOTOS DO CHECKLIST')
+        p.insert_text((138,240),'5.3. CIRCUITO DE FREIO:')
+        p.insert_text((286,240),'NÃO CONFORME')
+        itens=extrair_itens(d.tobytes());d.close()
+        self.assertEqual([x['codigo'] for x in itens],['5.3','5.5'])
+        self.assertEqual(itens[0]['observacao'],'Fixar mangote')
+        self.assertIn('Conexoes',itens[0]['descricao'])
+
+    def test_ranking_nao_duplica_item_em_versoes(self):
+        r=registro();r['itens_reprovados']=[dict(codigo='5.3',item='Freio',descricao='Freio',observacao='Fixar',pagina=2)]
+        s=dict(r,id='nova-versao')
+        a=dict(r,id='aprovacao',resultado='APROVADO')
+        self.assertEqual(len(detalhar_itens([r,s,a])),1)
+
     def test_reimportacao_nao_duplica(self):
         r=registro()
         self.assertEqual(consolidar([r,r])[0]['Laudos reprovados'],1)

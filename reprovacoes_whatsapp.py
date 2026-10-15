@@ -23,6 +23,83 @@ def data_campo(texto, campo):
     return datetime.strptime(m[1], '%d/%m/%Y %H:%M').isoformat(timespec='minutes') if m else ''
 
 
+def extrair_itens(conteudo):
+    """Associa a coluna do resultado à descrição na mesma linha do checklist."""
+    import pymupdf
+    itens = {}
+    continuacoes = []
+    inicio = re.compile(r'^(\d{1,2}\s*\.\s*\d+(?:\s*\.\s*\d+)?)\s*\.?\s+(.+)')
+    with pymupdf.open(stream=conteudo, filetype='pdf') as doc:
+        for pagina in doc:
+            linhas = []
+            for bloco in pagina.get_text('dict')['blocks']:
+                for linha in bloco.get('lines', []):
+                    texto = ''.join(s['text'] for s in linha['spans']).strip()
+                    if texto:
+                        linhas.append((linha['bbox'][0], linha['bbox'][1], texto))
+            fotos = [y for x,y,t in linhas if normalizar(t).startswith('FOTOS DO')]
+            limite = min(fotos) if fotos else float('inf')
+            linhas = [(x,y,t) for x,y,t in linhas if y < limite]
+            starts = []
+            for x,y,t in linhas:
+                m = inicio.match(t)
+                if m and (120 <= x < 280 or 390 <= x < 550):
+                    codigo = re.sub(r'\s+', '', m[1]).rstrip('.')
+                    lane = 0 if x < 280 else 1
+                    starts.append((lane,y,codigo))
+                    itens.setdefault(codigo, {'codigo':codigo, '_linhas':[], 'resultado':'', 'pagina':pagina.number+1})
+            for x,y,t in sorted(linhas, key=lambda a:(a[1],a[0])):
+                if 120 <= x < 280 or 390 <= x < 550:
+                    lane = 0 if x < 280 else 1
+                    candidatos = [s for s in starts if s[0] == lane and s[1] <= y+1]
+                    codigo = max(candidatos,key=lambda a:a[1])[2] if candidatos else continuacoes[lane] if y < 100 and lane < len(continuacoes) else None
+                    if codigo and not re.match(r'^\d+\.\s+[^\d]',t) and not normalizar(t).startswith(('FOTOS DO','MEGA INSPECAO','VISTORIADOR:')):
+                        itens[codigo]['_linhas'].append(t)
+                elif (280 <= x < 390 or 550 <= x < 650) and normalizar(t) in ('NAO CONFORME','CONFORME','N/A'):
+                    lane = 0 if x < 390 else 1
+                    candidatos = [s for s in starts if s[0] == lane and s[1] <= y+2]
+                    codigo = max(candidatos,key=lambda a:a[1])[2] if candidatos else continuacoes[lane] if y < 100 and lane < len(continuacoes) else None
+                    if codigo:
+                        itens[codigo]['resultado'] = 'NÃO CONFORME' if normalizar(t)=='NAO CONFORME' else t
+            continuacoes = []
+            for lane in (0,1):
+                candidatos = [a for a in starts if a[0] == lane]
+                if not candidatos: continue
+                ultimo_inicio = max(candidatos,key=lambda a:a[1])
+                trechos = [(y,t) for x,y,t in linhas if (120 <= x < 280 if lane == 0 else 390 <= x < 550) and y >= ultimo_inicio[1]]
+                if trechos:
+                    y_final,final = max(trechos,key=lambda a:a[0])
+                    if y_final > pagina.rect.height-80 and not final.endswith(':'):
+                        continuacoes.append(ultimo_inicio[2])
+            if fotos:
+                break
+    saida = []
+    for item in itens.values():
+        texto = ' '.join(item.pop('_linhas'))
+        partes = re.split(r'Observa[çc][ãa]o\s*:\s*',texto,flags=re.I,maxsplit=1)
+        descricao = inicio.sub(r'\2',partes[0]).strip()
+        item['descricao'] = descricao
+        item['item'] = descricao.split(':',1)[0].strip()
+        item['observacao'] = partes[1].strip() if len(partes)>1 else ''
+        if item['resultado'] == 'NÃO CONFORME':
+            saida.append(item)
+    return saida
+
+
+def detalhar_itens(registros):
+    linhas = {}
+    for doc in registros:
+        if doc['resultado'] != 'REPROVADO':
+            continue
+        for item in doc.get('itens_reprovados', []):
+            chave = (doc['frota'],doc['placa'],doc['numero'],doc['vistoria'],item['codigo'])
+            linhas[chave] = {'Frota':doc['frota'],'Placa':doc['placa'],'Laudo':doc['numero'],
+                             'Data da vistoria':doc['vistoria'][:10], 'Código':item['codigo'],
+                             'Item':item['item'],'Descrição da não conformidade':item['descricao'],
+                             'Observação do inspetor':item['observacao'],'Página do PDF':item['pagina']}
+    return list(linhas.values())
+
+
 def ler_pdf(conteudo, nome):
     import pymupdf
     with pymupdf.open(stream=conteudo, filetype='pdf') as doc:
@@ -53,7 +130,8 @@ def ler_pdf(conteudo, nome):
     return dict(id=hashlib.sha256(identidade.encode()).hexdigest(), frota=frota[1],
                 placa=placa[1], numero=numero[1], vistoria=vistoria, impressao=impressao,
                 resultado=resultado, arquivo=nome, sha_pdf=hashlib.sha256(conteudo).hexdigest(),
-                observacoes=observacoes, evento='Não informado', texto=texto)
+                observacoes=observacoes, evento='Não informado', texto=texto,
+                versao_extracao=2, itens_reprovados=extrair_itens(conteudo))
 
 
 def importar_zip(conteudo):
@@ -154,7 +232,11 @@ class Repositorio:
                     if manifesto.get('versao') != 1:
                         raise ValueError('Versão de importação não reconhecida')
                     for registro in manifesto['registros']:
-                        registros[registro['id']] = registro
+                        anterior = registros.get(registro['id'], {})
+                        if registro.get('versao_extracao', 1) >= anterior.get('versao_extracao', 1):
+                            registros[registro['id']] = dict(anterior, **registro)
+                        else:
+                            registros[registro['id']] = dict(registro, **anterior)
             if len(objetos) < 100:
                 break
             offset += 100
@@ -178,9 +260,25 @@ def render_relatorio(url, chave, somente_leitura=False):
         st.info('Configure o acesso do monitor para consultar as reprovações.'); return
     repo = Repositorio(url, chave)
 
+    @st.cache_data(ttl=86400, show_spinner=False)
+    def itens_pdf(url_projeto, sha_pdf, _chave):
+        conteudo = Repositorio(url_projeto, _chave).ler('pdfs/' + sha_pdf + '.pdf')
+        return extrair_itens(conteudo)
+
     @st.cache_data(ttl=60, show_spinner=False)
     def carregar(url_projeto, _chave):
-        return Repositorio(url_projeto, _chave).carregar()
+        from concurrent.futures import ThreadPoolExecutor
+        registros = Repositorio(url_projeto, _chave).carregar()
+        antigos = [r for r in registros if r.get('versao_extracao',1) < 2 and r['resultado'] == 'REPROVADO']
+        # Leitura dos PDFs já autorizados e salvos. Nenhuma escrita ou reenvio.
+        def detalhar(r):
+            return r['id'], itens_pdf(url_projeto, r['sha_pdf'], _chave)
+        if antigos:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                itens_por_id = dict(pool.map(detalhar, antigos))
+            registros = [dict(r, itens_reprovados=itens_por_id[r['id']], versao_extracao=2)
+                         if r['id'] in itens_por_id else r for r in registros]
+        return registros
 
     try:
         historico = carregar(url, chave)
@@ -257,6 +355,28 @@ def render_relatorio(url, chave, somente_leitura=False):
     if tabela.empty: return
     ranking = tabela.groupby('Frota').size().rename('Reprovações').reset_index()
     st.bar_chart(ranking, x='Frota', y='Reprovações', color='#dc2626')
+    filtradas = {(r['Frota'], r['Data da vistoria']) for _,r in tabela.iterrows()}
+    docs_filtrados = [doc for linha in linhas if (linha['Frota'],linha['Data da vistoria']) in filtradas for doc in linha['_docs']]
+    itens = pd.DataFrame(detalhar_itens(docs_filtrados))
+    st.subheader('Itens reprovados por laudo')
+    if not itens.empty:
+        st.metric('Itens reprovados no período', len(itens))
+        st.dataframe(itens, hide_index=True, use_container_width=True)
+        st.download_button('Exportar itens reprovados CSV', itens.to_csv(index=False, sep=';').encode('utf-8-sig'),
+                           'itens-reprovados-mega.csv','text/csv',key='mega_itens_csv')
+        st.subheader('Ranking dos itens que mais reprovam')
+        rank_itens = itens.groupby('Código', as_index=False).agg(Item=('Item','first'), Quantidade=('Item','size')).sort_values('Quantidade',ascending=False)
+        rank_itens['Item do checklist'] = rank_itens['Código'] + ' — ' + rank_itens['Item']
+        import altair as alt
+        grafico = alt.Chart(rank_itens.head(20)).mark_bar(color='#dc2626').encode(
+            x=alt.X('Quantidade:Q',axis=alt.Axis(tickMinStep=1)),
+            y=alt.Y('Item do checklist:N',sort='-x',axis=alt.Axis(labelLimit=420)),
+            tooltip=['Código','Item','Quantidade']).properties(height=max(200,min(650,len(rank_itens)*30)))
+        st.altair_chart(grafico,use_container_width=True)
+        st.dataframe(rank_itens[['Código','Item','Quantidade']],hide_index=True,use_container_width=True)
+        st.caption('Cada item conta uma vez por placa, laudo e vistoria. Fotos repetidas e PDFs reimportados não aumentam o ranking. São preservados os itens do laudo reprovado mesmo após aprovação na reinspeção.')
+    else:
+        st.info('Nenhum item individual extraído nos laudos deste filtro.')
     opcoes = [(r['Frota'], r['Data da vistoria']) for _,r in tabela.iterrows()]
     selecionada = st.selectbox('Consultar documentos da ocorrência', opcoes,
                               format_func=lambda x:f'Frota {x[0]} • {x[1]}', key='reprov_detalhe')
@@ -264,6 +384,8 @@ def render_relatorio(url, chave, somente_leitura=False):
     if linha['Conferência']: st.warning(linha['Conferência'])
     for doc in sorted(linha['_docs'], key=lambda r:(r['placa'],r['impressao'])):
         with st.expander(f"{doc['placa']} • {doc['resultado']} • {doc['impressao'].replace('T',' ')} • Laudo {doc['numero']}"):
+            if doc.get('itens_reprovados'):
+                st.dataframe(pd.DataFrame(doc['itens_reprovados'])[['codigo','item','descricao','observacao','pagina']],hide_index=True,use_container_width=True)
             for obs in doc['observacoes']:
                 st.write('• ' + obs)
             st.caption('Observações extraídas automaticamente. Confira a redação completa no PDF.')
