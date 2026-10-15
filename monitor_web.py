@@ -695,6 +695,7 @@ def destacar_frotas_pendentes(tabela, contagem):
          contagem is not None and contagem.get(norm_frota(row["FROTA"]),0)>0 else ""]*len(row),axis=1)
 
 
+@st.fragment
 def render_laudos_web():
     import json
     d=carregar_laudos_manuais_web()
@@ -1125,6 +1126,7 @@ def modal_ordens_media(tipo,origem,periodo,base):
     st.dataframe(show[["OS/ID","FROTA",f"INÍCIO {origem.upper()}",f"FIM {origem.upper()}","TEMPO TOTAL"]],hide_index=True,use_container_width=True)
 
 
+@st.fragment
 def _botoes_medias_origens(tipo):
     cols=st.columns(2,gap="small")
     for col,origem in zip(cols,["Suzano","10 Sul"]):
@@ -1219,6 +1221,7 @@ def modal_embasamento_contratual(tema):
     st.caption(d["ref"])
     st.info("🔒 Visualização sanitizada: o contrato integral, preços, contatos e demais dados sensíveis não são disponibilizados neste monitor.")
 
+@st.fragment
 def render_embasamento_contratual():
     st.markdown("<div class='mon-section'><div class='mon-section-title'>📑 EMBASAMENTO CONTRATUAL</div><div class='mon-section-sub'>Consulta operacional sanitizada dos critérios utilizados no monitor — sem valores ou dados comerciais sensíveis</div></div>",unsafe_allow_html=True)
     temas=[("ITR","ITR • 12h"),("REVISÃO","REVISÃO • 24h"),("GM","GM"),("FORA DO ESCOPO","FORA DO ESCOPO"),("EXPURGOS","EXPURGOS"),("RESPONSABILIDADES","RESPONSABILIDADES")]
@@ -1298,6 +1301,7 @@ def _quadro_media_laudo(classificacao, icone):
     st.markdown("<div style='font-size:11px;font-weight:850;color:#344054;margin:4px 0 2px'>MÉDIA DIÁRIA • ÚLTIMOS 7 DIAS • DATA = INÍCIO 10 SUL</div>",unsafe_allow_html=True)
     _grafico_laudos(g,classificacao)
 
+@st.fragment
 def render_medias_laudos():
     c1,c2=st.columns(2,gap="small")
     with c1:
@@ -1779,6 +1783,7 @@ def render_atividades_evidencias_gerencial(base, chave_os, frota):
                 key=f"rg_evidencia_{contexto}_{int(selected[0])}_{i}")
 
 
+@st.fragment
 def render_relatorio_gerencial_laudos():
     d=carregar_laudos_manuais_web().copy()
     st.markdown("<div class='mon-section'><div class='mon-section-title'>📊 RELATÓRIO GERENCIAL — LAUDOS DE MANUTENÇÃO</div><div class='mon-section-sub'>Análise gerencial baseada exclusivamente nos laudos conferidos e publicados</div></div>",unsafe_allow_html=True)
@@ -2132,14 +2137,17 @@ def modal_historico_frota(fq):
     estilos = show.style.apply(lambda row: ["text-decoration:line-through;color:#6b7280" if hist.loc[row.name, "excluida_asn"] else "" for _ in row], axis=1)
     st.dataframe(estilos,use_container_width=True,hide_index=True)
 
-q1,q2=st.columns([5,1])
-with q1:
-    frota_q=st.text_input("Frota",placeholder="Ex.: 13725",label_visibility="collapsed")
-with q2:
-    pesquisar=st.button("🔎 Pesquisar",use_container_width=True)
-if pesquisar and frota_q.strip():
-    modal_historico_frota(norm_frota(frota_q))
+@st.fragment
+def render_consulta_rapida():
+    q1,q2=st.columns([5,1])
+    with q1:
+        frota_q=st.text_input("Frota",placeholder="Ex.: 13725",label_visibility="collapsed")
+    with q2:
+        pesquisar=st.button("🔎 Pesquisar",use_container_width=True)
+    if pesquisar and frota_q.strip():
+        modal_historico_frota(norm_frota(frota_q))
 
+render_consulta_rapida()
 
 st.markdown("<div class='mon-section'><div class='mon-section-title'>OFICINA AGORA</div><div class='mon-section-sub'>Situação em tempo real e pontos que exigem atenção</div></div>",unsafe_allow_html=True)
 
@@ -2438,23 +2446,27 @@ if sos_em_alerta:
     }
     </style>
     """, unsafe_allow_html=True)
-cols=st.columns(7,gap="small")
-for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
-    with col:
-        # O alerta colore o card inteiro, incluindo a tabela compacta de frotas.
-        with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
-            if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
-                modal_os_abertas(lab,dados_card,i)
-            finalizadas_card = int(dados_card["finalizada_10sul"].sum())
-            if finalizadas_card:
-                st.markdown(
-                    "<div style='background:#e7f5ed;color:#145c3b;border-radius:8px;"
-                    "padding:5px 8px;font-size:11px;text-align:center'>"
-                    f"🟢 {finalizadas_card} finalizada(s) 10 Sul · aguardando cliente</div>",
-                    unsafe_allow_html=True,
-                )
-            if i == 2 and sos_detalhes_card:
-                st.markdown(sos_detalhes_card, unsafe_allow_html=True)
+@st.fragment
+def render_cards_oficina():
+    cols=st.columns(7,gap="small")
+    for i,(col,(n,lab,kind,dados_card)) in enumerate(zip(cols,cards)):
+        with col:
+            # O alerta colore o card inteiro, incluindo a tabela compacta de frotas.
+            with st.container(key="card_sos" if i == 2 else f"card_oficina_{i}"):
+                if st.button(f"{n}\n\n{lab}",key=f"kpi_abertas_{i}",use_container_width=True):
+                    modal_os_abertas(lab,dados_card,i)
+                finalizadas_card = int(dados_card["finalizada_10sul"].sum())
+                if finalizadas_card:
+                    st.markdown(
+                        "<div style='background:#e7f5ed;color:#145c3b;border-radius:8px;"
+                        "padding:5px 8px;font-size:11px;text-align:center'>"
+                        f"🟢 {finalizadas_card} finalizada(s) 10 Sul · aguardando cliente</div>",
+                        unsafe_allow_html=True,
+                    )
+                if i == 2 and sos_detalhes_card:
+                    st.markdown(sos_detalhes_card, unsafe_allow_html=True)
+
+render_cards_oficina()
 
 @st.dialog("OS excluídas na Lista ASN", width="large")
 def modal_os_excluidas():
@@ -2478,11 +2490,15 @@ def modal_inconsistencias_asn():
         st.dataframe(inconsistencias_asn, hide_index=True, use_container_width=True)
 
 ids_conferir = set(inconsistencias_asn["OS/ID"]) | {v for v in inconsistencias_asn["OS RELACIONADA"] if v}
-with st.container(key="card_inconsistencias_asn"):
-    if st.button(f"{len(ids_conferir)}\n\n⚠️ OS PARA CONFERIR NA ASN", key="kpi_inconsistencias_asn", use_container_width=True):
-        modal_inconsistencias_asn()
-    if ids_conferir:
-        st.caption("OS sem baixa com outro atendimento • horários sobrepostos ou incoerentes. Abra para comparar as OS.")
+@st.fragment
+def render_card_inconsistencias_asn():
+    with st.container(key="card_inconsistencias_asn"):
+        if st.button(f"{len(ids_conferir)}\n\n⚠️ OS PARA CONFERIR NA ASN", key="kpi_inconsistencias_asn", use_container_width=True):
+            modal_inconsistencias_asn()
+        if ids_conferir:
+            st.caption("OS sem baixa com outro atendimento • horários sobrepostos ou incoerentes. Abra para comparar as OS.")
+
+render_card_inconsistencias_asn()
 
 @st.dialog("Atividades das paradas após ITR", width="large")
 def modal_atividades_retornos_itr(frota, paradas):
@@ -2522,65 +2538,69 @@ def modal_atividades_retornos_itr(frota, paradas):
 
 # Retornos pós-ITR: mantém também as paradas já liberadas na contagem.
 retornos_itr, detalhes_retornos_itr = _retornos_pos_itr(df, agora)
-with st.container(key="card_retornos_itr", border=True):
-    with st.expander("🚨 Retornos após ITR — até 5 dias", expanded=False):
-        st.caption("CORRETIVA + SOS • última ITR concluída • intervalo da liberação até a parada • uma contagem por OS")
-        if retornos_itr.empty:
-            st.caption("Nenhuma carreta com retorno em até 5 dias após a última ITR.")
-        else:
-            st.markdown("""<style>
-            @keyframes retorno_itr_piscar {0%,100%{background:#fff1f2;border-color:#ef4444}50%{background:#fecaca;border-color:#991b1b}}
-            .st-key-card_retornos_itr{animation:retorno_itr_piscar 1.6s ease-in-out infinite;border:2px solid #ef4444!important;border-radius:12px}
-            @media(prefers-reduced-motion:reduce){.st-key-card_retornos_itr{animation:none!important}}
-            </style>""", unsafe_allow_html=True)
-            selecao_retorno_itr = st.dataframe(
-                retornos_itr.reset_index(drop=True), hide_index=True, use_container_width=True,
-                on_select="rerun", selection_mode="single-row", key="retornos_itr_selecao",
-                column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
-            st.caption("Toque na linha da frota para abrir as atividades das paradas.")
-            linhas_retorno_itr = list(selecao_retorno_itr.selection.rows)
-            if linhas_retorno_itr and linhas_retorno_itr[0] < len(retornos_itr):
-                selecionada_itr = retornos_itr.iloc[linhas_retorno_itr[0]]
-                chave_selecao_itr = (selecionada_itr["Frota"], str(selecionada_itr["Última ITR"]))
-                if st.session_state.get("retorno_itr_modal_aberto") != chave_selecao_itr:
-                    st.session_state["retorno_itr_modal_aberto"] = chave_selecao_itr
-                    modal_atividades_retornos_itr(selecionada_itr["Frota"], detalhes_retornos_itr)
+@st.fragment
+def render_card_retornos_itr():
+    with st.container(key="card_retornos_itr", border=True):
+        with st.expander("🚨 Retornos após ITR — até 5 dias", expanded=False):
+            st.caption("CORRETIVA + SOS • última ITR concluída • intervalo da liberação até a parada • uma contagem por OS")
+            if retornos_itr.empty:
+                st.caption("Nenhuma carreta com retorno em até 5 dias após a última ITR.")
             else:
-                st.session_state.pop("retorno_itr_modal_aberto", None)
-            st.markdown("#### Ranking de paradas por descrição do serviço")
-            ranking_servicos = detalhes_retornos_itr.drop_duplicates(["frota", "os_id"]).copy()
-            ranking_servicos["Descrição do serviço"] = (
-                ranking_servicos["descricao"].fillna("").astype(str)
-                .str.replace(r"\s+", " ", regex=True).str.strip().str.upper()
-                .replace("", "SEM DESCRIÇÃO INFORMADA")
-            )
-            ranking_servicos = (
-                ranking_servicos.groupby("Descrição do serviço", as_index=False)
-                .size().rename(columns={"size": "Qtd. paradas"})
-                .sort_values(["Qtd. paradas", "Descrição do serviço"], ascending=[False, True])
-            )
-            limite_ranking_itr = st.selectbox("Serviços no gráfico", [5, 10, 20], index=0, key="limite_ranking_itr", format_func=lambda n:f"{n} serviços com mais paradas")
-            grafico_ranking_itr = ranking_servicos.head(limite_ranking_itr).copy()
-            grafico_ranking_itr["Posição"] = [f"{n}º" for n in range(1, len(grafico_ranking_itr)+1)]
-            barras_servicos = alt.Chart(grafico_ranking_itr).encode(
-                x=alt.X("Posição:O", sort=grafico_ranking_itr["Posição"].tolist(),
-                        axis=alt.Axis(title="Serviços — veja as descrições abaixo", labelAngle=0, labelFontSize=13)),
-                y=alt.Y("Qtd. paradas:Q", axis=alt.Axis(title="Quantidade de paradas", tickMinStep=1),
-                        scale=alt.Scale(domainMin=0, padding=30)),
-                tooltip=[alt.Tooltip("Posição:O"), alt.Tooltip("Descrição do serviço:N"), alt.Tooltip("Qtd. paradas:Q", format="d")],
-            )
-            grafico_servicos = (
-                barras_servicos.mark_bar(color="#e53935", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
-                + barras_servicos.mark_text(dy=-12, fontSize=17, fontWeight="bold", color="#10284a").encode(
-                    text=alt.Text("Qtd. paradas:Q", format="d"))
-            ).properties(height=360, background="white").configure_view(strokeWidth=0).configure_axis(gridColor="#edf0f4", titleFontSize=12)
-            st.altair_chart(grafico_servicos, use_container_width=True)
-            st.dataframe(grafico_ranking_itr[["Posição", "Descrição do serviço", "Qtd. paradas"]], hide_index=True, use_container_width=True,
-                         column_config={"Descrição do serviço":st.column_config.TextColumn(width="large")})
-            st.caption("Cada coluna representa um serviço. O número acima é a quantidade de paradas. Cada OS conta uma vez; maiúsculas e espaços não separam descrições iguais.")
-            with st.expander("Ver as paradas contabilizadas"):
-                det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
-                st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
+                st.markdown("""<style>
+                @keyframes retorno_itr_piscar {0%,100%{background:#fff1f2;border-color:#ef4444}50%{background:#fecaca;border-color:#991b1b}}
+                .st-key-card_retornos_itr{animation:retorno_itr_piscar 1.6s ease-in-out infinite;border:2px solid #ef4444!important;border-radius:12px}
+                @media(prefers-reduced-motion:reduce){.st-key-card_retornos_itr{animation:none!important}}
+                </style>""", unsafe_allow_html=True)
+                selecao_retorno_itr = st.dataframe(
+                    retornos_itr.reset_index(drop=True), hide_index=True, use_container_width=True,
+                    on_select="rerun", selection_mode="single-row", key="retornos_itr_selecao",
+                    column_config={"Última ITR":st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
+                st.caption("Toque na linha da frota para abrir as atividades das paradas.")
+                linhas_retorno_itr = list(selecao_retorno_itr.selection.rows)
+                if linhas_retorno_itr and linhas_retorno_itr[0] < len(retornos_itr):
+                    selecionada_itr = retornos_itr.iloc[linhas_retorno_itr[0]]
+                    chave_selecao_itr = (selecionada_itr["Frota"], str(selecionada_itr["Última ITR"]))
+                    if st.session_state.get("retorno_itr_modal_aberto") != chave_selecao_itr:
+                        st.session_state["retorno_itr_modal_aberto"] = chave_selecao_itr
+                        modal_atividades_retornos_itr(selecionada_itr["Frota"], detalhes_retornos_itr)
+                else:
+                    st.session_state.pop("retorno_itr_modal_aberto", None)
+                st.markdown("#### Ranking de paradas por descrição do serviço")
+                ranking_servicos = detalhes_retornos_itr.drop_duplicates(["frota", "os_id"]).copy()
+                ranking_servicos["Descrição do serviço"] = (
+                    ranking_servicos["descricao"].fillna("").astype(str)
+                    .str.replace(r"\s+", " ", regex=True).str.strip().str.upper()
+                    .replace("", "SEM DESCRIÇÃO INFORMADA")
+                )
+                ranking_servicos = (
+                    ranking_servicos.groupby("Descrição do serviço", as_index=False)
+                    .size().rename(columns={"size": "Qtd. paradas"})
+                    .sort_values(["Qtd. paradas", "Descrição do serviço"], ascending=[False, True])
+                )
+                limite_ranking_itr = st.selectbox("Serviços no gráfico", [5, 10, 20], index=0, key="limite_ranking_itr", format_func=lambda n:f"{n} serviços com mais paradas")
+                grafico_ranking_itr = ranking_servicos.head(limite_ranking_itr).copy()
+                grafico_ranking_itr["Posição"] = [f"{n}º" for n in range(1, len(grafico_ranking_itr)+1)]
+                barras_servicos = alt.Chart(grafico_ranking_itr).encode(
+                    x=alt.X("Posição:O", sort=grafico_ranking_itr["Posição"].tolist(),
+                            axis=alt.Axis(title="Serviços — veja as descrições abaixo", labelAngle=0, labelFontSize=13)),
+                    y=alt.Y("Qtd. paradas:Q", axis=alt.Axis(title="Quantidade de paradas", tickMinStep=1),
+                            scale=alt.Scale(domainMin=0, padding=30)),
+                    tooltip=[alt.Tooltip("Posição:O"), alt.Tooltip("Descrição do serviço:N"), alt.Tooltip("Qtd. paradas:Q", format="d")],
+                )
+                grafico_servicos = (
+                    barras_servicos.mark_bar(color="#e53935", cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                    + barras_servicos.mark_text(dy=-12, fontSize=17, fontWeight="bold", color="#10284a").encode(
+                        text=alt.Text("Qtd. paradas:Q", format="d"))
+                ).properties(height=360, background="white").configure_view(strokeWidth=0).configure_axis(gridColor="#edf0f4", titleFontSize=12)
+                st.altair_chart(grafico_servicos, use_container_width=True)
+                st.dataframe(grafico_ranking_itr[["Posição", "Descrição do serviço", "Qtd. paradas"]], hide_index=True, use_container_width=True,
+                             column_config={"Descrição do serviço":st.column_config.TextColumn(width="large")})
+                st.caption("Cada coluna representa um serviço. O número acima é a quantidade de paradas. Cada OS conta uma vez; maiúsculas e espaços não separam descrições iguais.")
+                with st.expander("Ver as paradas contabilizadas"):
+                    det = detalhes_retornos_itr.rename(columns={"frota":"Frota", "os_id":"OS retorno", "evento":"Evento", "_parada_retorno":"Parada", "descricao":"Descrição", "status":"Status"})
+                    st.dataframe(det[["Frota","OS ITR","Última ITR","OS retorno","Evento","Parada","Descrição","Status"]].sort_values(["Frota","Parada"]), hide_index=True, use_container_width=True)
+
+render_card_retornos_itr()
 
 @st.fragment
 def render_card_os_excluidas_asn():
@@ -2771,10 +2791,14 @@ def abrir_resumo_compartilhavel():
     st.download_button("Baixar imagem PNG", png, "resumo_monitor_10sul.png", mime="image/png",
                        key="download_resumo_cnp")
 
-with acoes_compartilhar_cnp.container():
-    if st.button("📲 Compartilhar resumo no WhatsApp", use_container_width=True,
-                 key="compartilhar_resumo_cnp"):
-        abrir_resumo_compartilhavel()
+@st.fragment
+def render_acao_compartilhar_resumo():
+    with acoes_compartilhar_cnp.container():
+        if st.button("📲 Compartilhar resumo no WhatsApp", use_container_width=True,
+                     key="compartilhar_resumo_cnp"):
+            abrir_resumo_compartilhavel()
+
+render_acao_compartilhar_resumo()
 
 st.caption("Atualização automática a cada 60 segundos.")
 
