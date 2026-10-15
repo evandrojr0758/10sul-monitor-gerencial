@@ -1508,9 +1508,47 @@ def carregar_justificativas_laudos():
     return pd.DataFrame(registros)
 
 
+def horas_sem_sobreposicao_laudo(atividades):
+    """União de intervalos: simultaneidade não aumenta o tempo decorrido."""
+    intervalos=[]
+    sem_horario=0.0
+    for _,r in atividades.iterrows():
+        inicio=_hora_brasilia(r.get("INICIO_ATIVIDADE"))
+        fim=_hora_brasilia(r.get("FIM_ATIVIDADE"))
+        if pd.notna(inicio) and pd.notna(fim) and fim>=inicio:
+            intervalos.append((inicio,fim))
+        else:
+            horas=pd.to_numeric(r.get("HORAS"),errors="coerce")
+            if pd.notna(horas):
+                sem_horario+=max(0,float(horas))
+    total=0.0
+    ini_atual=fim_atual=None
+    for inicio,fim in sorted(intervalos):
+        if ini_atual is None:
+            ini_atual,fim_atual=inicio,fim
+        elif inicio<=fim_atual:
+            fim_atual=max(fim_atual,fim)
+        else:
+            total+=(fim_atual-ini_atual).total_seconds()/3600
+            ini_atual,fim_atual=inicio,fim
+    if ini_atual is not None:
+        total+=(fim_atual-ini_atual).total_seconds()/3600
+    return total+sem_horario
+
+
+def consolidar_tempos_laudos(atividades):
+    linhas=[]
+    for (osid,frota),grupo in atividades.groupby(["CHAVE_OS","FROTA"],sort=False):
+        linha={"CHAVE_OS":osid,"FROTA":frota,"APONTADO_REAL":horas_sem_sobreposicao_laudo(grupo)}
+        for tipo in ["ITR","CNP","GM","OUTROS"]:
+            linha[tipo]=horas_sem_sobreposicao_laudo(grupo[grupo["CLASSIFICACAO"].eq(tipo)])
+        linhas.append(linha)
+    return pd.DataFrame(linhas,columns=["CHAVE_OS","FROTA","APONTADO_REAL","ITR","CNP","GM","OUTROS"])
+
+
 def apurar_tempos_justificados(manut,piv,justificativas):
     base=manut.merge(piv,on=["CHAVE_OS","FROTA"],how="left").copy()
-    base["APONTADO"]=base[["ITR","CNP","GM","OUTROS"]].fillna(0).sum(axis=1)
+    base["APONTADO"]=base["APONTADO_REAL"].fillna(0) if "APONTADO_REAL" in base else base[["ITR","CNP","GM","OUTROS"]].fillna(0).sum(axis=1)
     # O saldo é calculado em cada OS; excesso de outra OS não compensa lacunas.
     base["SEM_APONTAMENTO"]=(base["H_MANUT"]-base["APONTADO"]).clip(lower=0).fillna(0)
     totais={}
@@ -1842,11 +1880,11 @@ def render_relatorio_gerencial_laudos():
     manut["H_MANUT"]=((manut["FIM"]-manut["INICIO"]).dt.total_seconds()/3600).clip(lower=0)
     total_laudos=x["REGISTRO"].replace("",pd.NA).nunique() or x["CHAVE_OS"].nunique()
     frotas=x["FROTA"].nunique(); med_man=manut.loc[manut["H_MANUT"]>0,"H_MANUT"].mean()
-    piv=x.pivot_table(index=["CHAVE_OS","FROTA"],columns="CLASSIFICACAO",values="HORAS",aggfunc="sum",fill_value=0).reset_index()
+    piv=consolidar_tempos_laudos(x)
     for cc in ["ITR","CNP","GM","OUTROS"]:
         if cc not in piv.columns:piv[cc]=0.0
     med_itr=piv.loc[piv["ITR"]>0,"ITR"].mean(); med_cnp=piv.loc[piv["CNP"]>0,"CNP"].mean()
-    apont=piv[["ITR","CNP","GM","OUTROS"]].sum(axis=1).sum(); hman=manut["H_MANUT"].sum()
+    apont=piv["APONTADO_REAL"].sum(); hman=manut["H_MANUT"].sum()
     erro_justificativas=False
     try:
         justificativas=carregar_justificativas_laudos()
@@ -1879,9 +1917,10 @@ def render_relatorio_gerencial_laudos():
     st.markdown("<br>",unsafe_allow_html=True)
 
     st.markdown("**Confronto ASN × laudos — por OS e frota**")
-    st.caption("Tempo ASN = início até liberação da Lista ASN. Apontado = soma das atividades ITR, CNP, GM e OUTROS dos laudos vinculados à mesma OS/frota. Diferença positiva é tempo a esclarecer; não comprova o motivo da espera.")
-    confronto=manut.merge(piv[["CHAVE_OS","FROTA","ITR","CNP","GM","OUTROS"]],on=["CHAVE_OS","FROTA"],how="left")
-    confronto["APONTADO"]=confronto[["ITR","CNP","GM","OUTROS"]].fillna(0).sum(axis=1)
+    st.caption("Tempo ASN = início até liberação da Lista ASN. Apontado = tempo dos intervalos das atividades da mesma OS/frota, contando sobreposições uma única vez. Diferença positiva é tempo a esclarecer; não comprova o motivo da espera.")
+    st.caption("Atividades sem início/fim válidos mantêm as horas informadas, pois não é possível identificar paralelismo nesses registros. Médias ITR/CNP também descontam sobreposições dentro da categoria; categorias diferentes podem ocorrer em paralelo.")
+    confronto=manut.merge(piv[["CHAVE_OS","FROTA","APONTADO_REAL","ITR","CNP","GM","OUTROS"]],on=["CHAVE_OS","FROTA"],how="left")
+    confronto["APONTADO"]=confronto["APONTADO_REAL"].fillna(0)
     origem=df.copy()
     origem["CHAVE_OS"]=origem["os_id"].apply(_chave_vinculo_laudo)
     origem["FROTA"]=origem["frota"].apply(norm_frota)
