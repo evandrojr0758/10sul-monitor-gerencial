@@ -2731,6 +2731,15 @@ render_card_os_excluidas_asn()
 
 render_medias_supervisor()
 
+@st.fragment
+def render_reprovacoes_mega():
+    from reprovacoes_whatsapp import render_relatorio
+    with st.expander("🚫 RELATÓRIO DE REPROVAÇÕES — MEGA", expanded=False):
+        if st.checkbox("Abrir relatório de reprovações", key="abrir_reprovacoes_mega"):
+            render_relatorio(SUPABASE_URL, SUPABASE_KEY, MOBILE_READ_ONLY)
+
+render_reprovacoes_mega()
+
 with st.expander("📑 EMBASAMENTO CONTRATUAL", expanded=False):
     render_embasamento_contratual()
 
