@@ -423,6 +423,7 @@ def _combinar_base_asn(historico, asn):
         a["local_manutencao"] = None
     if "excluida_asn_em" not in a.columns:
         a["excluida_asn_em"] = None
+    a["inicio_asn"] = a["inicio"]
     a["inicio_suzano"] = a["parada"]
     a["fim_asn"] = a["fim"]
     a["fim"] = pd.to_datetime(a["fim_asn"], errors="coerce")
@@ -440,7 +441,7 @@ def _combinar_base_asn(historico, asn):
     h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"].map(_hora_brasilia), errors="coerce"))
     resultado = h.reindex(h.index.union(a.index)).copy()
     # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
-    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "fim_asn", "sincronizado_em", "excluida_asn_em", "local_manutencao"]:
+    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "inicio_asn", "fim_asn", "sincronizado_em", "excluida_asn_em", "local_manutencao"]:
         if c not in resultado.columns:
             resultado[c] = None
         resultado.loc[a.index, c] = a[c]
@@ -1875,6 +1876,45 @@ def render_relatorio_gerencial_laudos():
             modal_justificativas_laudos(manut,piv,os_validas,consulta=True)
     st.caption("Cards de tempo: média por manutenção. Justificativas não alteram o tempo total nem os apontamentos de ITR/CNP.")
     st.markdown("<br>",unsafe_allow_html=True)
+
+    st.markdown("**Confronto ASN × laudos — por OS e frota**")
+    st.caption("Tempo ASN = início até liberação da Lista ASN. Apontado = soma das atividades ITR, CNP, GM e OUTROS dos laudos vinculados à mesma OS/frota. Diferença positiva é tempo a esclarecer; não comprova o motivo da espera.")
+    confronto=manut.merge(piv[["CHAVE_OS","FROTA","ITR","CNP","GM","OUTROS"]],on=["CHAVE_OS","FROTA"],how="left")
+    confronto["APONTADO"]=confronto[["ITR","CNP","GM","OUTROS"]].fillna(0).sum(axis=1)
+    origem=df.copy()
+    origem["CHAVE_OS"]=origem["os_id"].apply(_chave_vinculo_laudo)
+    origem["FROTA"]=origem["frota"].apply(norm_frota)
+    origem["INICIO_ASN"]=pd.to_datetime(origem.get("inicio_asn",pd.Series(pd.NaT,index=origem.index)).map(_hora_brasilia),errors="coerce")
+    origem["FIM_ASN"]=pd.to_datetime(origem.get("fim_asn",pd.Series(pd.NaT,index=origem.index)).map(_hora_brasilia),errors="coerce")
+    origem=origem.drop_duplicates(["CHAVE_OS","FROTA"],keep="last")
+    confronto["CHAVE_OS"]=confronto["CHAVE_OS"].apply(_chave_vinculo_laudo)
+    confronto=confronto.merge(origem[["CHAVE_OS","FROTA","INICIO_ASN","FIM_ASN"]],on=["CHAVE_OS","FROTA"],how="left",validate="one_to_one")
+    confronto["H_ASN"]=(confronto["FIM_ASN"]-confronto["INICIO_ASN"]).dt.total_seconds()/3600
+    confronto.loc[confronto["H_ASN"].lt(0),"H_ASN"]=float("nan")
+    confronto["DIFERENCA"]=confronto["H_ASN"]-confronto["APONTADO"]
+    for col,label in zip(st.columns(3),["Tempo total ASN","Tempo total apontado nos laudos","Diferença ASN − apontado"]):
+        with col:
+            if label=="Tempo total ASN":
+                valor=hhmm(confronto["H_ASN"].sum(min_count=1))
+            elif label=="Tempo total apontado nos laudos":
+                valor=hhmm(confronto["APONTADO"].sum())
+            else:
+                validos=confronto[confronto["H_ASN"].notna()]
+                saldo=validos["DIFERENCA"].sum(min_count=1)
+                valor=("--:--" if pd.isna(saldo) else ("−" if saldo<0 else "")+hhmm(abs(saldo)))
+            st.metric(label,valor)
+    exib=confronto[["CHAVE_OS","FROTA"]].rename(columns={"CHAVE_OS":"OS/ID"}).copy()
+    for campo,label in [("INICIO_ASN","INÍCIO ASN"),("FIM_ASN","LIBERAÇÃO ASN")]:
+        exib[label]=confronto[campo].dt.strftime("%d/%m/%Y %H:%M").fillna("Não informado")
+    exib["TEMPO ASN"]=confronto["H_ASN"].apply(hhmm)
+    exib["APONTADO NO LAUDO"]=confronto["APONTADO"].apply(hhmm)
+    exib["DIFERENÇA"]=confronto["DIFERENCA"].apply(lambda h:"--:--" if pd.isna(h) else ("−" if h<0 else "")+hhmm(abs(h)))
+    exib["CONFERÊNCIA"]=confronto.apply(lambda r:"ASN sem início/liberação válida" if pd.isna(r.H_ASN) else ("Tempo a esclarecer" if r.DIFERENCA>1/120 else ("Apontamento superior à ASN" if r.DIFERENCA< -1/120 else "Tempos conferem")),axis=1)
+    st.dataframe(exib.style.apply(lambda r:["background-color: #fff1f2" if r["CONFERÊNCIA"]=="Tempo a esclarecer" else "" for _ in r],axis=1),hide_index=True,use_container_width=True)
+    if confronto["H_ASN"].isna().any():
+        st.caption("OS sem datas válidas da ASN ficam fora do total ASN e da diferença. Não se substituem datas ASN por datas do laudo ou liberação 10 Sul.")
+    st.markdown("<br>",unsafe_allow_html=True)
+
     st.markdown("**Médias diárias e semanais — manutenção, ITR e CNP**")
     st.caption("Referência: FIM informado pela 10 Sul. Uma manutenção por OS/frota. Semana: segunda a domingo. ITR e CNP consideram apenas manutenções com tempo na categoria. Os filtros de período e frota se aplicam às médias.")
     medias_dia,medias_semana=calcular_medias_periodicas_laudos(manut,piv)
