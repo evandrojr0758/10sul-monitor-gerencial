@@ -2933,6 +2933,9 @@ render_acao_compartilhar_resumo()
 def render_carretas_atendidas_periodo():
     with st.expander("🚛 CARRETAS ATENDIDAS POR PERÍODO", expanded=False):
         st.caption("Consulte atendimentos pela data de início, incluindo OS abertas. Cada OS conta uma vez; uma frota pode ter vários atendimentos.")
+        from programacao_semanal import render_programacao_semanal
+        with st.popover("📅 Importar ou consultar programação semanal"):
+            render_programacao_semanal(df, integrado=True)
         hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
         c1, c2 = st.columns(2)
         with c1:
@@ -3079,9 +3082,6 @@ def render_carretas_atendidas_periodo():
                                mime="text/csv", key="baixar_carretas_atendidas_csv")
 
 render_carretas_atendidas_periodo()
-
-from programacao_semanal import render_programacao_semanal
-render_programacao_semanal(df)
 
 st.caption("Atualização automática a cada 60 segundos.")
 
