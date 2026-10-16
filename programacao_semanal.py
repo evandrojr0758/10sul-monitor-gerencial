@@ -110,6 +110,8 @@ def render_programacao_semanal(base, integrado=False):
         escolhido = st.selectbox("Programações salvas", list(opcoes), format_func=lambda v: opcoes[v],
                                  key="programacao_salva_escolhida")
         registro_salvo = next(x for x in salvas if str(x["id"]) == escolhido)
+        if integrado:
+            return
         try:
             plano = pd.DataFrame(registro_salvo["dados"])
             plano.columns = [str(c).strip().upper() for c in plano.columns]
