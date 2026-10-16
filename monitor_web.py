@@ -3005,6 +3005,9 @@ def render_carretas_atendidas_periodo():
 
 render_carretas_atendidas_periodo()
 
+from programacao_semanal import render_programacao_semanal
+render_programacao_semanal(df)
+
 st.caption("Atualização automática a cada 60 segundos.")
 
 # Crédito discreto no rodapé
