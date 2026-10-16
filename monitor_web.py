@@ -3005,10 +3005,10 @@ def render_carretas_atendidas_periodo():
             )
             resp.raise_for_status()
             historico = resp.json()
-            oficiais = [p for p in historico if "Cronograma oficial" in p["nome_arquivo"]]
+            oficiais = [p for p in historico if p.get("dados") and all(k in p["dados"][0] for k in ("GO", "DATA", "TIPO"))]
             if oficiais:
-                escolhas = {"": "Sem programação (somente atendimentos)"}
-                escolhas.update({str(p["id"]): p["nome_arquivo"] for p in oficiais})
+                escolhas = {str(p["id"]): p["nome_arquivo"] for p in oficiais}
+                escolhas[""] = "Sem programação (somente atendimentos)"
                 escolha = st.selectbox("Confrontar com programação semanal salva",
                                       list(escolhas), format_func=lambda k: escolhas[k],
                                       key="atend_periodo_programacao")
@@ -3061,9 +3061,11 @@ def render_carretas_atendidas_periodo():
                     if pendentes:
                         relacao = pd.concat([relacao, pd.DataFrame(pendentes)], ignore_index=True)
                     relacao = relacao.drop(columns=["_frota", "_evento"])
+                    ordem = ["OS/ID", "FROTA", "EVENTO", "DATA PROGRAMADA", "ATENDIDA EM", "SITUAÇÃO", "INÍCIO", "LIBERAÇÃO", "TEMPO"]
+                    relacao = relacao[ordem]
                     st.caption("A conferência considera o evento e a frota na semana selecionada; atendimentos fora da programação permanecem identificados.")
             else:
-                st.caption("Importe e salve um Cronograma oficial para exibir DATA PROGRAMADA e ATENDIDA EM.")
+                st.caption("Importe e salve uma programação para exibir DATA PROGRAMADA e ATENDIDA EM.")
         except Exception as exc:
             st.warning(f"Não foi possível consultar a programação salva: {exc}")
         st.dataframe(relacao, hide_index=True, use_container_width=True, height=min(550, 40 + 35 * len(relacao)))
