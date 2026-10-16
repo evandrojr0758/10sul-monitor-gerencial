@@ -3074,6 +3074,97 @@ def render_carretas_atendidas_periodo():
         except Exception as exc:
             st.warning(f"Não foi possível consultar a programação salva: {exc}")
         st.dataframe(relacao, hide_index=True, use_container_width=True, height=min(550, 40 + 35 * len(relacao)))
+        # PDF para impressão da mesma conferência exibida na tela.
+        try:
+            from reportlab.lib import colors as pdf_colors
+            from reportlab.lib.pagesizes import landscape, A4
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether
+            from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+            from reportlab.lib.units import mm
+            from xml.sax.saxutils import escape
+            from io import BytesIO as PdfBytesIO
+
+            def gerar_resumo_pdf():
+                memoria = PdfBytesIO()
+                documento = SimpleDocTemplate(memoria, pagesize=landscape(A4),
+                    leftMargin=12*mm, rightMargin=12*mm,
+                    topMargin=14*mm, bottomMargin=15*mm)
+                estilos = getSampleStyleSheet()
+                titulo_pdf = ParagraphStyle("titulo_conf", parent=estilos["Heading1"],
+                    fontSize=16, leading=19, textColor=pdf_colors.HexColor("#183C34"))
+                normal_pdf = ParagraphStyle("normal_conf", parent=estilos["Normal"],
+                    fontSize=8, leading=11)
+                celula_pdf = ParagraphStyle("celula_conf", parent=normal_pdf,
+                    fontSize=6.8, leading=9)
+                cab_pdf = ParagraphStyle("cab_conf", parent=celula_pdf,
+                    fontName="Helvetica-Bold", textColor=pdf_colors.white)
+                itens = [Paragraph("10 SUL | RESUMO DE ATENDIMENTOS", titulo_pdf),
+                    Spacer(1, 3*mm),
+                    Paragraph(f"Período: {data_ini.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}", normal_pdf),
+                    Paragraph("Eventos: " + escape(", ".join(str(e) for e in eventos) if eventos else "Todos"), normal_pdf),
+                    Paragraph("Programação: " + escape(str(escolhas.get(escolha, "Sem programação")) if 'escolhas' in locals() and 'escolha' in locals() else "Não selecionada"), normal_pdf),
+                    Spacer(1, 5*mm)]
+                situacoes = relacao["SITUAÇÃO"].fillna("").astype(str).value_counts() if "SITUAÇÃO" in relacao.columns else pd.Series(dtype=int)
+                total_distintas = relacao.loc[relacao["OS/ID"].astype(str).str.strip().ne(""), "FROTA"].nunique()
+                resumo_linhas = [
+                    ["CARRETAS ATENDIDAS", "TOTAL DE ATENDIMENTOS", "NO DIA", "ATRASADAS", "ANTECIPADAS", "NÃO ATENDIDAS", "SEM PROGRAMAÇÃO"],
+                    [str(total_distintas), str(len(base)), str(situacoes.get("NO DIA", 0)),
+                     str(situacoes.get("ATRASADA", 0)), str(situacoes.get("ANTECIPADA", 0)),
+                     str(situacoes.get("NÃO ATENDIDA", 0)), str(situacoes.get("SEM PROGRAMAÇÃO", 0))],
+                ]
+                resumo_tabela = Table(resumo_linhas, colWidths=[39*mm]*7)
+                resumo_tabela.setStyle(TableStyle([
+                    ("BACKGROUND", (0,0), (-1,0), pdf_colors.HexColor("#E8F0ED")),
+                    ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0,0), (-1,0), 7),
+                    ("FONTSIZE", (0,1), (-1,1), 12),
+                    ("ALIGN", (0,0), (-1,-1), "CENTER"),
+                    ("TOPPADDING", (0,0), (-1,-1), 7),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+                    ("BOX", (0,0), (-1,-1), 0.5, pdf_colors.HexColor("#B6CAC2")),
+                ]))
+                itens.extend([resumo_tabela, Spacer(1, 7*mm),
+                    Paragraph("Relação de atendimentos e programação", estilos["Heading3"])])
+                colunas = ["OS/ID", "FROTA", "EVENTO", "DATA PROGRAMADA", "ATENDIDA EM",
+                           "SITUAÇÃO", "INÍCIO", "LIBERAÇÃO", "TEMPO"]
+                disponiveis = [col for col in colunas if col in relacao.columns]
+                larguras = {"OS/ID": 19, "FROTA": 19, "EVENTO": 22,
+                    "DATA PROGRAMADA": 30, "ATENDIDA EM": 28, "SITUAÇÃO": 31,
+                    "INÍCIO": 34, "LIBERAÇÃO": 34, "TEMPO": 18}
+                linhas_pdf = [[Paragraph(escape(col), cab_pdf) for col in disponiveis]]
+                for _, registro in relacao.iterrows():
+                    linhas_pdf.append([Paragraph(escape(str(registro[col])) if pd.notna(registro[col]) else "", celula_pdf)
+                                      for col in disponiveis])
+                detalhe = Table(linhas_pdf, colWidths=[larguras[col]*mm for col in disponiveis],
+                                repeatRows=1, hAlign="LEFT")
+                detalhe.setStyle(TableStyle([
+                    ("BACKGROUND", (0,0), (-1,0), pdf_colors.HexColor("#183C34")),
+                    ("ROWBACKGROUNDS", (0,1), (-1,-1), [pdf_colors.white, pdf_colors.HexColor("#F5F8F6")]),
+                    ("VALIGN", (0,0), (-1,-1), "TOP"),
+                    ("LEFTPADDING", (0,0), (-1,-1), 5),
+                    ("RIGHTPADDING", (0,0), (-1,-1), 5),
+                    ("TOPPADDING", (0,0), (-1,-1), 6),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+                    ("LINEBELOW", (0,1), (-1,-1), 0.2, pdf_colors.HexColor("#DDE6E1")),
+                ]))
+                itens.append(detalhe)
+                def rodape(canvas, doc):
+                    canvas.saveState()
+                    canvas.setFont("Helvetica", 8)
+                    canvas.setFillColor(pdf_colors.HexColor("#64746D"))
+                    canvas.drawString(12*mm, 9*mm, "10 Sul | Monitor Web | Conferência de programação")
+                    canvas.drawRightString(285*mm, 9*mm, f"Página {doc.page}")
+                    canvas.restoreState()
+                documento.build(itens, onFirstPage=rodape, onLaterPages=rodape)
+                return memoria.getvalue()
+
+            st.download_button("🖨️ Imprimir resumo em PDF", data=gerar_resumo_pdf(),
+                file_name=f"RESUMO_ATENDIMENTOS_{data_ini}_{data_fim}.pdf",
+                mime="application/pdf", key="imprimir_resumo_atendimentos")
+        except Exception as exc:
+            st.warning(f"Não foi possível preparar o PDF para impressão: {exc}")
+
         from io import BytesIO
         try:
             arquivo = BytesIO()
