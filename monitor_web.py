@@ -3073,6 +3073,27 @@ def render_carretas_atendidas_periodo():
                 st.caption("Importe e salve uma programação para exibir DATA PROGRAMADA e ATENDIDA EM.")
         except Exception as exc:
             st.warning(f"Não foi possível consultar a programação salva: {exc}")
+        # Painel de exceções: somente quando existe programação selecionada.
+        possui_programacao = "DATA PROGRAMADA" in relacao.columns and "SITUAÇÃO" in relacao.columns
+        if possui_programacao:
+            fora_programacao = relacao.loc[relacao["SITUAÇÃO"].eq("SEM PROGRAMAÇÃO")].copy()
+            nao_atendidas = relacao.loc[relacao["SITUAÇÃO"].eq("NÃO ATENDIDA")].copy()
+            st.markdown("#### 📋 Resumo das divergências da programação")
+            quadro_esq, quadro_dir = st.columns(2)
+            with quadro_esq:
+                st.error(f"🚨 Atendidas fora da programação — {fora_programacao['FROTA'].nunique()} carreta(s)")
+                if fora_programacao.empty:
+                    st.success("Nenhuma carreta atendida fora da programação.")
+                else:
+                    st.dataframe(fora_programacao[["FROTA", "OS/ID", "EVENTO", "ATENDIDA EM"]].drop_duplicates(),
+                        use_container_width=True, hide_index=True)
+            with quadro_dir:
+                st.warning(f"⚠️ Programadas e não atendidas — {nao_atendidas['FROTA'].nunique()} carreta(s)")
+                if nao_atendidas.empty:
+                    st.success("Nenhuma carreta programada ficou sem atendimento.")
+                else:
+                    st.dataframe(nao_atendidas[["FROTA", "EVENTO", "DATA PROGRAMADA"]].drop_duplicates(),
+                        use_container_width=True, hide_index=True)
         st.dataframe(relacao, hide_index=True, use_container_width=True, height=min(550, 40 + 35 * len(relacao)))
         # PDF para impressão da mesma conferência exibida na tela.
         try:
@@ -3126,8 +3147,39 @@ def render_carretas_atendidas_periodo():
                     ("BOTTOMPADDING", (0,0), (-1,-1), 7),
                     ("BOX", (0,0), (-1,-1), 0.5, pdf_colors.HexColor("#B6CAC2")),
                 ]))
-                itens.extend([resumo_tabela, Spacer(1, 7*mm),
-                    Paragraph("Relação de atendimentos e programação", estilos["Heading3"])])
+                itens.extend([resumo_tabela, Spacer(1, 7*mm)])
+                if possui_programacao:
+                    for titulo_quadro, dados_quadro, campos_quadro in [
+                        ("ATENDIDAS FORA DA PROGRAMAÇÃO", fora_programacao,
+                         ["FROTA", "OS/ID", "EVENTO", "ATENDIDA EM"]),
+                        ("PROGRAMADAS E NÃO ATENDIDAS", nao_atendidas,
+                         ["FROTA", "EVENTO", "DATA PROGRAMADA"])]:
+                        itens.append(Paragraph(
+                            escape(titulo_quadro) + f" — {dados_quadro['FROTA'].nunique()} carreta(s)",
+                            estilos["Heading3"]))
+                        if dados_quadro.empty:
+                            itens.append(Paragraph("Nenhuma ocorrência.", normal_pdf))
+                        else:
+                            campos_quadro = [col for col in campos_quadro if col in dados_quadro.columns]
+                            linhas_quadro = [[Paragraph(escape(col), cab_pdf) for col in campos_quadro]]
+                            for _, linha_quadro in dados_quadro[campos_quadro].drop_duplicates().iterrows():
+                                linhas_quadro.append([
+                                    Paragraph(escape(str(linha_quadro[col])) if pd.notna(linha_quadro[col]) else "", celula_pdf)
+                                    for col in campos_quadro])
+                            larg_quadro = [min(48, 250 / len(campos_quadro)) * mm] * len(campos_quadro)
+                            tabela_quadro = Table(linhas_quadro, colWidths=larg_quadro,
+                                repeatRows=1, hAlign="LEFT")
+                            tabela_quadro.setStyle(TableStyle([
+                                ("BACKGROUND", (0,0), (-1,0), pdf_colors.HexColor("#183C34")),
+                                ("ROWBACKGROUNDS", (0,1), (-1,-1),
+                                 [pdf_colors.white, pdf_colors.HexColor("#F5F8F6")]),
+                                ("VALIGN", (0,0), (-1,-1), "TOP"),
+                                ("TOPPADDING", (0,0), (-1,-1), 5),
+                                ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+                            ]))
+                            itens.append(tabela_quadro)
+                        itens.append(Spacer(1, 4*mm))
+                itens.append(Paragraph("Relação de atendimentos e programação", estilos["Heading3"]))
                 colunas = ["OS/ID", "FROTA", "EVENTO", "DATA PROGRAMADA", "ATENDIDA EM",
                            "SITUAÇÃO", "INÍCIO", "LIBERAÇÃO", "TEMPO"]
                 disponiveis = [col for col in colunas if col in relacao.columns]
