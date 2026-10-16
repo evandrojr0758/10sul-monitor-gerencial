@@ -4,9 +4,13 @@ import pandas as pd
 import streamlit as st
 
 def _frota(v):
-    s = str(v or "").upper().strip()
-    m = re.search(r"(?:GO\s*)?(\d{5})", s)
-    return m.group(1) if m else ""
+    # GO13769, GO 13769, 13769 e 13769.0 identificam a mesma frota.
+    if pd.isna(v):
+        return ""
+    s = str(v).upper().strip()
+    s = re.sub(r"^GO[\\s.:-]*", "", s)
+    s = re.sub(r"\\.0+$", "", s)
+    return str(int(s)) if re.fullmatch(r"\\d+", s) else ""
 
 def _tipo(v):
     s = str(v or "").upper().strip()
