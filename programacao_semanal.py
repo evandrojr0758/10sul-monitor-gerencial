@@ -1,4 +1,5 @@
 import io
+from contextlib import nullcontext
 import hashlib
 import requests
 import re
@@ -56,8 +57,8 @@ def _ler_cronograma(conteudo):
         raise ValueError("Nenhuma frota encontrada na aba Cronograma.Novo.")
     return pd.DataFrame(itens).drop_duplicates(subset=["GO", "DATA", "TIPO"])
 
-def render_programacao_semanal(base):
-    with st.expander("📅 CONFERÊNCIA DA PROGRAMAÇÃO SEMANAL", expanded=False):
+def render_programacao_semanal(base, integrado=False):
+    with (nullcontext() if integrado else st.expander("📅 CONFERÊNCIA DA PROGRAMAÇÃO SEMANAL", expanded=False)):
         st.caption("Importe o Excel da programação. A programação oficial é a aba Cronograma.Novo. A ASN confirma os atendimentos.")
         arquivo = st.file_uploader("Programação semanal (.xlsx)", type=["xlsx"], key="programacao_semanal_excel")
         import os
