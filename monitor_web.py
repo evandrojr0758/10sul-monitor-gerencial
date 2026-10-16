@@ -2934,7 +2934,7 @@ def render_carretas_atendidas_periodo():
     with st.expander("🚛 CARRETAS ATENDIDAS POR PERÍODO", expanded=False):
         st.caption("Consulte atendimentos pela data de início, incluindo OS abertas. Cada OS conta uma vez; uma frota pode ter vários atendimentos.")
         from programacao_semanal import render_programacao_semanal
-        with st.popover("📅 Importar ou consultar programação semanal"):
+        with st.expander("📅 Importar programação semanal (somente cadastro)", expanded=False):
             render_programacao_semanal(df, integrado=True)
         hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
         c1, c2 = st.columns(2)
