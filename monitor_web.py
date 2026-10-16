@@ -2993,9 +2993,10 @@ def render_carretas_atendidas_periodo():
         # Cruzamento opcional com a programação oficial persistida.
         try:
             from programacao_semanal import _frota, _tipo
-            api_headers = {"apikey": SUPABASE_KEY}
-            if not SUPABASE_KEY.startswith(("sb_secret_", "sb_publishable_")):
-                api_headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+            chave_programacao = _secret("SUPABASE_WRITE_KEY") or SUPABASE_KEY
+            api_headers = {"apikey": chave_programacao}
+            if not chave_programacao.startswith(("sb_secret_", "sb_publishable_")):
+                api_headers["Authorization"] = f"Bearer {chave_programacao}"
             resp = requests.get(
                 f"{SUPABASE_URL}/rest/v1/monitor_programacoes_semanais",
                 headers=api_headers,
