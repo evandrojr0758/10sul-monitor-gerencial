@@ -2987,6 +2987,81 @@ def render_carretas_atendidas_periodo():
             "LIBERAÇÃO": base["_fim_consulta"].dt.strftime("%d/%m/%Y %H:%M").fillna("Em aberto"),
             "TEMPO": tempo.map(fmt_tempo),
         }).sort_values(["INÍCIO", "FROTA"], ascending=[False, True])
+        # Cruzamento opcional com a programação oficial persistida.
+        try:
+            from programacao_semanal import _frota, _tipo
+            api_headers = {"apikey": SUPABASE_KEY}
+            if not SUPABASE_KEY.startswith(("sb_secret_", "sb_publishable_")):
+                api_headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+            resp = requests.get(
+                f"{SUPABASE_URL}/rest/v1/monitor_programacoes_semanais",
+                headers=api_headers,
+                params={"select": "id,semana_inicio,nome_arquivo,dados", "order": "semana_inicio.desc"},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            historico = resp.json()
+            oficiais = [p for p in historico if "Cronograma oficial" in p["nome_arquivo"]]
+            if oficiais:
+                escolhas = {"": "Sem programação (somente atendimentos)"}
+                escolhas.update({str(p["id"]): p["nome_arquivo"] for p in oficiais})
+                escolha = st.selectbox("Confrontar com programação semanal salva",
+                                      list(escolhas), format_func=lambda k: escolhas[k],
+                                      key="atend_periodo_programacao")
+                if escolha:
+                    programacao = next(p for p in oficiais if str(p["id"]) == escolha)
+                    linhas = pd.DataFrame(programacao["dados"])
+                    linhas["FROTA"] = linhas["GO"].map(_frota)
+                    linhas["EVENTO"] = linhas["TIPO"].map(_tipo)
+                    linhas["DATA PROGRAMADA"] = pd.to_datetime(linhas["DATA"], errors="coerce")
+                    linhas = linhas.loc[linhas["FROTA"].ne("") & linhas["DATA PROGRAMADA"].notna()]
+                    if eventos:
+                        linhas = linhas.loc[linhas["EVENTO"].isin([_tipo(e) for e in eventos])]
+                    relacao["DATA PROGRAMADA"] = ""
+                    relacao["ATENDIDA EM"] = relacao["INÍCIO"].str[:10]
+                    relacao["SITUAÇÃO"] = "SEM PROGRAMAÇÃO"
+                    relacao["_frota"] = relacao["FROTA"].map(_frota)
+                    relacao["_evento"] = relacao["EVENTO"].map(_tipo)
+                    usados = set()
+                    pendentes = []
+                    for _, p in linhas.iterrows():
+                        candidatos = relacao.loc[
+                            relacao["_frota"].eq(p["FROTA"]) &
+                            relacao["_evento"].eq(p["EVENTO"]) &
+                            ~relacao.index.isin(usados)
+                        ].copy()
+                        # Para a conferência semanal, a data pode ser diferente da programada.
+                        if not candidatos.empty:
+                            candidatos["_dist"] = (
+                                pd.to_datetime(candidatos["INÍCIO"], dayfirst=True, errors="coerce").dt.normalize()
+                                - p["DATA PROGRAMADA"].normalize()
+                            ).abs()
+                            idx = candidatos.sort_values("_dist").index[0]
+                            usados.add(idx)
+                            real = pd.to_datetime(relacao.at[idx, "INÍCIO"], dayfirst=True)
+                            prevista = p["DATA PROGRAMADA"].normalize()
+                            relacao.at[idx, "DATA PROGRAMADA"] = prevista.strftime("%d/%m/%Y")
+                            relacao.at[idx, "SITUAÇÃO"] = (
+                                "NO DIA" if real.normalize() == prevista
+                                else "ANTECIPADA" if real.normalize() < prevista else "ATRASADA"
+                            )
+                        else:
+                            pendentes.append({
+                                "OS/ID": "", "FROTA": p["FROTA"], "EVENTO": p["EVENTO"],
+                                "INÍCIO": "", "LIBERAÇÃO": "", "TEMPO": "",
+                                "DATA PROGRAMADA": p["DATA PROGRAMADA"].strftime("%d/%m/%Y"),
+                                "ATENDIDA EM": "NÃO ATENDIDA",
+                                "SITUAÇÃO": "AGUARDANDO" if p["DATA PROGRAMADA"].date() > hoje else "NÃO ATENDIDA",
+                                "_frota": p["FROTA"], "_evento": p["EVENTO"]
+                            })
+                    if pendentes:
+                        relacao = pd.concat([relacao, pd.DataFrame(pendentes)], ignore_index=True)
+                    relacao = relacao.drop(columns=["_frota", "_evento"])
+                    st.caption("A conferência considera o evento e a frota na semana selecionada; atendimentos fora da programação permanecem identificados.")
+            else:
+                st.caption("Importe e salve um Cronograma oficial para exibir DATA PROGRAMADA e ATENDIDA EM.")
+        except Exception as exc:
+            st.warning(f"Não foi possível consultar a programação salva: {exc}")
         st.dataframe(relacao, hide_index=True, use_container_width=True, height=min(550, 40 + 35 * len(relacao)))
         from io import BytesIO
         try:
