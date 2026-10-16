@@ -1,4 +1,6 @@
 import io
+import hashlib
+import requests
 import re
 import pandas as pd
 import streamlit as st
@@ -22,11 +24,69 @@ def render_programacao_semanal(base):
     with st.expander("📅 CONFERÊNCIA DA PROGRAMAÇÃO SEMANAL", expanded=False):
         st.caption("Importe o Excel da programação. O cruzamento utiliza a aba GO_PLANO, a frota e o evento da ASN.")
         arquivo = st.file_uploader("Programação semanal (.xlsx)", type=["xlsx"], key="programacao_semanal_excel")
-        if arquivo is None:
-            st.info("Selecione a planilha da semana para conferir atendimentos e faltas.")
-            return
+        import os
+        def _secret(nome):
+            try:
+                return str(st.secrets[nome]).strip()
+            except Exception:
+                return os.getenv(nome, "").strip()
+        url = _secret("SUPABASE_URL").rstrip("/")
+        key = _secret("SUPABASE_WRITE_KEY") or _secret("SUPABASE_KEY")
+        headers = {"apikey": key, "Content-Type": "application/json"}
+        if not key.startswith(("sb_secret_", "sb_publishable_")):
+            headers["Authorization"] = f"Bearer {key}"
         try:
-            plano = pd.read_excel(arquivo, sheet_name="GO_PLANO", header=1)
+            response = requests.get(f"{url}/rest/v1/monitor_programacoes_semanais",
+                                    headers=headers, params={"select": "id,semana_inicio,nome_arquivo,hash_arquivo,dados",
+                                                             "order": "semana_inicio.desc"}, timeout=25)
+            response.raise_for_status()
+            salvas = response.json()
+        except Exception as exc:
+            st.error(f"Não foi possível carregar o histórico salvo: {exc}")
+            return
+        if arquivo is not None:
+            conteudo = arquivo.getvalue()
+            digest = hashlib.sha256(conteudo).hexdigest()
+            if not any(x["hash_arquivo"] == digest for x in salvas):
+                if st.button("💾 Salvar programação no histórico", key="salvar_programacao"):
+                    try:
+                        import json
+                        bruto = pd.read_excel(io.BytesIO(conteudo), sheet_name="GO_PLANO", header=1)
+                        bruto.columns = [str(c).strip().upper() for c in bruto.columns]
+                        if not {"GO", "DATA", "TIPO"}.issubset(bruto.columns):
+                            st.error("A aba GO_PLANO precisa conter GO, DATA e TIPO.")
+                        else:
+                            datas = pd.to_datetime(bruto["DATA"], errors="coerce")
+                            numeros = pd.to_numeric(bruto["DATA"], errors="coerce")
+                            mask = numeros.between(30000, 80000)
+                            datas.loc[mask] = pd.to_datetime(numeros.loc[mask], unit="D", origin="1899-12-30")
+                            validas = datas.dropna()
+                            if validas.empty:
+                                st.error("Não foi encontrada uma data válida na programação.")
+                            else:
+                                bruto["DATA"] = datas.dt.strftime("%Y-%m-%d")
+                                payload = {"semana_inicio": str(validas.min().date()),
+                                           "nome_arquivo": arquivo.name, "hash_arquivo": digest,
+                                           "dados": bruto.where(pd.notna(bruto), None).astype(object).to_dict(orient="records")}
+                                resposta = requests.post(f"{url}/rest/v1/monitor_programacoes_semanais",
+                                                         headers={**headers, "Prefer": "return=minimal"},
+                                                         json=payload, timeout=35)
+                                resposta.raise_for_status()
+                                st.success("Programação salva permanentemente.")
+                                st.rerun()
+                    except Exception as exc:
+                        st.error(f"Erro ao salvar programação: {exc}")
+            else:
+                st.success("Esta planilha já está salva no histórico.")
+        if not salvas:
+            st.info("Nenhuma programação salva ainda. Importe e clique em Salvar programação.")
+            return
+        opcoes = {str(x["id"]): f'{x["semana_inicio"]} • {x["nome_arquivo"]}' for x in salvas}
+        escolhido = st.selectbox("Programações salvas", list(opcoes), format_func=lambda v: opcoes[v],
+                                 key="programacao_salva_escolhida")
+        registro_salvo = next(x for x in salvas if str(x["id"]) == escolhido)
+        try:
+            plano = pd.DataFrame(registro_salvo["dados"])
             plano.columns = [str(c).strip().upper() for c in plano.columns]
             obrigatorias = {"GO", "DATA", "TIPO"}
             if not obrigatorias.issubset(plano.columns):
