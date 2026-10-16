@@ -67,7 +67,7 @@ def render_programacao_semanal(base):
                                 bruto["DATA"] = datas.dt.strftime("%Y-%m-%d")
                                 payload = {"semana_inicio": str(validas.min().date()),
                                            "nome_arquivo": arquivo.name, "hash_arquivo": digest,
-                                           "dados": bruto.where(pd.notna(bruto), None).astype(object).to_dict(orient="records")}
+                                           "dados": bruto.astype(object).where(pd.notna(bruto), None).to_dict(orient="records")}
                                 resposta = requests.post(f"{url}/rest/v1/monitor_programacoes_semanais",
                                                          headers={**headers, "Prefer": "return=minimal"},
                                                          json=payload, timeout=35)
