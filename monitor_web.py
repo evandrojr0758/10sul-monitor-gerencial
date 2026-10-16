@@ -3085,6 +3085,8 @@ def render_carretas_atendidas_periodo():
             from xml.sax.saxutils import escape
             from io import BytesIO as PdfBytesIO
 
+            nome_programacao_pdf = str(escolhas.get(escolha, "Sem programação")) if "escolhas" in locals() and "escolha" in locals() else "Não selecionada"
+
             def gerar_resumo_pdf():
                 memoria = PdfBytesIO()
                 documento = SimpleDocTemplate(memoria, pagesize=landscape(A4),
@@ -3103,7 +3105,7 @@ def render_carretas_atendidas_periodo():
                     Spacer(1, 3*mm),
                     Paragraph(f"Período: {data_ini.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}", normal_pdf),
                     Paragraph("Eventos: " + escape(", ".join(str(e) for e in eventos) if eventos else "Todos"), normal_pdf),
-                    Paragraph("Programação: " + escape(str(escolhas.get(escolha, "Sem programação")) if 'escolhas' in locals() and 'escolha' in locals() else "Não selecionada"), normal_pdf),
+                    Paragraph("Programação: " + escape(nome_programacao_pdf), normal_pdf),
                     Spacer(1, 5*mm)]
                 situacoes = relacao["SITUAÇÃO"].fillna("").astype(str).value_counts() if "SITUAÇÃO" in relacao.columns else pd.Series(dtype=int)
                 total_distintas = relacao.loc[relacao["OS/ID"].astype(str).str.strip().ne(""), "FROTA"].nunique()
