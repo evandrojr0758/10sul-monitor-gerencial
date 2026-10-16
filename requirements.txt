@@ -5,3 +5,4 @@ requests
 Pillow
 Jinja2==3.1.6
 PyMuPDF==1.26.6
+openpyxl>=3.1.2
