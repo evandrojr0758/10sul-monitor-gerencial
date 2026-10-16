@@ -3026,29 +3026,32 @@ def render_carretas_atendidas_periodo():
                     relacao["SITUAÇÃO"] = "SEM PROGRAMAÇÃO"
                     relacao["_frota"] = relacao["FROTA"].map(_frota)
                     relacao["_evento"] = relacao["EVENTO"].map(_tipo)
-                    usados = set()
                     pendentes = []
+                    # Todas as OS da mesma frota/evento devem herdar a programação,
+                    # inclusive quando a ASN contém mais de uma OS no mesmo período.
                     for _, p in linhas.iterrows():
                         candidatos = relacao.loc[
                             relacao["_frota"].eq(p["FROTA"]) &
-                            relacao["_evento"].eq(p["EVENTO"]) &
-                            ~relacao.index.isin(usados)
+                            relacao["_evento"].eq(p["EVENTO"])
                         ].copy()
-                        # Para a conferência semanal, a data pode ser diferente da programada.
                         if not candidatos.empty:
-                            candidatos["_dist"] = (
-                                pd.to_datetime(candidatos["INÍCIO"], dayfirst=True, errors="coerce").dt.normalize()
-                                - p["DATA PROGRAMADA"].normalize()
-                            ).abs()
-                            idx = candidatos.sort_values("_dist").index[0]
-                            usados.add(idx)
-                            real = pd.to_datetime(relacao.at[idx, "INÍCIO"], dayfirst=True)
-                            prevista = p["DATA PROGRAMADA"].normalize()
-                            relacao.at[idx, "DATA PROGRAMADA"] = prevista.strftime("%d/%m/%Y")
-                            relacao.at[idx, "SITUAÇÃO"] = (
-                                "NO DIA" if real.normalize() == prevista
-                                else "ANTECIPADA" if real.normalize() < prevista else "ATRASADA"
-                            )
+                            for idx in candidatos.index:
+                                real = pd.to_datetime(relacao.at[idx, "INÍCIO"], dayfirst=True, errors="coerce")
+                                prevista = p["DATA PROGRAMADA"].normalize()
+                                if pd.isna(real):
+                                    continue
+                                # Havendo mais de uma programação da mesma frota,
+                                # prevalece a data programada mais próxima da OS.
+                                anterior = relacao.at[idx, "DATA PROGRAMADA"]
+                                if anterior:
+                                    data_anterior = pd.to_datetime(anterior, dayfirst=True, errors="coerce")
+                                    if pd.notna(data_anterior) and abs((real.normalize() - data_anterior).days) <= abs((real.normalize() - prevista).days):
+                                        continue
+                                relacao.at[idx, "DATA PROGRAMADA"] = prevista.strftime("%d/%m/%Y")
+                                relacao.at[idx, "SITUAÇÃO"] = (
+                                    "NO DIA" if real.normalize() == prevista
+                                    else "ANTECIPADA" if real.normalize() < prevista else "ATRASADA"
+                                )
                         else:
                             pendentes.append({
                                 "OS/ID": "", "FROTA": p["FROTA"], "EVENTO": p["EVENTO"],
