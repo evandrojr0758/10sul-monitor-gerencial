@@ -19,9 +19,46 @@ def _tipo(v):
     if "REVIS" in s: return "REVISÃO"
     return s
 
+def _ler_cronograma(conteudo):
+    tabela = pd.read_excel(io.BytesIO(conteudo), sheet_name="Cronograma.Novo ", header=None, dtype=object)
+    linhas = tabela.fillna("").values.tolist()
+    itens = []
+    secao = None
+    datas = {}
+    for linha in linhas:
+        # A seção ITR ou REVISÃO é definida pelas faixas horizontais do cronograma.
+        titulo = str(linha[0]).strip().upper() if linha else ""
+        if titulo == "ITR":
+            secao = "ITR"
+            datas = {}
+        elif titulo.startswith("REVISÃO") and "DIA" in titulo:
+            secao = "REVISÃO"
+            datas = {}
+        if not secao:
+            continue
+        for col, valor in enumerate(linha):
+            texto = str(valor).strip()
+            if "Planejamento de Manutenção" in texto:
+                m = re.search(r"(\\d{1,2}/\\d{1,2}/\\d{4})", texto)
+                if m:
+                    datas[col] = pd.to_datetime(m.group(1), dayfirst=True).strftime("%Y-%m-%d")
+            if re.fullmatch(r"GO\\s*\\d{5}", texto, re.IGNORECASE):
+                inicios = [c for c in datas if c <= col]
+                if not inicios:
+                    continue
+                coluna_dia = max(inicios)
+                if col - coluna_dia > 6:
+                    continue
+                operacao = str(linha[col + 3]).strip() if col + 3 < len(linha) else ""
+                itens.append({"GO": texto, "DATA": datas[coluna_dia], "TIPO": secao,
+                              "UN": "ARA", "OPERACAO": operacao})
+    if not itens:
+        raise ValueError("Nenhuma frota encontrada na aba Cronograma.Novo.")
+    return pd.DataFrame(itens).drop_duplicates(subset=["GO", "DATA", "TIPO"])
+
 def render_programacao_semanal(base):
     with st.expander("📅 CONFERÊNCIA DA PROGRAMAÇÃO SEMANAL", expanded=False):
-        st.caption("Importe o Excel da programação. O cruzamento utiliza a aba GO_PLANO, a frota e o evento da ASN.")
+        st.caption("Importe o Excel da programação. A programação oficial é a aba Cronograma.Novo. A ASN confirma os atendimentos.")
         arquivo = st.file_uploader("Programação semanal (.xlsx)", type=["xlsx"], key="programacao_semanal_excel")
         import os
         def _secret(nome):
@@ -45,28 +82,16 @@ def render_programacao_semanal(base):
             return
         if arquivo is not None:
             conteudo = arquivo.getvalue()
-            digest = hashlib.sha256(conteudo).hexdigest()
+            digest = hashlib.sha256(conteudo + b":cronograma_oficial_v1").hexdigest()
             if not any(x["hash_arquivo"] == digest for x in salvas):
                 if st.button("💾 Salvar programação no histórico", key="salvar_programacao"):
                     try:
-                        import json
-                        bruto = pd.read_excel(io.BytesIO(conteudo), sheet_name="GO_PLANO", header=1)
-                        bruto.columns = [str(c).strip().upper() for c in bruto.columns]
-                        if not {"GO", "DATA", "TIPO"}.issubset(bruto.columns):
-                            st.error("A aba GO_PLANO precisa conter GO, DATA e TIPO.")
-                        else:
-                            datas = pd.to_datetime(bruto["DATA"], errors="coerce")
-                            numeros = pd.to_numeric(bruto["DATA"], errors="coerce")
-                            mask = numeros.between(30000, 80000)
-                            datas.loc[mask] = pd.to_datetime(numeros.loc[mask], unit="D", origin="1899-12-30")
-                            validas = datas.dropna()
-                            if validas.empty:
-                                st.error("Não foi encontrada uma data válida na programação.")
-                            else:
-                                bruto["DATA"] = datas.dt.strftime("%Y-%m-%d")
-                                payload = {"semana_inicio": str(validas.min().date()),
-                                           "nome_arquivo": arquivo.name, "hash_arquivo": digest,
-                                           "dados": bruto.astype(object).where(pd.notna(bruto), None).to_dict(orient="records")}
+                        bruto = _ler_cronograma(conteudo)
+                        datas = pd.to_datetime(bruto["DATA"])
+                        payload = {"semana_inicio": str(datas.min().date()),
+                                   "nome_arquivo": arquivo.name + " • Cronograma oficial",
+                                   "hash_arquivo": digest,
+                                   "dados": bruto.to_dict(orient="records")}
                                 resposta = requests.post(f"{url}/rest/v1/monitor_programacoes_semanais",
                                                          headers={**headers, "Prefer": "return=minimal"},
                                                          json=payload, timeout=35)
@@ -89,7 +114,7 @@ def render_programacao_semanal(base):
             plano.columns = [str(c).strip().upper() for c in plano.columns]
             obrigatorias = {"GO", "DATA", "TIPO"}
             if not obrigatorias.issubset(plano.columns):
-                st.error("A aba GO_PLANO precisa conter GO, DATA e TIPO.")
+                st.error("A programação salva precisa conter GO, DATA e TIPO.")
                 return
             plano = plano.copy()
             plano["FROTA"] = plano["GO"].map(_frota)
@@ -127,6 +152,7 @@ def render_programacao_semanal(base):
                 b["UN"] = b["unidade"].fillna("").astype(str).str.upper().str.strip()
             resultados = []
             usados = set()
+            hoje = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None).normalize()
             for _, p in plano.iterrows():
                 ini = p["DATA PROGRAMADA"].normalize()
                 fim = ini + pd.Timedelta(days=int(dias) + 1)
@@ -138,21 +164,24 @@ def render_programacao_semanal(base):
                 registro = candidatos.iloc[0] if not candidatos.empty else None
                 if registro is not None:
                     usados.add(registro.name)
+                situacao = ("ATENDIDA NO DIA" if registro is not None and registro["INÍCIO"].normalize() == ini
+                            else "ATENDIDA COM ATRASO" if registro is not None
+                            else "AGUARDANDO" if ini > hoje else "NÃO ATENDIDA")
                 resultados.append({
                     "FROTA": p["FROTA"], "EVENTO": p["EVENTO"],
                     "DATA PROGRAMADA": ini.strftime("%d/%m/%Y"),
                     "UNIDADE": p.get("UN", ""),
-                    "SITUAÇÃO": "ATENDIDA" if registro is not None else "NÃO ATENDIDA",
+                    "SITUAÇÃO": situacao,
                     "PARADA REAL": registro["INÍCIO"].strftime("%d/%m/%Y %H:%M") if registro is not None else "",
                     "OS": str(registro.get("os_id", "")) if registro is not None else "",
                 })
             resultado = pd.DataFrame(resultados)
-            atendidas = int(resultado["SITUAÇÃO"].eq("ATENDIDA").sum())
+            atendidas = int(resultado["SITUAÇÃO"].str.startswith("ATENDIDA").sum())
             c1, c2, c3 = st.columns(3)
             c1.metric("Programadas", len(resultado))
             c2.metric("Atendidas", atendidas)
             c3.metric("Não atendidas", len(resultado) - atendidas)
-            st.caption("Atendida = parada do mesmo evento na data programada ou dentro da tolerância selecionada. Não atendida = sem registro correspondente na base disponível.")
+            st.caption("Aguardando = data futura; atendida = OS do evento correspondente dentro da tolerância; não atendida = sem OS correspondente até a consulta.")
             st.dataframe(resultado, hide_index=True, use_container_width=True)
             extras = b.loc[~b.index.isin(usados)].copy()
             inicio_semana = plano["DATA PROGRAMADA"].min().normalize()
