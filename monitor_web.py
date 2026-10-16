@@ -2586,6 +2586,9 @@ def render_cards_oficina():
 
 render_cards_oficina()
 
+# Médias ITR e Revisão imediatamente abaixo dos cards Oficina Agora.
+render_medias_supervisor()
+
 @st.dialog("OS excluídas na Lista ASN", width="large")
 def modal_os_excluidas():
     st.caption("Histórico preservado • exclusão confirmada na origem • sem notificações ou indicadores de manutenção.")
@@ -2728,8 +2731,6 @@ def render_card_os_excluidas_asn():
             modal_os_excluidas()
 
 render_card_os_excluidas_asn()
-
-render_medias_supervisor()
 
 @st.fragment
 def render_reprovacoes_mega():
