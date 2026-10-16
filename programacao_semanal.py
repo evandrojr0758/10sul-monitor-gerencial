@@ -92,12 +92,12 @@ def render_programacao_semanal(base):
                                    "nome_arquivo": arquivo.name + " • Cronograma oficial",
                                    "hash_arquivo": digest,
                                    "dados": bruto.to_dict(orient="records")}
-                                resposta = requests.post(f"{url}/rest/v1/monitor_programacoes_semanais",
-                                                         headers={**headers, "Prefer": "return=minimal"},
-                                                         json=payload, timeout=35)
-                                resposta.raise_for_status()
-                                st.success("Programação salva permanentemente.")
-                                st.rerun()
+                resposta = requests.post(f"{url}/rest/v1/monitor_programacoes_semanais",
+                                         headers={**headers, "Prefer": "return=minimal"},
+                                         json=payload, timeout=35)
+                resposta.raise_for_status()
+                st.success("Programação salva permanentemente.")
+                st.rerun()
                     except Exception as exc:
                         st.error(f"Erro ao salvar programação: {exc}")
             else:
