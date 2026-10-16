@@ -6,13 +6,12 @@ import pandas as pd
 import streamlit as st
 
 def _frota(v):
-    # GO13769, GO 13769, 13769 e 13769.0 identificam a mesma frota.
     if pd.isna(v):
         return ""
     s = str(v).upper().strip()
-    s = re.sub(r"^GO[\\s.:-]*", "", s)
-    s = re.sub(r"\\.0+$", "", s)
-    return str(int(s)) if re.fullmatch(r"\\d+", s) else ""
+    s = re.sub('^GO[\\s.:-]*', '', s)
+    s = re.sub('\\.0+$', '', s)
+    return str(int(s)) if re.fullmatch('[0-9]+', s) else ''
 
 def _tipo(v):
     s = str(v or "").upper().strip()
