@@ -22,7 +22,7 @@ def render_programacao_semanal(base):
             st.info("Selecione a planilha da semana para conferir atendimentos e faltas.")
             return
         try:
-            plano = pd.read_excel(arquivo, sheet_name="GO_PLANO")
+            plano = pd.read_excel(arquivo, sheet_name="GO_PLANO", header=1)
             plano.columns = [str(c).strip().upper() for c in plano.columns]
             obrigatorias = {"GO", "DATA", "TIPO"}
             if not obrigatorias.issubset(plano.columns):
@@ -31,6 +31,9 @@ def render_programacao_semanal(base):
             plano = plano.copy()
             plano["FROTA"] = plano["GO"].map(_frota)
             plano["DATA PROGRAMADA"] = pd.to_datetime(plano["DATA"], errors="coerce")
+            numeros = pd.to_numeric(plano["DATA"], errors="coerce")
+            mask_numeros = numeros.between(30000, 80000)
+            plano.loc[mask_numeros, "DATA PROGRAMADA"] = pd.to_datetime(numeros[mask_numeros], unit="D", origin="1899-12-30")
             plano["EVENTO"] = plano["TIPO"].map(_tipo)
             plano = plano.loc[plano["FROTA"].ne("") & plano["DATA PROGRAMADA"].notna()
                               & plano["EVENTO"].isin(["ITR", "REVISÃO"])].copy()
