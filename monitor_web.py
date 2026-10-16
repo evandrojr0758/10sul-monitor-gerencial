@@ -2927,6 +2927,84 @@ def render_acao_compartilhar_resumo():
 
 render_acao_compartilhar_resumo()
 
+
+# Consulta histórica de carretas atendidas — leitura da mesma base consolidada ASN.
+@st.fragment
+def render_carretas_atendidas_periodo():
+    with st.expander("🚛 CARRETAS ATENDIDAS POR PERÍODO", expanded=False):
+        st.caption("Consulte atendimentos pela data de início, incluindo OS abertas. Cada OS conta uma vez; uma frota pode ter vários atendimentos.")
+        hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+        c1, c2 = st.columns(2)
+        with c1:
+            data_ini = st.date_input("Data inicial", value=hoje.replace(day=1), key="atend_periodo_inicio")
+        with c2:
+            data_fim = st.date_input("Data final", value=hoje, key="atend_periodo_fim")
+        if data_ini > data_fim:
+            st.warning("A data inicial não pode ser posterior à data final.")
+            return
+        base = df.copy()
+        if base.empty:
+            st.info("Não há atendimentos na base para consulta.")
+            return
+        base["_evento_consulta"] = base["evento"].fillna("").astype(str).str.strip()
+        opcoes = sorted(v for v in base["_evento_consulta"].unique() if v)
+        eventos = st.multiselect("Filtrar evento (vazio = todos)", opcoes, key="atend_periodo_eventos")
+        if eventos:
+            base = base.loc[base["_evento_consulta"].isin(eventos)].copy()
+        base["_inicio_consulta"] = pd.to_datetime(base["inicio"], errors="coerce")
+        # Datas sem timezone são apresentadas como horário local da operação.
+        if getattr(base["_inicio_consulta"].dt, "tz", None) is not None:
+            base["_inicio_consulta"] = base["_inicio_consulta"].dt.tz_convert("America/Sao_Paulo").dt.tz_localize(None)
+        base = base.loc[
+            base["_inicio_consulta"].notna()
+            & (base["_inicio_consulta"].dt.date >= data_ini)
+            & (base["_inicio_consulta"].dt.date <= data_fim)
+        ].copy()
+        if "os_id" in base.columns:
+            base = base.drop_duplicates(subset=["os_id"], keep="last")
+        frotas = base["frota"].dropna().astype(str).str.strip()
+        frotas = frotas.loc[~frotas.isin(["", "nan", "None"])]
+        k1, k2 = st.columns(2)
+        k1.metric("Carretas distintas", frotas.nunique())
+        k2.metric("Total de atendimentos", len(base))
+        if base.empty:
+            st.info("Nenhum atendimento encontrado com os filtros informados.")
+            return
+        base["_fim_consulta"] = pd.to_datetime(base["fim"], errors="coerce")
+        if getattr(base["_fim_consulta"].dt, "tz", None) is not None:
+            base["_fim_consulta"] = base["_fim_consulta"].dt.tz_convert("America/Sao_Paulo").dt.tz_localize(None)
+        tempo = (base["_fim_consulta"] - base["_inicio_consulta"]).dt.total_seconds().div(60)
+        def fmt_tempo(v):
+            if pd.isna(v) or v < 0:
+                return ""
+            minutos = int(v)
+            return f"{minutos // 60:02d}:{minutos % 60:02d}"
+        relacao = pd.DataFrame({
+            "OS/ID": base["os_id"].astype(str),
+            "FROTA": base["frota"].astype(str),
+            "EVENTO": base["_evento_consulta"],
+            "INÍCIO": base["_inicio_consulta"].dt.strftime("%d/%m/%Y %H:%M"),
+            "LIBERAÇÃO": base["_fim_consulta"].dt.strftime("%d/%m/%Y %H:%M").fillna("Em aberto"),
+            "TEMPO": tempo.map(fmt_tempo),
+        }).sort_values(["INÍCIO", "FROTA"], ascending=[False, True])
+        st.dataframe(relacao, hide_index=True, use_container_width=True, height=min(550, 40 + 35 * len(relacao)))
+        from io import BytesIO
+        try:
+            arquivo = BytesIO()
+            with pd.ExcelWriter(arquivo, engine="openpyxl") as writer:
+                relacao.to_excel(writer, index=False, sheet_name="Atendimentos")
+            st.download_button("📥 Exportar Excel", arquivo.getvalue(),
+                               file_name=f"carretas_atendidas_{data_ini}_{data_fim}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               key="baixar_carretas_atendidas")
+        except ImportError:
+            st.download_button("📥 Exportar CSV (Excel)",
+                               relacao.to_csv(index=False, sep=";").encode("utf-8-sig"),
+                               file_name=f"carretas_atendidas_{data_ini}_{data_fim}.csv",
+                               mime="text/csv", key="baixar_carretas_atendidas_csv")
+
+render_carretas_atendidas_periodo()
+
 st.caption("Atualização automática a cada 60 segundos.")
 
 # Crédito discreto no rodapé
