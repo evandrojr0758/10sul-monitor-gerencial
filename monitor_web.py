@@ -87,14 +87,15 @@ def api_get(table, params=None):
         raise RuntimeError(f"Supabase HTTP {r.status_code}: {r.text[:800]}")
     return r.json()
 
-def _ler_atendimentos(table):
+def _ler_atendimentos(table, filtros=None):
     """Carrega somente paradas desde 01/01/2026, filtradas no servidor."""
     todos = []
     offset = 0
     while True:
         lote = api_get(table, {"select": "*", "order": "os_id.asc,frota.asc",
                               "limit": 1000, "offset": offset,
-                              "or": "(parada.gte.2026-01-01,and(parada.is.null,inicio.gte.2026-01-01))"})
+                              "or": "(parada.gte.2026-01-01,and(parada.is.null,inicio.gte.2026-01-01))",
+                              **(filtros or {})})
         todos.extend(lote)
         if len(lote) < 1000:
             break
@@ -497,11 +498,53 @@ def _inconsistencias_asn(base):
     return pd.DataFrame(registros, columns=colunas)
 
 
+def _inicio_tres_meses(agora=None):
+    """Mês atual e dois anteriores, respeitando o início do histórico em 2026."""
+    hoje = pd.Timestamp(agora) if agora is not None else pd.Timestamp.now(tz="America/Sao_Paulo")
+    inicio = hoje.replace(day=1) - pd.DateOffset(months=2)
+    return max("2026-01-01", inicio.date().isoformat())
+
+
+@st.cache_data(show_spinner=False, max_entries=6)
+def _historico_fixo(table, inicio_recentes):
+    """Dados anteriores à janela: uma carga por tabela e janela mensal."""
+    return _ler_atendimentos(table, {
+        "and": f"(or(parada.lt.{inicio_recentes},and(parada.is.null,inicio.lt.{inicio_recentes})))"
+    })
+
+
+def _filtro_recentes(inicio, arquivo):
+    partes = [f"parada.gte.{inicio}", f"and(parada.is.null,inicio.gte.{inicio})",
+              "status.ilike.*MANUT*"]
+    # Keep querying old open OS from the snapshot even after they close.
+    # This prevents the cached open status from reappearing on the next refresh.
+    if not arquivo.empty and "status" in arquivo.columns:
+        abertas = arquivo.loc[arquivo["status"].fillna("").astype(str).str.contains("MANUT", case=False), "os_id"]
+        ids = sorted(set(str(x).strip() for x in abertas if pd.notna(x)))
+        if ids:
+            citados = ",".join('"' + x.replace('\\', '\\\\').replace('"', '\\"') + '"' for x in ids)
+            partes.append(f"os_id.in.({citados})")
+    return {"and": "(or(" + ",".join(partes) + "))"}
+
+
+def _atendimentos_com_historico(table, inicio_recentes):
+    arquivo = _historico_fixo(table, inicio_recentes)
+    recentes = _ler_atendimentos(table, _filtro_recentes(inicio_recentes, arquivo))
+    if arquivo.empty:
+        return recentes
+    if recentes.empty:
+        return arquivo.copy()
+    # The refreshed row replaces every field, including nulls and release status.
+    return pd.concat([arquivo, recentes], ignore_index=True).drop_duplicates(
+        ["os_id", "frota"], keep="last").reset_index(drop=True)
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar():
-    """Base ASN v3: desde 2026; preserva início original para confronto dos laudos."""
-    historico = _ler_atendimentos("monitor_atendimentos")
-    asn = _ler_atendimentos("monitor_asn")
+    """Base ASN v4: histórico fixo desde 2026; atualiza só três meses e OS abertas."""
+    inicio = _inicio_tres_meses()
+    historico = _atendimentos_com_historico("monitor_atendimentos", inicio)
+    asn = _atendimentos_com_historico("monitor_asn", inicio)
     base = _combinar_base_asn(historico, asn)
     unidade = base["unidade"].fillna("").astype(str).str.strip().str.upper()
     return base.loc[unidade.eq("ARA")].copy().reset_index(drop=True)
