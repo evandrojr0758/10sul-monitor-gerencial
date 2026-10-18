@@ -88,12 +88,13 @@ def api_get(table, params=None):
     return r.json()
 
 def _ler_atendimentos(table):
-    """Paginação estável para o histórico e para a origem ASN."""
+    """Carrega somente paradas desde 01/01/2026, filtradas no servidor."""
     todos = []
     offset = 0
     while True:
         lote = api_get(table, {"select": "*", "order": "os_id.asc,frota.asc",
-                              "limit": 1000, "offset": offset})
+                              "limit": 1000, "offset": offset,
+                              "or": "(parada.gte.2026-01-01,and(parada.is.null,inicio.gte.2026-01-01))"})
         todos.extend(lote)
         if len(lote) < 1000:
             break
@@ -498,7 +499,7 @@ def _inconsistencias_asn(base):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar():
-    """Base ASN v2: preserva início original para confronto dos laudos."""
+    """Base ASN v3: desde 2026; preserva início original para confronto dos laudos."""
     historico = _ler_atendimentos("monitor_atendimentos")
     asn = _ler_atendimentos("monitor_asn")
     base = _combinar_base_asn(historico, asn)
