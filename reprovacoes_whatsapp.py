@@ -252,6 +252,125 @@ class Repositorio:
         self.gravar('importacoes/' + sha + '.json', manifesto, 'application/json')
 
 
+def eventos_dashboard_semanal(registros):
+    """Uma ocorrência por frota/vistoria; aprovação só após todas as placas/laudos."""
+    grupos = defaultdict(list)
+    for doc in {r['id']: r for r in registros}.values():
+        grupos[(doc['frota'], doc['vistoria'][:10])].append(doc)
+    eventos = []
+    for (frota, dia), docs in grupos.items():
+        placas = ', '.join(sorted({d['placa'] for d in docs}))
+        base = {'Frota': frota, 'Data da vistoria': dia, 'Placas': placas}
+        reprovados = [d for d in docs if d['resultado'] == 'REPROVADO']
+        if reprovados:
+            eventos.append(dict(base, Data=dia, Resultado='Reprovação'))
+        obrigatorios = {(d['placa'], d['numero'], d['vistoria']) for d in docs}
+        estado = {}
+        for doc in sorted(docs, key=lambda d: (d['impressao'], d['resultado'] == 'APROVADO')):
+            estado[(doc['placa'], doc['numero'], doc['vistoria'])] = doc['resultado']
+            if set(estado) == obrigatorios and all(v == 'APROVADO' for v in estado.values()):
+                eventos.append(dict(base, Data=doc['impressao'][:10], Resultado='Aprovação'))
+                break
+    return sorted(eventos, key=lambda e: (e['Data'], e['Frota'], e['Resultado']))
+
+
+def resumir_semanas(eventos, inicio, fim):
+    from datetime import date, timedelta
+    inicio, fim = date.fromisoformat(str(inicio)), date.fromisoformat(str(fim))
+    if inicio > fim:
+        raise ValueError('O início do período deve ser anterior ao fim.')
+    semanas = {}
+    cursor = inicio - timedelta(days=inicio.weekday())
+    while cursor <= fim:
+        iso = cursor.isocalendar()
+        semanas[cursor.isoformat()] = {
+            'Semana': f'{iso.year} • S{iso.week:02d}',
+            'Período': f'{cursor:%d/%m} a {cursor + timedelta(days=6):%d/%m}',
+            'Início': cursor.isoformat(), 'Reprovações': 0, 'Aprovações': 0}
+        cursor += timedelta(days=7)
+    for evento in eventos:
+        dia = date.fromisoformat(evento['Data'])
+        if inicio <= dia <= fim:
+            chave = (dia - timedelta(days=dia.weekday())).isoformat()
+            coluna = 'Reprovações' if evento['Resultado'] == 'Reprovação' else 'Aprovações'
+            semanas[chave][coluna] += 1
+    return list(semanas.values())
+
+
+def render_dashboard_semanal(registros):
+    from datetime import date, timedelta
+    from zoneinfo import ZoneInfo
+    import pandas as pd
+    import streamlit as st
+    st.subheader('📊 Reprovações e aprovações por semana')
+    if not registros:
+        st.info('Importe os PDFs para acompanhar os resultados semanais.')
+        return
+    hoje = datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+    c1, c2 = st.columns([2, 1])
+    periodo = c1.date_input('Período do dashboard',
+                           (hoje.replace(day=1), hoje), key='mega_dash_periodo')
+    frotas = c2.multiselect('Frotas do dashboard', sorted({r['frota'] for r in registros}),
+                           key='mega_dash_frotas')
+    if len(periodo) != 2:
+        st.info('Selecione as datas inicial e final.')
+        return
+    inicio, fim = periodo
+    eventos = eventos_dashboard_semanal(registros)
+    eventos = [e for e in eventos if inicio.isoformat() <= e['Data'] <= fim.isoformat()
+               and (not frotas or e['Frota'] in frotas)]
+    resumo = resumir_semanas(eventos, inicio, fim)
+    a, b = st.columns(2)
+    a.metric('Reprovações no período', sum(r['Reprovações'] for r in resumo))
+    b.metric('Aprovações no período', sum(r['Aprovações'] for r in resumo))
+    st.caption('Segunda a domingo. Uma ocorrência por frota e dia de vistoria. '
+               'Reprovação pela data da vistoria; aprovação pela emissão do PDF que completa '
+               'a aprovação de todas as placas/laudos. A aprovação mantém a reprovação no histórico. '
+               'Semanas nas bordas consideram somente as datas selecionadas.')
+    tabela = pd.DataFrame(resumo)
+    import altair as alt
+    grafico = tabela.melt(id_vars=['Semana', 'Período', 'Início'],
+                         value_vars=['Reprovações', 'Aprovações'],
+                         var_name='Resultado', value_name='Quantidade')
+    barras = alt.Chart(grafico).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+        x=alt.X('Semana:N', sort=list(tabela['Semana']), title=None),
+        xOffset=alt.XOffset('Resultado:N', sort=['Reprovações', 'Aprovações']),
+        y=alt.Y('Quantidade:Q', title='Ocorrências', axis=alt.Axis(tickMinStep=1)),
+        color=alt.Color('Resultado:N', scale=alt.Scale(
+            domain=['Reprovações', 'Aprovações'], range=['#dc2626', '#16a34a']), title=None),
+        tooltip=['Semana:N', 'Período:N', 'Resultado:N', 'Quantidade:Q'])
+    st.altair_chart(barras.properties(height=300), use_container_width=True)
+    st.dataframe(tabela[['Semana', 'Período', 'Reprovações', 'Aprovações']],
+                 hide_index=True, use_container_width=True)
+    if not eventos:
+        st.info('Nenhuma reprovação ou aprovação no período selecionado.')
+        return
+    col1, col2 = st.columns(2)
+    semana = col1.selectbox('Semana para detalhar', [r['Início'] for r in resumo],
+                           format_func=lambda x: next(r['Semana'] + ' • ' + r['Período']
+                                                      for r in resumo if r['Início'] == x),
+                           index=len(resumo)-1, key='mega_dash_semana')
+    resultado = col2.selectbox('Resultado para detalhar', ['Todos', 'Reprovação', 'Aprovação'],
+                              key='mega_dash_resultado')
+    @st.dialog('Detalhamento semanal MEGA', width='large')
+    def detalhar():
+        ultimo = (date.fromisoformat(semana) + timedelta(days=6)).isoformat()
+        linhas = [e for e in eventos if semana <= e['Data'] <= ultimo
+                  and (resultado == 'Todos' or e['Resultado'] == resultado)]
+        if linhas:
+            df = pd.DataFrame(linhas)[['Frota', 'Placas', 'Data da vistoria', 'Data', 'Resultado']]
+            for campo in ['Data da vistoria', 'Data']:
+                df[campo] = pd.to_datetime(df[campo]).dt.strftime('%d/%m/%Y')
+            st.dataframe(df, hide_index=True, use_container_width=True)
+            st.download_button('Exportar detalhamento CSV',
+                               df.to_csv(index=False, sep=';').encode('utf-8-sig'),
+                               'mega-detalhamento-semanal.csv', 'text/csv', key='mega_dash_csv')
+        else:
+            st.info('Nenhuma ocorrência para esta semana e resultado.')
+    if st.button('Ver frotas da semana', key='mega_dash_detalhar'):
+        detalhar()
+
+
 def render_relatorio(url, chave, somente_leitura=False):
     import pandas as pd
     import streamlit as st
@@ -331,6 +450,7 @@ def render_relatorio(url, chave, somente_leitura=False):
                 if mensagens:
                     with st.expander('Conferir mensagens originais'):
                         st.text(mensagens)
+    render_dashboard_semanal(historico)
     linhas = consolidar(historico)
     if not linhas:
         st.info('Nenhuma reprovação importada.'); return
