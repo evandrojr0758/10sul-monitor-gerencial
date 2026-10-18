@@ -1024,7 +1024,12 @@ if st.query_params.get("socorro_historico", "0") == "1":
     render_consulta(carregar, _hora_brasilia)
 
 if st.button("↻ Atualizar", key="monitor_refresh_top", type="primary", use_container_width=True):
-    st.cache_data.clear()
+    # Preserve archived months when manually refreshing the current data.
+    for nome in ("carregar", "carregar_laudos_manuais_web",
+                 "carregar_importacoes_evidencias_pendentes", "carregar_justificativas_laudos"):
+        funcao = globals().get(nome)
+        if funcao is not None and hasattr(funcao, "clear"):
+            funcao.clear()
     st.rerun()
 
 atualizacao_automatica = st.toggle(
