@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
+from monitor_delta import MonitorDeltaCache
 
 MOBILE_READ_ONLY = bool(globals().get("MOBILE_READ_ONLY", False)) or st.query_params.get("mobile", "0") == "1"
 st.set_page_config(page_title="10 Sul • Consulta Mobile" if MOBILE_READ_ONLY else "Monitor Gerencial 10 Sul", page_icon="📊", layout="wide")
@@ -87,13 +88,29 @@ def api_get(table, params=None):
         raise RuntimeError(f"Supabase HTTP {r.status_code}: {r.text[:800]}")
     return r.json()
 
+def api_post(path, payload):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("SUPABASE_URL/SUPABASE_KEY não configurados nos Secrets.")
+    r = requests.post(f"{SUPABASE_URL}/rest/v1/{path}",
+                      headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+                      json=payload, timeout=45)
+    if not r.ok:
+        raise RuntimeError(f"Supabase HTTP {r.status_code}: {r.text[:800]}")
+    return r.json()
+
+
+@st.cache_resource
+def _cache_incremental_monitor():
+    return MonitorDeltaCache()
+
+
 def _ler_atendimentos(table, filtros=None):
     """Carrega somente paradas desde 01/01/2026, filtradas no servidor."""
     todos = []
     offset = 0
     while True:
         lote = api_get(table, {"select": "*", "order": "os_id.asc,frota.asc",
-                              "limit": 1000, "offset": offset,
+                              "limit": 1000, "offset": offset, "unidade": "eq.ARA",
                               "or": "(parada.gte.2026-01-01,and(parada.is.null,inicio.gte.2026-01-01))",
                               **(filtros or {})})
         todos.extend(lote)
@@ -529,23 +546,28 @@ def _filtro_recentes(inicio, arquivo):
 
 def _atendimentos_com_historico(table, inicio_recentes):
     arquivo = _historico_fixo(table, inicio_recentes)
-    recentes = _ler_atendimentos(table, _filtro_recentes(inicio_recentes, arquivo))
+    abertas = []
+    if not arquivo.empty and "status" in arquivo.columns:
+        abertas = sorted(set(arquivo.loc[arquivo["status"].fillna("").astype(str).str.contains("MANUT", case=False), "os_id"].dropna().astype(str)))
+    recentes = _cache_incremental_monitor().read(api_post, table, inicio_recentes, abertas)
     if arquivo.empty:
         return recentes
-    if recentes.empty:
-        return arquivo.copy()
-    # The refreshed row replaces every field, including nulls and release status.
-    return pd.concat([arquivo, recentes], ignore_index=True).drop_duplicates(
+    # Old open rows belong to the live feed, including closures and removals.
+    arquivo = arquivo.loc[~arquivo["status"].fillna("").astype(str).str.contains("MANUT", case=False)]
+    resultado = pd.concat([arquivo, recentes], ignore_index=True).drop_duplicates(
         ["os_id", "frota"], keep="last").reset_index(drop=True)
+    resultado.attrs["sincronizado_em"] = recentes.attrs.get("sincronizado_em")
+    return resultado
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar():
-    """Base ASN v4: histórico fixo desde 2026; atualiza só três meses e OS abertas."""
+    """Base ASN v5: histórico fixo e transferência somente de alterações recentes."""
     inicio = _inicio_tres_meses()
     historico = _atendimentos_com_historico("monitor_atendimentos", inicio)
     asn = _atendimentos_com_historico("monitor_asn", inicio)
     base = _combinar_base_asn(historico, asn)
+    base.attrs["sincronizado_em"] = asn.attrs.get("sincronizado_em")
     unidade = base["unidade"].fillna("").astype(str).str.strip().str.upper()
     return base.loc[unidade.eq("ARA")].copy().reset_index(drop=True)
 
@@ -1047,7 +1069,7 @@ st.session_state["_monitor_auto_refresh_armed"] = False
 @st.fragment(run_every=60 if atualizacao_automatica else None)
 def _atualizar_monitor_automaticamente():
     if st.session_state["_monitor_auto_refresh_armed"]:
-        carregar.clear()
+        # Rerun updates elapsed times; the shared 60-second cache governs reads.
         st.rerun()
     st.session_state["_monitor_auto_refresh_armed"] = True
 
@@ -2179,7 +2201,9 @@ st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agor
 
 if MOBILE_READ_ONLY:
     st.caption("Somente consulta • Unidade ARA")
-    sync = pd.to_datetime(df.get("sincronizado_em", pd.Series(dtype=str)), errors="coerce", utc=True).max()
+    sync = pd.to_datetime(df.attrs.get("sincronizado_em"), errors="coerce", utc=True)
+    if pd.isna(sync):
+        sync = pd.to_datetime(df.get("sincronizado_em", pd.Series(dtype=str)), errors="coerce", utc=True).max()
     st.caption("Última sincronização da base: " + (sync.tz_convert("America/Sao_Paulo").strftime("%d/%m/%Y %H:%M") if pd.notna(sync) else "não informada pela origem"))
     st.markdown("""<style>
     @media(max-width:768px){
