@@ -297,6 +297,70 @@ def resumir_semanas(eventos, inicio, fim):
     return list(semanas.values())
 
 
+def tendencia_semanal(resumo, inicio, fim, hoje):
+    """Compare somente semanas completas dentro do filtro e já encerradas."""
+    from datetime import date, timedelta
+    inicio, fim, hoje = (date.fromisoformat(str(d)) for d in (inicio, fim, hoje))
+    linhas = []
+    for r in resumo:
+        segunda = date.fromisoformat(r['Início'])
+        domingo = segunda + timedelta(days=6)
+        completa = segunda >= inicio and domingo <= fim and domingo < hoje
+        linhas.append(dict(r, Situação='Completa' if completa else 'Parcial'))
+    completas = [r for r in linhas if r['Situação'] == 'Completa']
+    comparacao = None
+    if len(completas) >= 2:
+        anterior, atual = completas[-2:]
+        delta = atual['Reprovações'] - anterior['Reprovações']
+        comparacao = dict(anterior=anterior, atual=atual, delta=delta,
+                          percentual=100 * delta / anterior['Reprovações']
+                          if anterior['Reprovações'] else None)
+    return linhas, comparacao
+
+
+def render_tendencia_semanal(resumo, inicio, fim, hoje, ultima_data):
+    import pandas as pd
+    import streamlit as st
+    import altair as alt
+    linhas, comparacao = tendencia_semanal(resumo, inicio, fim, hoje)
+    st.markdown('#### 📈 As reprovações estão aumentando ou reduzindo?')
+    if comparacao:
+        c = comparacao
+        anterior, atual, delta = c['anterior'], c['atual'], c['delta']
+        direcao = 'Aumentou' if delta > 0 else 'Reduziu' if delta < 0 else 'Permaneceu igual'
+        variacao = f"{abs(c['percentual']):.1f}%".replace('.', ',') if c['percentual'] is not None else 'sem base percentual (semana anterior = 0)'
+        mensagem = (f"**{direcao}: {anterior['Reprovações']} → {atual['Reprovações']} reprovações** "
+                    f"({atual['Semana']} em relação a {anterior['Semana']}). "
+                    f"Variação: {delta:+d} ocorrência(s); {variacao}.")
+        if delta > 0:
+            st.error(mensagem)
+        elif delta < 0:
+            st.success(mensagem)
+        else:
+            st.info(mensagem)
+    else:
+        st.info('Selecione pelo menos duas semanas completas para comparar a tendência.')
+    df = pd.DataFrame(linhas)
+    base = alt.Chart(df).encode(
+        x=alt.X('Semana:O', sort=[r['Semana'] for r in linhas], title=None),
+        y=alt.Y('Reprovações:Q', title='Reprovações', scale=alt.Scale(zero=True),
+                axis=alt.Axis(tickMinStep=1)),
+        tooltip=['Semana:O', 'Período:N', 'Reprovações:Q', 'Situação:N'])
+    # Semanas parciais têm somente um ponto cinza: não sugerem queda na linha.
+    linha = base.transform_filter(alt.datum.Situação == 'Completa').mark_line(color='#dc2626', strokeWidth=3)
+    pontos = base.mark_point(filled=True, size=110).encode(
+        color=alt.Color('Situação:N', scale=alt.Scale(
+            domain=['Completa', 'Parcial'], range=['#dc2626', '#94a3b8']), title='Semana'))
+    rotulos = base.mark_text(dy=-15, fontSize=15, fontWeight='bold').encode(text='Reprovações:Q')
+    st.altair_chart((linha + pontos + rotulos).properties(height=280), use_container_width=True)
+    st.caption('A comparação usa as duas últimas semanas completas do período (segunda a domingo). '
+               'Semana em andamento ou cortada pelo filtro aparece em cinza e não entra na variação. '
+               'Os números refletem os PDFs importados; ausência de laudos não comprova ausência de reprovações.')
+    if ultima_data:
+        from datetime import date
+        st.caption('Última data de vistoria nos laudos importados: ' + date.fromisoformat(ultima_data).strftime('%d/%m/%Y') + '.')
+
+
 def render_dashboard_semanal(registros):
     from datetime import date, timedelta
     from zoneinfo import ZoneInfo
@@ -327,6 +391,9 @@ def render_dashboard_semanal(registros):
                'Reprovação pela data da vistoria; aprovação pela emissão do PDF que completa '
                'a aprovação de todas as placas/laudos. A aprovação mantém a reprovação no histórico. '
                'Semanas nas bordas consideram somente as datas selecionadas.')
+    render_tendencia_semanal(resumo, inicio, fim, hoje,
+                            max((r['vistoria'][:10] for r in registros if not frotas or r['frota'] in frotas), default=None))
+    st.markdown('#### Comparativo de reprovações e aprovações')
     tabela = pd.DataFrame(resumo)
     import altair as alt
     grafico = tabela.melt(id_vars=['Semana', 'Período', 'Início'],
