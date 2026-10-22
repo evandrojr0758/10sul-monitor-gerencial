@@ -2197,6 +2197,15 @@ mon["acima_sla"]=~mon["finalizada_10sul"]&mon["sla_h"].notna()&(mon["horas_abert
 
 st.markdown(f"<div class='mon-title'>{"📊 10 SUL • CONSULTA MOBILE" if MOBILE_READ_ONLY else "📺 MONITOR DA OFICINA"}</div>",unsafe_allow_html=True)
 st.markdown("<div class='mon-sub'>Desenvolvido por Evandro Junior</div>", unsafe_allow_html=True)
+
+if not MOBILE_READ_ONLY:
+    st.link_button(
+        "📊 Três Lagoas — Power BI",
+        "https://app.powerbi.com/groups/me/apps/beec19e1-2ee7-4136-8f98-7b1536aef32c/"
+        "reports/79b57ecb-df91-4336-8423-91d2ac213448/dbb8f200b34048170dd3"
+        "?ctid=a7109315-9727-4adf-97ad-4849bb63edcb&experience=power-bi",
+        help="Abre o relatório de Três Lagoas em outra aba, com acesso pela conta Microsoft.",
+    )
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
 if MOBILE_READ_ONLY:
