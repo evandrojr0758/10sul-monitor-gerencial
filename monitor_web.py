@@ -2244,6 +2244,20 @@ def _paradas_alerta_sete_dias(base, agora_local):
     return b.explode("motivo_alerta")
 
 
+@st.dialog("🚨 Carretas do alerta — últimos 7 dias", width="large")
+def modal_carretas_alerta_sete_dias(motivo, relacao):
+    st.markdown(f"**{motivo.capitalize()}**")
+    st.caption(f"{relacao['frota'].nunique()} carretas distintas • {len(relacao)} paradas / OS")
+    relacao = relacao.sort_values("data_parada_alerta", ascending=False)
+    tabela = relacao[["os_id", "frota", "data_parada_alerta", "descricao"]].copy()
+    tabela["data_parada_alerta"] = tabela["data_parada_alerta"].dt.strftime("%d/%m/%Y %H:%M")
+    tabela = tabela.rename(columns={"os_id":"ID", "frota":"FROTA",
+                                   "data_parada_alerta":"DATA DA PARADA", "descricao":"DESCRIÇÃO"})
+    st.dataframe(tabela, hide_index=True, use_container_width=True,
+                 column_config={"DESCRIÇÃO": st.column_config.TextColumn("DESCRIÇÃO", width="large")})
+    st.caption("Toque ou dê dois cliques na descrição para consultar o texto completo.")
+
+
 def render_alertas_paradas_sete_dias(base, agora_local):
     detalhes = _paradas_alerta_sete_dias(base, agora_local)
     inicio_janela = agora_local - pd.Timedelta(days=7)
@@ -2252,23 +2266,42 @@ def render_alertas_paradas_sete_dias(base, agora_local):
         st.caption("Alertas CNP / SOS • últimos 7 dias: nenhuma parada de carreta registrada no período.")
         return
     resumo = detalhes.groupby("motivo_alerta")["frota"].nunique().sort_values(ascending=False)
+    st.markdown("""
+    <style>
+    .st-key-alertas_paradas_7d div[data-testid="stButton"] > button {
+        background:#ffebee!important;color:#a52a35!important;
+        border:1px solid #f7cbd1!important;border-radius:12px!important;
+        padding:20px 24px!important;text-align:left!important;
+        justify-content:flex-start!important;min-height:90px!important;
+        height:auto!important;white-space:normal!important;
+    }
+    .st-key-alertas_paradas_7d div[data-testid="stButton"] > button p {
+        font-size:18px!important;font-weight:600!important;text-align:left!important;
+    }
+    .st-key-alertas_paradas_7d div[data-testid="stButton"] > button:hover {
+        background:#ffdce1!important;border-color:#b42332!important;
+    }
+    .st-key-alertas_paradas_7d div[data-testid="stButton"] > button:focus-visible {
+        outline:3px solid #b42332!important;outline-offset:2px!important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     st.markdown("### 🚨 ATENÇÃO, LIDERANÇA — PARADAS NOS ÚLTIMOS 7 DIAS")
-    for motivo, quantidade in resumo.items():
-        verbo = "parou" if quantidade == 1 else "pararam"
-        carreta = "carreta" if quantidade == 1 else "carretas"
-        st.error(f"🚨 ATENÇÃO: {quantidade} {carreta} {verbo} por {motivo} nos últimos sete dias.")
+    st.caption("Clique em um alerta para ver as carretas e as descrições das paradas.")
+    with st.container(key="alertas_paradas_7d"):
+        for motivo, quantidade in resumo.items():
+            verbo = "parou" if quantidade == 1 else "pararam"
+            carreta = "carreta" if quantidade == 1 else "carretas"
+            if st.button(
+                f"🚨 ATENÇÃO: {quantidade} {carreta} {verbo} por {motivo} nos últimos sete dias.  ›",
+                key=f"alerta_paradas_7d_{motivo}", use_container_width=True,
+                help="Abrir ID, frota, data da parada e descrição",
+            ):
+                relacao = detalhes.loc[detalhes["motivo_alerta"].eq(motivo)].copy()
+                modal_carretas_alerta_sete_dias(motivo, relacao)
     st.caption(f"CNP e SOS • Unidade ARA • {periodo} (Brasília). Inclui liberadas e em manutenção. "
                "Carretas distintas por motivo; uma frota pode aparecer em mais de um grupo. "
                "Agrupamento pelas descrições registradas; conferir as OS para definir a ação.")
-    with st.expander("🔎 Ver carretas, OS e descrições dos alertas"):
-        motivo = st.selectbox("Motivo da parada", resumo.index.tolist(), key="alerta_paradas_motivo_7d")
-        relacao = detalhes.loc[detalhes["motivo_alerta"].eq(motivo)].sort_values("data_parada_alerta", ascending=False)
-        st.caption(f"{relacao['frota'].nunique()} carretas distintas • {len(relacao)} paradas / OS")
-        relacao = relacao[["frota", "os_id", "evento", "data_parada_alerta", "descricao", "status"]].copy()
-        relacao["data_parada_alerta"] = relacao["data_parada_alerta"].dt.strftime("%d/%m/%Y %H:%M")
-        st.dataframe(relacao.rename(columns={"frota":"FROTA", "os_id":"OS/ID", "evento":"EVENTO",
-                     "data_parada_alerta":"PARADA", "descricao":"DESCRIÇÃO", "status":"STATUS"}),
-                     hide_index=True, use_container_width=True)
 
 
 st.markdown(f"<div class='mon-title'>{"📊 10 SUL • CONSULTA MOBILE" if MOBILE_READ_ONLY else "📺 MONITOR DA OFICINA"}</div>",unsafe_allow_html=True)
