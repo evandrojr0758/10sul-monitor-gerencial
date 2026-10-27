@@ -2195,8 +2195,87 @@ mon.loc[mrev,"sla_h"]=24.0
 mon["sla_h"]=pd.to_numeric(mon["sla_h"],errors="coerce")
 mon["acima_sla"]=~mon["finalizada_10sul"]&mon["sla_h"].notna()&(mon["horas_aberto"]>=mon["sla_h"])
 
+def _motivos_parada_alerta(descricao):
+    """Agrupa termos da descrição; não infere diagnóstico ausente na ASN."""
+    import unicodedata
+    texto = "" if pd.isna(descricao) else str(descricao)
+    texto = unicodedata.normalize("NFKD", texto.upper()).encode("ascii", "ignore").decode()
+    regras = {
+        "travamento de rodeiro": r"\b(?:RODEIR\w*|RODAS?|CUBOS?)\b.{0,45}\b(?:TRAV\w*|BLOQUE\w*)\b|\b(?:TRAV\w*|BLOQUE\w*)\b.{0,45}\b(?:RODEIR\w*|RODAS?|CUBOS?)\b",
+        "problemas no sistema de freio": r"\b(?:FREI\w*|CATRACA\w*|CUICA\w*|LONAS?\b.{0,15}\bFREIO)\b",
+        "problemas no rodeiro / cubo / rolamento": r"\b(?:RODEIR\w*|CUBOS?|ROLAMENT\w*)\b",
+        "problemas na suspensão / bolsas": r"\b(?:SUSPENS\w*|BOLSAS?|AMORTECED\w*|MOLAS?)\b",
+        "problemas no sistema pneumático / ar": r"\b(?:PNEUMATIC\w*|COMPRESSOR\w*)\b|\bVAZ\w*\b.{0,25}\bAR\b|\b(?:MANGUEIR\w*|CONEX\w*|VALVUL\w*)\b.{0,25}\bAR\b",
+        "problemas elétricos / iluminação": r"\b(?:ELETR\w*|ILUMIN\w*|LANTERN\w*|LUZ\w*|FAROL\w*|CHICOTE\w*|CORUJA\w*)\b",
+        "problemas na estrutura / solda": r"\b(?:SOLD\w*|TRINC\w*|ESTRUT\w*|CHASSI\w*|SUPORTE\w*)\b",
+        "problemas nos pneus": r"\b(?:PNEUS?|BORRACH\w*)\b",
+    }
+    motivos = [nome for nome, padrao in regras.items() if re.search(padrao, texto)]
+    if "travamento de rodeiro" in motivos and "problemas no rodeiro / cubo / rolamento" in motivos:
+        motivos.remove("problemas no rodeiro / cubo / rolamento")
+    return motivos or ["outros motivos / descrição a conferir"]
+
+
+def _paradas_alerta_sete_dias(base, agora_local):
+    """Janela móvel de 7 dias pela parada; cada OS/frota é contada uma vez."""
+    b = base.copy()
+    for coluna in ["os_id", "frota", "evento", "modal", "descricao", "status"]:
+        if coluna not in b:
+            b[coluna] = ""
+    for coluna in ["parada", "inicio"]:
+        b[coluna] = pd.to_datetime(b.get(coluna, pd.Series(pd.NaT, index=b.index)).map(_hora_brasilia), errors="coerce")
+    b["frota"] = b["frota"].fillna("").map(norm_frota)
+    b["os_id"] = b["os_id"].fillna("").astype(str).str.strip()
+    evento = b["evento"].fillna("").astype(str).str.upper()
+    import unicodedata
+    evento = evento.map(lambda v: unicodedata.normalize("NFKD", v).encode("ascii", "ignore").decode())
+    elegivel = evento.str.match(r"^\s*(?:SOS|CNP)\b") | (
+        evento.str.contains("CORRETIV", regex=False) & evento.str.contains(r"\b(?:NAO|N)\s*PROG"))
+    b["data_parada_alerta"] = b["parada"].fillna(b["inicio"])
+    excluida = b.get("excluida_asn_em", pd.Series(None, index=b.index, dtype=object)).notna()
+    b = b.loc[elegivel & ~excluida & b["frota"].ne("") & ~b["frota"].isin(ESPECIAIS)
+              & ~b["modal"].fillna("").astype(str).str.contains("CAVALO", case=False)
+              & b["data_parada_alerta"].ge(agora_local - pd.Timedelta(days=7))
+              & b["data_parada_alerta"].le(agora_local)].copy()
+    # Sem OS identificada, preservar paradas diferentes da mesma frota.
+    b["_chave_os_alerta"] = b["os_id"].where(b["os_id"].ne(""), b["data_parada_alerta"].astype(str))
+    b = b.drop_duplicates(["_chave_os_alerta", "frota"], keep="last")
+    b["motivo_alerta"] = b["descricao"].map(_motivos_parada_alerta)
+    return b.explode("motivo_alerta")
+
+
+def render_alertas_paradas_sete_dias(base, agora_local):
+    detalhes = _paradas_alerta_sete_dias(base, agora_local)
+    inicio_janela = agora_local - pd.Timedelta(days=7)
+    periodo = f"{inicio_janela:%d/%m/%Y %H:%M} a {agora_local:%d/%m/%Y %H:%M}"
+    if detalhes.empty:
+        st.caption("Alertas CNP / SOS • últimos 7 dias: nenhuma parada de carreta registrada no período.")
+        return
+    resumo = detalhes.groupby("motivo_alerta")["frota"].nunique().sort_values(ascending=False)
+    st.markdown("### 🚨 ATENÇÃO, LIDERANÇA — PARADAS NOS ÚLTIMOS 7 DIAS")
+    for motivo, quantidade in resumo.items():
+        verbo = "parou" if quantidade == 1 else "pararam"
+        carreta = "carreta" if quantidade == 1 else "carretas"
+        st.error(f"🚨 ATENÇÃO: {quantidade} {carreta} {verbo} por {motivo} nos últimos sete dias.")
+    st.caption(f"CNP e SOS • Unidade ARA • {periodo} (Brasília). Inclui liberadas e em manutenção. "
+               "Carretas distintas por motivo; uma frota pode aparecer em mais de um grupo. "
+               "Agrupamento pelas descrições registradas; conferir as OS para definir a ação.")
+    with st.expander("🔎 Ver carretas, OS e descrições dos alertas"):
+        motivo = st.selectbox("Motivo da parada", resumo.index.tolist(), key="alerta_paradas_motivo_7d")
+        relacao = detalhes.loc[detalhes["motivo_alerta"].eq(motivo)].sort_values("data_parada_alerta", ascending=False)
+        st.caption(f"{relacao['frota'].nunique()} carretas distintas • {len(relacao)} paradas / OS")
+        relacao = relacao[["frota", "os_id", "evento", "data_parada_alerta", "descricao", "status"]].copy()
+        relacao["data_parada_alerta"] = relacao["data_parada_alerta"].dt.strftime("%d/%m/%Y %H:%M")
+        st.dataframe(relacao.rename(columns={"frota":"FROTA", "os_id":"OS/ID", "evento":"EVENTO",
+                     "data_parada_alerta":"PARADA", "descricao":"DESCRIÇÃO", "status":"STATUS"}),
+                     hide_index=True, use_container_width=True)
+
+
 st.markdown(f"<div class='mon-title'>{"📊 10 SUL • CONSULTA MOBILE" if MOBILE_READ_ONLY else "📺 MONITOR DA OFICINA"}</div>",unsafe_allow_html=True)
 st.markdown("<div class='mon-sub'>Desenvolvido por Evandro Junior</div>", unsafe_allow_html=True)
+
+if not MOBILE_READ_ONLY:
+    render_alertas_paradas_sete_dias(df, agora)
 
 if not MOBILE_READ_ONLY:
     st.link_button(
@@ -3337,6 +3416,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
