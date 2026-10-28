@@ -442,6 +442,8 @@ def _combinar_base_asn(historico, asn):
         a["local_manutencao"] = None
     if "excluida_asn_em" not in a.columns:
         a["excluida_asn_em"] = None
+    if "ausente_abertas_asn_em" not in a.columns:
+        a["ausente_abertas_asn_em"] = None
     a["inicio_asn"] = a["inicio"]
     a["inicio_suzano"] = a["parada"]
     a["fim_asn"] = a["fim"]
@@ -460,7 +462,7 @@ def _combinar_base_asn(historico, asn):
     h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"].map(_hora_brasilia), errors="coerce"))
     resultado = h.reindex(h.index.union(a.index)).copy()
     # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
-    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "inicio_asn", "fim_asn", "sincronizado_em", "excluida_asn_em", "local_manutencao"]:
+    for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "inicio_asn", "fim_asn", "sincronizado_em", "excluida_asn_em", "local_manutencao", "ausente_abertas_asn_em"]:
         if c not in resultado.columns:
             resultado[c] = None
         resultado.loc[a.index, c] = a[c]
@@ -2181,7 +2183,8 @@ status=df["status"].fillna("").astype(str).str.upper()
 fim_cliente = pd.to_datetime(df.get("fim_asn", df["fim"]), errors="coerce")
 _, itr_oficina, revisao_oficina, sos_oficina, cnp_oficina = evento_flags(df["evento"])
 eventos_oficina = itr_oficina | revisao_oficina | sos_oficina | cnp_oficina
-mon=df[status.str.contains("MANUT",na=False)&fim_cliente.isna()&eventos_oficina].copy()
+presente_abertas_asn = df.get("ausente_abertas_asn_em", pd.Series(None, index=df.index, dtype=object)).isna()
+mon=df[status.str.contains("MANUT",na=False)&fim_cliente.isna()&eventos_oficina&presente_abertas_asn].copy()
 mon["fim_liberacao_10sul"]=pd.to_datetime(
     mon.get("fim_liberacao_10sul", pd.Series(pd.NaT, index=mon.index)), errors="coerce")
 mon["finalizada_10sul"]=mon["fim_liberacao_10sul"].notna()
@@ -3449,6 +3452,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 
 
