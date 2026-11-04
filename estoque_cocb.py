@@ -339,7 +339,7 @@ def painel_usuarios(dados, base, sha):
 
 def tabela_aplicacao(dados, unidade):
     """Saídas aplicadas em frotas, sem entradas ou ajustes de inventário."""
-    colunas = ["NI", "DESCRIÇÃO DO ITEM", "QUANTIDADE", "FROTA", "DATA", "USUÁRIO"]
+    colunas = ["NI", "DESCRIÇÃO DO ITEM", "QUANTIDADE", "FROTA", "DATA", "USUÁRIO", "OBSERVAÇÃO"]
     linhas = []
     for m in reversed(dados.get("movimentos", [])):
         if m.get("movimento") != "SAÍDA" or m.get("unidade", "COCB") != unidade:
@@ -353,6 +353,7 @@ def tabela_aplicacao(dados, unidade):
             "FROTA": str(m.get("go_carreta") or "Não informada"),
             "DATA": data,
             "USUÁRIO": m.get("usuario") or m.get("responsavel") or "Não informado",
+            "OBSERVAÇÃO": m.get("observacao") or "",
         })
     return pd.DataFrame(linhas, columns=colunas).sort_values("DATA", ascending=False, na_position="last")
 
