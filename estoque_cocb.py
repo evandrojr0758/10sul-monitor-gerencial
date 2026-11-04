@@ -896,7 +896,7 @@ elif pagina == "movimentacao":
         st.info("Cadastre materiais antes de movimentar.")
     else:
         opcoes = {f"{r['NI']} | {r['DESCRIÇÃO']} | Saldo: {r['SALDO ATUAL']}": r["NI"] for _, r in tabela.iterrows()}
-        tipo = st.selectbox("Movimento", ["ENTRADA", "SAÍDA"], key="tipo_movimentacao")
+        tipo = st.selectbox("Movimento", ["SAÍDA", "ENTRADA"], key="tipo_movimentacao_saida_padrao")
         with st.form("movimentacao_" + tipo, clear_on_submit=True):
             escolhido = st.selectbox("Material", list(opcoes))
             quantidade = st.number_input("Quantidade", min_value=1, step=1)
