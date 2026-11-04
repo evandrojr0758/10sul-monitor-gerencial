@@ -212,8 +212,8 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta="", u
     if tipo == "SAÍDA" and not go_carreta:
         raise ErroEstoque("Informe o GO da carreta que receberá o material.")
     usuario = str(usuario).strip()
-    if tipo == "SAÍDA" and not usuario:
-        raise ErroEstoque("Informe o usuário responsável pela aplicação.")
+    if not usuario or usuario not in dados.get("usuarios", []):
+        raise ErroEstoque("Selecione um usuário cadastrado para registrar a movimentação.")
     item = material["unidades"][unidade]
     if quantidade <= 0:
         raise ErroEstoque("Informe uma quantidade positiva.")
@@ -304,6 +304,37 @@ def registrar_inventario_lote(dados, linhas, responsavel, observacao="", unidade
         novos["movimentos"][-1]["lote_id"] = lote_id
         alterados += int(diferenca != 0)
     return novos, len(preparados), alterados
+
+
+def cadastrar_usuario(dados, nome):
+    nome = " ".join(str(nome).split())
+    if not nome:
+        raise ErroEstoque("Informe o nome do usuário.")
+    usuarios = dados.setdefault("usuarios", [])
+    if any(n.casefold() == nome.casefold() for n in usuarios):
+        raise ErroEstoque("Este usuário já está cadastrado.")
+    usuarios.append(nome)
+    usuarios.sort(key=str.casefold)
+    return nome
+
+
+def painel_usuarios(dados, base, sha):
+    st.caption("Cadastro somente com nome, sem senha. Os nomes ficam disponíveis para todas as unidades.")
+    with st.form("cadastro_usuario", clear_on_submit=True):
+        nome = st.text_input("Nome do usuário")
+        salvar = st.form_submit_button("Cadastrar usuário", type="primary")
+    if salvar:
+        try:
+            cadastrar_usuario(dados, nome)
+            base.salvar(dados, sha)
+            st.rerun()
+        except ErroEstoque as exc:
+            st.error(str(exc))
+    usuarios = dados.get("usuarios", [])
+    if usuarios:
+        st.dataframe(pd.DataFrame({"NOME": usuarios}), hide_index=True, use_container_width=True)
+    else:
+        st.info("Nenhum usuário cadastrado. Cadastre o primeiro nome acima.")
 
 
 def tabela_aplicacao(dados, unidade):
@@ -675,21 +706,25 @@ if not somente_movimentacao and st.button("📷 Relatório para enviar ao client
 pagina = st.query_params.get("pagina", "movimentacao" if somente_movimentacao else "painel")
 if somente_movimentacao and pagina not in ("movimentacao", "inventario"):
     pagina = "movimentacao"
-if pagina not in ("painel", "cadastro", "movimentacao", "inventario", "aplicacao"):
+if pagina not in ("painel", "cadastro", "movimentacao", "inventario", "aplicacao", "usuarios"):
     pagina = "painel"
 if somente_movimentacao:
     a, b = st.columns(2)
     a.link_button("📦 Movimentação", "?acesso=movimentacao&pagina=movimentacao", use_container_width=True)
     b.link_button("🔎 Inventário", "?acesso=movimentacao&pagina=inventario", use_container_width=True)
 else:
-    a, b, c, d, e = st.columns(5)
+    a, b, c, d, e, f = st.columns(6)
+    f.link_button("👤 Usuários", "?pagina=usuarios", use_container_width=True)
     e.link_button("📄 Relatório de Aplicação", "?pagina=aplicacao", use_container_width=True)
     a.link_button("📊 Painel", "?pagina=painel", use_container_width=True)
     b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
     c.link_button("📦 Movimentação", "?pagina=movimentacao", use_container_width=True)
     d.link_button("🔎 Inventário", "?pagina=inventario", use_container_width=True)
 
-if pagina == "aplicacao":
+if pagina == "usuarios":
+    st.subheader("Cadastro de Usuários")
+    painel_usuarios(dados, base, sha)
+elif pagina == "aplicacao":
     painel_aplicacao(dados, unidade)
 elif pagina == "painel":
     with st.expander("✉️ Envio por e-mail e histórico", expanded=False):
@@ -891,6 +926,9 @@ elif pagina == "inventario":
 
 elif pagina == "movimentacao":
     st.subheader("Movimentação")
+    with st.expander("👤 Cadastrar usuário", expanded=not dados.get("usuarios")):
+        painel_usuarios(dados, base, sha)
+    usuarios = dados.get("usuarios", [])
     tabela = itens_tabela(dados)
     if tabela.empty:
         st.info("Cadastre materiais antes de movimentar.")
@@ -901,12 +939,12 @@ elif pagina == "movimentacao":
             escolhido = st.selectbox("Material", list(opcoes))
             quantidade = st.number_input("Quantidade", min_value=1, step=1)
             go_carreta = ""
-            usuario = ""
+            usuario = st.selectbox("Usuário responsável (obrigatório)", [""] + usuarios,
+                                   format_func=lambda nome: nome or "Selecione seu nome")
             if tipo == "SAÍDA":
                 go_carreta = st.text_input("GO da carreta (obrigatório)", placeholder="Ex.: 13795")
-                usuario = st.text_input("Usuário responsável (obrigatório)", placeholder="Nome de quem registra a aplicação")
             observacao = st.text_input("Observação (opcional)")
-            confirmar = st.form_submit_button("Registrar movimentação", type="primary")
+            confirmar = st.form_submit_button("Registrar movimentação", type="primary", disabled=not usuarios)
         if confirmar:
             try:
                 primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade, go_carreta, usuario)
