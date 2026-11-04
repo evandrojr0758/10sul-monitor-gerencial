@@ -201,7 +201,7 @@ def alterar_ni(dados, ni_atual, novo_ni):
     return novo_ni
 
 
-def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
+def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta="", usuario=""):
     normalizar(dados)
     material = dados["itens"].get(ni)
     if material is None:
@@ -211,6 +211,9 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
     go_carreta = str(go_carreta).strip().upper()
     if tipo == "SAÍDA" and not go_carreta:
         raise ErroEstoque("Informe o GO da carreta que receberá o material.")
+    usuario = str(usuario).strip()
+    if tipo == "SAÍDA" and not usuario:
+        raise ErroEstoque("Informe o usuário responsável pela aplicação.")
     item = material["unidades"][unidade]
     if quantidade <= 0:
         raise ErroEstoque("Informe uma quantidade positiva.")
@@ -230,6 +233,7 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta=""):
         "data_hora": datetime.now(timezone.utc).isoformat(),
         "ni": ni, "descricao": material["descricao"], "unidade": unidade, "movimento": tipo,
         "quantidade": quantidade, "saldo_apos": saldo,
+        "usuario": usuario,
         "primeira_entrada": primeira, "go_carreta": go_carreta if tipo == "SAÍDA" else "", "observacao": obs.strip()})
     return primeira, saldo
 
@@ -300,6 +304,65 @@ def registrar_inventario_lote(dados, linhas, responsavel, observacao="", unidade
         novos["movimentos"][-1]["lote_id"] = lote_id
         alterados += int(diferenca != 0)
     return novos, len(preparados), alterados
+
+
+def tabela_aplicacao(dados, unidade):
+    """Saídas aplicadas em frotas, sem entradas ou ajustes de inventário."""
+    colunas = ["NI", "DESCRIÇÃO DO ITEM", "QUANTIDADE", "FROTA", "DATA", "USUÁRIO"]
+    linhas = []
+    for m in reversed(dados.get("movimentos", [])):
+        if m.get("movimento") != "SAÍDA" or m.get("unidade", "COCB") != unidade:
+            continue
+        data = pd.to_datetime(m.get("data_hora"), utc=True, errors="coerce")
+        data = data.tz_convert("America/Sao_Paulo").tz_localize(None) if pd.notna(data) else pd.NaT
+        linhas.append({
+            "NI": str(m.get("ni", "")),
+            "DESCRIÇÃO DO ITEM": m.get("descricao", ""),
+            "QUANTIDADE": m.get("quantidade", 0),
+            "FROTA": str(m.get("go_carreta") or "Não informada"),
+            "DATA": data,
+            "USUÁRIO": m.get("usuario") or m.get("responsavel") or "Não informado",
+        })
+    return pd.DataFrame(linhas, columns=colunas).sort_values("DATA", ascending=False, na_position="last")
+
+
+def painel_aplicacao(dados, unidade):
+    st.subheader("Relatório de Aplicação — " + unidade)
+    tabela = tabela_aplicacao(dados, unidade)
+    st.caption("Saídas de peças da unidade selecionada. Datas e horários de Brasília. Registros antigos podem não ter usuário informado.")
+    if tabela.empty:
+        st.info("Nenhuma aplicação registrada nesta unidade.")
+        return
+    datas = tabela["DATA"].dropna()
+    a, b = st.columns(2)
+    inicio = a.date_input("Data inicial", value=datas.min().date() if not datas.empty else datetime.now().date())
+    fim = b.date_input("Data final", value=datas.max().date() if not datas.empty else datetime.now().date())
+    sem_data = st.checkbox("Incluir registros sem data", value=False)
+    a, b = st.columns(2)
+    frotas = a.multiselect("Filtrar por frota", sorted(tabela["FROTA"].unique()))
+    itens = {ni: ni + " | " + str(grupo.iloc[0]["DESCRIÇÃO DO ITEM"]) for ni, grupo in tabela.groupby("NI")}
+    pecas = b.multiselect("Filtrar por peça (NI / descrição)", list(itens), format_func=lambda ni: itens[ni])
+    if inicio > fim:
+        st.warning("A data inicial deve ser anterior ou igual à data final.")
+        return
+    periodo = tabela["DATA"].dt.date.between(inicio, fim)
+    if sem_data:
+        periodo = periodo | tabela["DATA"].isna()
+    tabela = tabela[periodo].copy()
+    if frotas:
+        tabela = tabela[tabela["FROTA"].isin(frotas)]
+    if pecas:
+        tabela = tabela[tabela["NI"].isin(pecas)]
+    if tabela.empty:
+        st.info("Nenhuma aplicação encontrada para os filtros selecionados.")
+        return
+    st.caption(f"{len(tabela)} aplicações • Quantidade total: {tabela['QUANTIDADE'].sum()}")
+    tabela["DATA"] = tabela["DATA"].dt.strftime("%d/%m/%Y %H:%M").fillna("Não informada")
+    st.dataframe(tabela, use_container_width=True, hide_index=True)
+    st.download_button("📥 Baixar Relatório de Aplicação em Excel",
+                       exportar_tabela_excel(tabela, "Aplicação"),
+                       f"relatorio_aplicacao_{unidade}_{inicio}_{fim}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 def exportar_tabela_excel(tabela, titulo):
@@ -612,20 +675,23 @@ if not somente_movimentacao and st.button("📷 Relatório para enviar ao client
 pagina = st.query_params.get("pagina", "movimentacao" if somente_movimentacao else "painel")
 if somente_movimentacao and pagina not in ("movimentacao", "inventario"):
     pagina = "movimentacao"
-if pagina not in ("painel", "cadastro", "movimentacao", "inventario"):
+if pagina not in ("painel", "cadastro", "movimentacao", "inventario", "aplicacao"):
     pagina = "painel"
 if somente_movimentacao:
     a, b = st.columns(2)
     a.link_button("📦 Movimentação", "?acesso=movimentacao&pagina=movimentacao", use_container_width=True)
     b.link_button("🔎 Inventário", "?acesso=movimentacao&pagina=inventario", use_container_width=True)
 else:
-    a, b, c, d = st.columns(4)
+    a, b, c, d, e = st.columns(5)
+    e.link_button("📄 Relatório de Aplicação", "?pagina=aplicacao", use_container_width=True)
     a.link_button("📊 Painel", "?pagina=painel", use_container_width=True)
     b.link_button("📋 Cadastro", "?pagina=cadastro", use_container_width=True)
     c.link_button("📦 Movimentação", "?pagina=movimentacao", use_container_width=True)
     d.link_button("🔎 Inventário", "?pagina=inventario", use_container_width=True)
 
-if pagina == "painel":
+if pagina == "aplicacao":
+    painel_aplicacao(dados, unidade)
+elif pagina == "painel":
     with st.expander("✉️ Envio por e-mail e histórico", expanded=False):
         painel_email_socorro()
     st.subheader("Painel de Estoque — " + unidade)
@@ -835,13 +901,15 @@ elif pagina == "movimentacao":
             escolhido = st.selectbox("Material", list(opcoes))
             quantidade = st.number_input("Quantidade", min_value=1, step=1)
             go_carreta = ""
+            usuario = ""
             if tipo == "SAÍDA":
                 go_carreta = st.text_input("GO da carreta (obrigatório)", placeholder="Ex.: 13795")
+                usuario = st.text_input("Usuário responsável (obrigatório)", placeholder="Nome de quem registra a aplicação")
             observacao = st.text_input("Observação (opcional)")
             confirmar = st.form_submit_button("Registrar movimentação", type="primary")
         if confirmar:
             try:
-                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade, go_carreta)
+                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade, go_carreta, usuario)
                 base.salvar(dados, sha)
                 st.success(f"{'Estoque inicial registrado!' if primeira else 'Movimentação registrada!'} Saldo: {saldo}")
                 st.rerun()
