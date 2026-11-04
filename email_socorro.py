@@ -57,11 +57,13 @@ class ArquivosEmail:
         data, sha = self.ler(CONFIG)
         return data or {'destinatarios': DEFAULT_TO, 'automatico': True}, sha
 
-    def solicitar(self, emails):
+    def solicitar(self, emails, reservas=None):
         import uuid
         ident = str(uuid.uuid4())
         data = {'id': ident, 'tipo': 'manual', 'destinatarios': destinatarios(emails),
                 'solicitado_em': datetime.now(timezone.utc).isoformat()}
+        if reservas:
+            data['reservas'] = reservas
         self.salvar(ROOT + '/solicitacoes/' + ident + '.json', data)
         return ident
 
