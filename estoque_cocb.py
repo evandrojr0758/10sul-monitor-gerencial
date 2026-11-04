@@ -926,9 +926,9 @@ elif pagina == "inventario":
 
 elif pagina == "movimentacao":
     st.subheader("Movimentação")
-    with st.expander("👤 Cadastrar usuário", expanded=not dados.get("usuarios")):
-        painel_usuarios(dados, base, sha)
     usuarios = dados.get("usuarios", [])
+    if not usuarios:
+        st.info("Nenhum usuário cadastrado. Solicite o cadastro ao responsável pela gestão do estoque.")
     tabela = itens_tabela(dados)
     if tabela.empty:
         st.info("Cadastre materiais antes de movimentar.")
