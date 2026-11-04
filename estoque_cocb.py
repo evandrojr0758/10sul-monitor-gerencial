@@ -678,6 +678,47 @@ def painel_email_socorro():
         st.error("Não foi possível consultar o histórico: " + str(exc))
 
 
+
+def itens_reserva(dados):
+    normalizar(dados)
+    return [{"SELECIONAR": False, "UNIDADE": u, "NI": str(ni), "DESCRIÇÃO": m["descricao"],
+             "ATUAL": m["unidades"][u]["saldo"],
+             "A REPOR": m["unidades"][u]["maximo"] - m["unidades"][u]["saldo"], "RESERVA": ""}
+            for ni, m in sorted(dados["itens"].items()) for u in ("MUC", "COCB")
+            if m["unidades"][u].get("maximo") is not None and m["unidades"][u]["saldo"] < m["unidades"][u]["maximo"]]
+
+
+def registrar_reservas(dados, linhas, reserva_lote, usuario):
+    import copy
+    import uuid
+    novos = copy.deepcopy(dados)
+    normalizar(novos)
+    if usuario not in novos.get("usuarios", []):
+        raise ErroEstoque("Selecione o usuário responsável.")
+    preparados, pares = [], set()
+    for l in linhas:
+        reserva = str(l.get("RESERVA") or "").strip() or (str(reserva_lote or "").strip() if l.get("SELECIONAR") else "")
+        if not reserva:
+            continue
+        ni, u, q = str(l["NI"]), l["UNIDADE"], l["A REPOR"]
+        if (ni, u) in pares or u not in ("MUC", "COCB") or ni not in novos["itens"]:
+            raise ErroEstoque("Item ou unidade inválidos ou repetidos.")
+        pares.add((ni, u))
+        e = novos["itens"][ni]["unidades"][u]
+        if q <= 0 or e["saldo"] != l["ATUAL"] or e.get("maximo") is None or e["maximo"] - e["saldo"] != q:
+            raise ErroEstoque("O estoque mudou. Reabra o relatório antes de salvar.")
+        if any(str(m.get("reserva", "")).strip().casefold() == reserva.casefold()
+               and str(m.get("ni")) == ni and m.get("unidade", "COCB") == u for m in novos["movimentos"]):
+            raise ErroEstoque(f"Reserva {reserva} já lançada para NI {ni} / {u}.")
+        preparados.append((ni, u, q, reserva))
+    if not preparados:
+        raise ErroEstoque("Informe reservas individuais ou selecione linhas e preencha a reserva em lote.")
+    lote_id = str(uuid.uuid4())
+    for ni, u, q, reserva in preparados:
+        registrar(novos, ni, "ENTRADA", q, "Reposição pela reserva " + reserva, u, "", usuario)
+        novos["movimentos"][-1].update(reserva=reserva, origem="RESERVA_REPOSICAO", lote_id=lote_id)
+    return novos, len(preparados), sum(p[2] for p in preparados)
+
 @st.dialog("Relatório de reposição", width="large")
 def abrir_relatorio_reposicao(dados, unidade):
     png = gerar_imagem_reposicao(dados, unidade)
@@ -685,6 +726,48 @@ def abrir_relatorio_reposicao(dados, unidade):
     botao_compartilhar_imagem(png)
     st.download_button("Baixar imagem PNG", png, "reposicao_todas_unidades.png", mime="image/png")
     st.caption("Para enviar por e-mail, use Envio por e-mail e histórico no painel.")
+    st.divider()
+    st.subheader("Reservas de reposição")
+    st.caption("Informe a reserva por item ou selecione linhas para usar a reserva em lote. Ao salvar, A REPOR será somada ao estoque de cada unidade e o e-mail atualizado será solicitado.")
+    linhas = itens_reserva(dados)
+    usuarios = dados.get("usuarios", [])
+    if not linhas:
+        st.info("Nenhum item precisa de reposição.")
+        return
+    if not usuarios:
+        st.info("Cadastre um usuário na tela gerencial antes de registrar reservas.")
+        return
+    with st.form("reservas_" + str(sha)):
+        usuario = st.selectbox("Responsável pelo lançamento", [""] + usuarios, format_func=lambda n: n or "Selecione seu nome")
+        reserva_lote = st.text_input("Número da reserva em lote")
+        preenchida = st.data_editor(pd.DataFrame(linhas), hide_index=True, use_container_width=True,
+                                    num_rows="fixed", disabled=["UNIDADE", "NI", "DESCRIÇÃO", "ATUAL", "A REPOR"],
+                                    column_config={"SELECIONAR": st.column_config.CheckboxColumn("Selecionar"),
+                                                   "RESERVA": st.column_config.TextColumn("Número da reserva")},
+                                    key="reservas_editor_" + str(sha))
+        salvar = st.form_submit_button("Salvar reservas, repor estoque e enviar e-mail", type="primary")
+    if salvar:
+        try:
+            arquivos = ArquivosEmail(base.requisitar, base.branch)
+            cfg, _ = arquivos.configuracao()
+            emails = destinatarios(cfg["destinatarios"])
+            atuais, sha_atual = base.ler()
+            if sha_atual != sha:
+                raise ErroEstoque("O estoque mudou enquanto o relatório estava aberto. Feche e reabra para conferir os valores atuais.")
+            novos, itens, quantidade = registrar_reservas(atuais, preenchida.to_dict("records"), reserva_lote, usuario)
+            base.salvar(novos, sha_atual)
+        except (ErroEstoque, ValueError) as exc:
+            st.error(str(exc))
+            return
+        try:
+            ident = arquivos.solicitar(emails)
+            st.session_state["socorro_ultimo_envio"] = ident
+            mensagem = f"Reservas salvas: {itens} item(ns), {quantidade} unidade(s) acrescentadas. E-mail atualizado solicitado. Protocolo: {ident}."
+        except (ErroEstoque, ValueError) as exc:
+            mensagem = "Reservas e estoque salvos, mas não foi possível solicitar o e-mail: " + str(exc) + ". Use Enviar agora por Resend no painel; não lance as reservas novamente."
+        st.session_state["reservas_resultado"] = mensagem
+        st.rerun()
+
 
 
 st.title("📦 10 SUL • CONTROLE DE ESTOQUE")
@@ -698,6 +781,8 @@ except ErroEstoque as exc:
     st.stop()
 
 normalizar(dados)
+if mensagem := st.session_state.pop("reservas_resultado", None):
+    st.info(mensagem)
 unidade = st.selectbox("Unidade", UNIDADES, index=2)
 somente_movimentacao = (st.query_params.get("acesso", "") == "movimentacao"
                          or st.query_params.get("pagina", "") == "movimentacao")
