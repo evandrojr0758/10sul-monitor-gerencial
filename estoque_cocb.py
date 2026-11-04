@@ -760,7 +760,8 @@ def abrir_relatorio_reposicao(dados, unidade):
             st.error(str(exc))
             return
         try:
-            ident = arquivos.solicitar(emails)
+            reservas = novos["movimentos"][len(atuais["movimentos"]):]
+            ident = arquivos.solicitar(emails, reservas=reservas)
             st.session_state["socorro_ultimo_envio"] = ident
             mensagem = f"Reservas salvas: {itens} item(ns), {quantidade} unidade(s) acrescentadas. E-mail atualizado solicitado. Protocolo: {ident}."
         except (ErroEstoque, ValueError) as exc:
