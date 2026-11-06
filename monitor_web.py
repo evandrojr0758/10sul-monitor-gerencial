@@ -12,8 +12,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 from monitor_delta import MonitorDeltaCache
 
-MOBILE_READ_ONLY = bool(globals().get("MOBILE_READ_ONLY", False)) or st.query_params.get("mobile", "0") == "1"
-st.set_page_config(page_title="10 Sul • Consulta Mobile" if MOBILE_READ_ONLY else "Monitor Gerencial 10 Sul", page_icon="📊", layout="wide")
+HISTORICO_ONLY = st.query_params.get("pagina", "") == "historico"
+MOBILE_READ_ONLY = HISTORICO_ONLY or bool(globals().get("MOBILE_READ_ONLY", False)) or st.query_params.get("mobile", "0") == "1"
+st.set_page_config(page_title="10 Sul • Histórico de manutenção" if HISTORICO_ONLY else "10 Sul • Consulta Mobile" if MOBILE_READ_ONLY else "Monitor Gerencial 10 Sul", page_icon="📊", layout="wide")
 
 _registrar_baixa_whatsapp = components.declare_component(
     "registrar_baixa_whatsapp", path=str(Path(__file__).parent / "whatsapp_liberacao")
@@ -1041,6 +1042,11 @@ def evento_flags(s):
         e.str.contains("Ñ PROG",na=False)|e.str.contains("NÃO PROG",na=False)|e.str.contains("NAO PROG",na=False)
     )
     return e,itr,rev,sos,cnp
+
+# Link independente de leitura: encerra a página antes dos painéis gerenciais.
+if HISTORICO_ONLY:
+    from historico_manutencao import render_consulta
+    render_consulta(carregar, _hora_brasilia)
 
 # Consulta de leitura por GO para o aplicativo do socorro, usando os Secrets existentes.
 if st.query_params.get("socorro_historico", "0") == "1":
