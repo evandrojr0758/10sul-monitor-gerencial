@@ -719,13 +719,35 @@ def registrar_reservas(dados, linhas, reserva_lote, usuario):
         novos["movimentos"][-1].update(reserva=reserva, origem="RESERVA_REPOSICAO", lote_id=lote_id)
     return novos, len(preparados), sum(p[2] for p in preparados)
 
+def botao_enviar_reposicao_email():
+    arquivos = ArquivosEmail(base.requisitar, base.branch)
+    try:
+        cfg, _ = arquivos.configuracao()
+        emails = destinatarios(cfg["destinatarios"])
+    except (ValueError, ErroEstoque) as exc:
+        st.error("Não foi possível preparar o envio: " + str(exc))
+        st.caption("Confira os destinatários em Envio por e-mail e histórico no painel.")
+        return
+    st.caption("Enviar relatório atualizado de MUC e COCB para: " + "; ".join(emails))
+    if st.button("✉️ Enviar reposição por e-mail agora", type="primary",
+                 use_container_width=True, key="enviar_reposicao_email_relatorio"):
+        try:
+            with st.spinner("Solicitando envio do relatório..."):
+                ident = arquivos.solicitar(emails)
+            st.session_state["socorro_ultimo_envio"] = ident
+            st.success("Envio solicitado. Confira o resultado em Envio por e-mail e histórico no painel.")
+            st.caption("Protocolo: " + ident)
+        except (ValueError, ErroEstoque) as exc:
+            st.error("Não foi possível solicitar o envio: " + str(exc))
+
+
 @st.dialog("Relatório de reposição", width="large")
 def abrir_relatorio_reposicao(dados, unidade):
     png = gerar_imagem_reposicao(dados, unidade)
     st.image(png, use_container_width=True)
+    botao_enviar_reposicao_email()
     botao_compartilhar_imagem(png)
     st.download_button("Baixar imagem PNG", png, "reposicao_todas_unidades.png", mime="image/png")
-    st.caption("Para enviar por e-mail, use Envio por e-mail e histórico no painel.")
     st.divider()
     st.subheader("Reservas de reposição")
     st.caption("Informe a reserva por item ou selecione linhas para usar a reserva em lote. Ao salvar, A REPOR será somada ao estoque de cada unidade e o e-mail atualizado será solicitado.")
