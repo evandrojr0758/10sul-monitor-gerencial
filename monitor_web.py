@@ -1046,7 +1046,7 @@ def evento_flags(s):
 # Link independente de leitura: encerra a página antes dos painéis gerenciais.
 if HISTORICO_ONLY:
     from historico_manutencao import render_consulta
-    render_consulta(carregar, _hora_brasilia)
+    render_consulta(carregar, _hora_brasilia, norm_frota, _inconsistencias_asn)
 
 # Consulta de leitura por GO para o aplicativo do socorro, usando os Secrets existentes.
 if st.query_params.get("socorro_historico", "0") == "1":
