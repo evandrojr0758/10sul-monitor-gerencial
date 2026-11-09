@@ -40,10 +40,10 @@ def _ler_cronograma(conteudo):
         for col, valor in enumerate(linha):
             texto = str(valor).strip()
             if "Planejamento de Manutenção" in texto:
-                m = re.search(r"(\\d{1,2}/\\d{1,2}/\\d{4})", texto)
+                m = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", texto)
                 if m:
                     datas[col] = pd.to_datetime(m.group(1), dayfirst=True).strftime("%Y-%m-%d")
-            if re.fullmatch(r"GO\\s*\\d{5}", texto, re.IGNORECASE):
+            if re.fullmatch(r"GO\s*\d{5}", texto, re.IGNORECASE):
                 inicios = [c for c in datas if c <= col]
                 if not inicios:
                     continue
