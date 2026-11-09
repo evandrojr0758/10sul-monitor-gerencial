@@ -32,17 +32,21 @@ def _ler_cronograma(conteudo):
         if titulo == "ITR":
             secao = "ITR"
             datas = {}
-        elif titulo.startswith("REVISÃO") and "DIA" in titulo:
+        elif re.fullmatch(r"REVIS[ÃA]O\s+\d[\d.,]*(?:\s+DIAS?)?", titulo):
             secao = "REVISÃO"
+            datas = {}
+        elif titulo in {"CAVALOS", "PIT STOP", "BACK-LOG"}:
+            secao = None
             datas = {}
         if not secao:
             continue
         for col, valor in enumerate(linha):
             texto = str(valor).strip()
             if "Planejamento de Manutenção" in texto:
-                m = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", texto)
+                m = re.search(r"\b(\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))\b", texto)
                 if m:
-                    datas[col] = pd.to_datetime(m.group(1), dayfirst=True).strftime("%Y-%m-%d")
+                    formato = "%d/%m/%Y" if len(m.group(1).split("/")[-1]) == 4 else "%d/%m/%y"
+                    datas[col] = pd.to_datetime(m.group(1), format=formato).strftime("%Y-%m-%d")
             if re.fullmatch(r"GO\s*\d{5}", texto, re.IGNORECASE):
                 inicios = [c for c in datas if c <= col]
                 if not inicios:
