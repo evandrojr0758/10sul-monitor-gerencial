@@ -201,7 +201,22 @@ def alterar_ni(dados, ni_atual, novo_ni):
     return novo_ni
 
 
-def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta="", usuario=""):
+def material_e_pneu(material):
+    return bool(re.search(r"\bpneus?\b", str(material.get("descricao", "")), re.IGNORECASE))
+
+
+def validar_numeros_fogo(valor, quantidade):
+    numeros = [numero.strip() for numero in str(valor or "").split("/")]
+    if not all(numeros):
+        raise ErroEstoque("Informe o NÚMERO DE FOGO de cada pneu, separado por / quando houver mais de um.")
+    if len(numeros) != quantidade:
+        raise ErroEstoque(f"Informe {quantidade} número(s) de fogo, um por pneu, separados por /.")
+    if len({numero.upper() for numero in numeros}) != len(numeros):
+        raise ErroEstoque("Os números de fogo dos pneus não podem se repetir na mesma movimentação.")
+    return " / ".join(numeros)
+
+
+def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta="", usuario="", numeros_fogo=""):
     normalizar(dados)
     material = dados["itens"].get(ni)
     if material is None:
@@ -214,6 +229,7 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta="", u
     usuario = str(usuario).strip()
     if not usuario or usuario not in dados.get("usuarios", []):
         raise ErroEstoque("Selecione um usuário cadastrado para registrar a movimentação.")
+    numeros_fogo = validar_numeros_fogo(numeros_fogo, quantidade) if material_e_pneu(material) else ""
     item = material["unidades"][unidade]
     if quantidade <= 0:
         raise ErroEstoque("Informe uma quantidade positiva.")
@@ -233,7 +249,7 @@ def registrar(dados, ni, tipo, quantidade, obs, unidade="COCB", go_carreta="", u
         "data_hora": datetime.now(timezone.utc).isoformat(),
         "ni": ni, "descricao": material["descricao"], "unidade": unidade, "movimento": tipo,
         "quantidade": quantidade, "saldo_apos": saldo,
-        "usuario": usuario,
+        "usuario": usuario, "numeros_fogo": numeros_fogo,
         "primeira_entrada": primeira, "go_carreta": go_carreta if tipo == "SAÍDA" else "", "observacao": obs.strip()})
     return primeira, saldo
 
@@ -1044,9 +1060,15 @@ elif pagina == "movimentacao":
     else:
         opcoes = {f"{r['NI']} | {r['DESCRIÇÃO']} | Saldo: {r['SALDO ATUAL']}": r["NI"] for _, r in tabela.iterrows()}
         tipo = st.selectbox("Movimento", ["SAÍDA", "ENTRADA"], key="tipo_movimentacao_saida_padrao")
-        with st.form("movimentacao_" + tipo, clear_on_submit=True):
-            escolhido = st.selectbox("Material", list(opcoes))
+        escolhido = st.selectbox("Material", list(opcoes), key="material_movimentacao_" + tipo)
+        pneu_selecionado = material_e_pneu(dados["itens"][opcoes[escolhido]])
+        with st.form("movimentacao_" + tipo + "_" + str(opcoes[escolhido]), clear_on_submit=True):
             quantidade = st.number_input("Quantidade", min_value=1, step=1)
+            numeros_fogo = ""
+            if pneu_selecionado:
+                numeros_fogo = st.text_input("NÚMERO DE FOGO (obrigatório)",
+                                            placeholder="Ex.: 12345 / 67890",
+                                            help="Informe um número de fogo por pneu. Para vários pneus, separe os números por /.")
             go_carreta = ""
             usuario = st.selectbox("Usuário responsável (obrigatório)", [""] + usuarios,
                                    format_func=lambda nome: nome or "Selecione seu nome")
@@ -1056,7 +1078,7 @@ elif pagina == "movimentacao":
             confirmar = st.form_submit_button("Registrar movimentação", type="primary", disabled=not usuarios)
         if confirmar:
             try:
-                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade, go_carreta, usuario)
+                primeira, saldo = registrar(dados, opcoes[escolhido], tipo, int(quantidade), observacao, unidade, go_carreta, usuario, numeros_fogo)
                 base.salvar(dados, sha)
                 st.success(f"{'Estoque inicial registrado!' if primeira else 'Movimentação registrada!'} Saldo: {saldo}")
                 st.rerun()
