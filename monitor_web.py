@@ -2367,6 +2367,8 @@ def modal_historico_frota(fq):
     # No monitor original, a preventiva é referenciada pela liberação.
     itr=hist[hev.eq("ITR") & ~hist["excluida_asn"]].copy()
     rev=hist[hev.str.contains("REVIS",na=False) & ~hist["excluida_asn"]].copy()
+    pit_mask=hev.str.contains(r"\bPIT\s*STOP\b",regex=True,na=False) & ~hev.str.contains("SOS",na=False)
+    pit=hist[pit_mask & ~hist["excluida_asn"]].copy()
 
     def ultima_preventiva(x):
         if x.empty:
@@ -2383,8 +2385,9 @@ def modal_historico_frota(fq):
 
     r_itr=ultima_preventiva(itr)
     r_rev=ultima_preventiva(rev)
+    r_pit=ultima_preventiva(pit)
 
-    c1,c2=st.columns(2)
+    c1,c2,c3=st.columns(3)
     def preventiva_card(col, titulo, row, cor, intervalo):
         with col:
             with st.container(border=True):
@@ -2412,6 +2415,34 @@ def modal_historico_frota(fq):
 
     preventiva_card(c1,"ÚLTIMA ITR",r_itr,"🔵",20)
     preventiva_card(c2,"ÚLTIMA REVISÃO",r_rev,"🟣",120)
+
+    with c3:
+        with st.container(border=True):
+            st.markdown("<div style='font-size:13px;font-weight:800;color:#667085'>⏱️ ÚLTIMO PIT STOP</div>",unsafe_allow_html=True)
+            if r_pit is None:
+                st.markdown("<div style='font-size:24px;font-weight:900'>Não encontrado</div>",unsafe_allow_html=True)
+                st.caption("Nenhum Pit Stop no histórico ARA sincronizado.")
+            else:
+                st.caption(f"OS/ID: {r_pit['os_id']}")
+                lib=r_pit["_lib"]
+                entrada=r_pit["_entrada"]
+                referencia=lib if pd.notna(lib) else entrada
+                data=referencia.strftime("%d/%m/%Y") if pd.notna(referencia) else "Data não informada"
+                st.markdown(f"<div style='font-size:27px;font-weight:900'>{data}</div>",unsafe_allow_html=True)
+                if pd.notna(lib):
+                    dias=max(0,(agora.normalize()-lib.normalize()).days)
+                    st.markdown(f"Há **{dias} dia(s)**")
+                    st.caption(f"Liberação da OS: {lib.strftime('%d/%m/%Y %H:%M')}")
+                else:
+                    st.caption("Último atendimento • liberação da OS ainda não confirmada.")
+                with st.expander("Ver atendimento"):
+                    parada=pd.to_datetime(r_pit.get("parada"),errors="coerce")
+                    st.write(f"Parada: {parada.strftime('%d/%m/%Y %H:%M') if pd.notna(parada) else 'Não informada'}")
+                    st.write(f"Início: {entrada.strftime('%d/%m/%Y %H:%M') if pd.notna(entrada) else 'Não informado'}")
+                    st.write(f"Liberação: {lib.strftime('%d/%m/%Y %H:%M') if pd.notna(lib) else 'Não confirmada'}")
+                    st.write(f"Status: {r_pit.get('status','Não informado')}")
+                    descricao=r_pit.get("descricao")
+                    st.write(f"Descrição: {descricao if pd.notna(descricao) and str(descricao).strip() else 'Não informada'}")
 
     st.markdown("#### Histórico de atendimentos")
     show=hist[["os_id","evento","descricao","parada","inicio","fim","status"]].copy()
