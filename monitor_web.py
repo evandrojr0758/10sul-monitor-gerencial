@@ -2690,20 +2690,26 @@ cards=[
 ]
 # Alerta SOS: somente atendimentos ainda abertos, estritamente acima de 3 horas.
 sos_acima_3h = (
-    mon.loc[msos & ~mon["finalizada_10sul"] & mon["horas_aberto"].gt(3), ["frota", "horas_aberto"]]
-    .groupby("frota", as_index=False)["horas_aberto"].max()
+    mon.loc[msos & ~mon["finalizada_10sul"] & mon["horas_aberto"].gt(3)].copy()
     .sort_values(["horas_aberto", "frota"], ascending=[False, True])
+    .drop_duplicates("frota", keep="first")
+)
+sos_acima_3h["local_manutencao"] = (
+    sos_acima_3h.get("local_manutencao", pd.Series("", index=sos_acima_3h.index, dtype=object))
+    .fillna("").astype(str).str.strip().replace("", "Não informado")
 )
 sos_em_alerta = not sos_acima_3h.empty
 import html as _html_sos
 sos_detalhes_card = (
     "<div class='sos-mini-table' role='table' aria-label='SOS acima de 3 horas'>"
     "<div class='sos-mini-row sos-mini-head' role='row'>"
-    "<span role='columnheader'>FROTA</span><span role='columnheader'>TEMPO</span></div>"
+    "<span role='columnheader'>FROTA</span><span role='columnheader'>TEMPO</span>"
+    "<span role='columnheader'>LOCAL DA MANUTENÇÃO</span></div>"
     + "".join(
         "<div class='sos-mini-row' role='row'>"
         f"<span role='cell'>{_html_sos.escape(str(r['frota']))}</span>"
-        f"<strong role='cell'>{hhmm(r['horas_aberto'])}</strong></div>"
+        f"<strong role='cell'>{hhmm(r['horas_aberto'])}</strong>"
+        f"<span class='sos-mini-local' role='cell'>{_html_sos.escape(r['local_manutencao'])}</span></div>"
         for _, r in sos_acima_3h.head(3).iterrows()
     ) + "</div>"
 ) if sos_em_alerta else ""
@@ -2733,7 +2739,7 @@ if sos_em_alerta:
         padding:6px!important;
     }
     .sos-mini-table {
-        width:min(100%,220px);
+        width:100%;
         margin:0 auto;
         color:#ffffff;
         font-size:12px;
@@ -2742,12 +2748,14 @@ if sos_em_alerta:
     }
     .sos-mini-row {
         display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:8px;
+        grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.8fr);
+        gap:6px;
+        align-items:start;
         padding:2px 0;
         border-bottom:1px solid rgba(255,255,255,.22);
     }
     .sos-mini-head {font-size:10px;font-weight:600;letter-spacing:.4px;}
+    .sos-mini-local {min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left;}
     .sos-mini-more {color:#ffffff;font-size:11px;text-align:center;margin-top:4px;}
 
     .st-key-card_sos div[data-testid="stButton"] > button * {
