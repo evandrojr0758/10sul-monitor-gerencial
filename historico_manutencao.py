@@ -54,6 +54,18 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
         r_itr, r_rev, r_pit = ultimo(itr), ultimo(rev), ultimo(pit)
         c1, c2, c3 = st.columns(3)
 
+        def intervalo_revisao(row):
+            if row is None:
+                return None
+            evento = str(row.get('evento', '')).upper()
+            if '60' in evento:
+                return 60
+            if '120' in evento:
+                return 120
+            if 'TRIMESTRAL' in evento:
+                return 90
+            return None
+
         def card_preventiva(col, titulo, row, cor, intervalo):
             with col:
                 with st.container(border=True):
@@ -66,19 +78,24 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
                     lib, entrada = row['_lib'], row['_entrada']
                     data = lib if pd.notna(lib) else entrada
                     st.markdown(f"### {data.strftime('%d/%m/%Y') if pd.notna(data) else 'Data não informada'}")
+                    if pd.notna(data):
+                        dias = max(0, (agora.normalize() - data.normalize()).days)
+                        if intervalo is not None:
+                            prox = data.normalize() + pd.Timedelta(days=intervalo)
+                            sufixo = ' (previsão provisória)' if pd.isna(lib) else ''
+                            st.markdown(f"Há **{dias} dia(s)** • Próxima por tempo: **{prox.strftime('%d/%m/%Y')}**{sufixo}")
+                        else:
+                            st.markdown(f"Há **{dias} dia(s)** • Próxima por tempo: **intervalo não identificado**")
                     if pd.isna(lib):
                         st.caption('Último atendimento • liberação da OS ainda não confirmada.')
                         if pd.notna(entrada):
                             st.caption(f"Início: {entrada.strftime('%d/%m/%Y %H:%M')}")
                         st.caption(f"Status: {row.get('status', 'Não informado')}")
                     else:
-                        dias = max(0, (agora.normalize() - lib.normalize()).days)
-                        prox = lib.normalize() + pd.Timedelta(days=intervalo)
-                        st.markdown(f"Há **{dias} dia(s)** • Próxima por tempo: **{prox.strftime('%d/%m/%Y')}**")
                         st.caption(f"Liberação da OS: {lib.strftime('%d/%m/%Y %H:%M')}")
 
         card_preventiva(c1, 'ÚLTIMA ITR', r_itr, '🔵', 20)
-        card_preventiva(c2, 'ÚLTIMA REVISÃO', r_rev, '🟣', 120)
+        card_preventiva(c2, 'ÚLTIMA REVISÃO', r_rev, '🟣', intervalo_revisao(r_rev))
         with c3:
             with st.container(border=True):
                 st.markdown('**🟢 ÚLTIMO PIT STOP**')
@@ -122,4 +139,13 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
             modal_historico_frota(norm_frota(frota_q))
 
     render_consulta_rapida()
+    st.markdown(
+        """
+        <div style="margin-top:48px;padding:18px 0 12px;border-top:1px solid #e5e7eb;
+                    text-align:center;color:#667085;font-size:12px;">
+            Desenvolvido por Evandro Junior
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.stop()
