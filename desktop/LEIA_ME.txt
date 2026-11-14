@@ -53,8 +53,13 @@ uma auditoria global, contínua e transacional de todos os servidores externos.
 TABELAS DOS APLICATIVOS CONECTADOS
 cloud_monitor_asn: consulta da origem ASN.
 cloud_veiculos, cloud_movimentacoes, cloud_consumo_relatorios: veículos.
-cloud_cocb_itens, cloud_cocb_movimentacoes: estoque do socorro.
 Estas cópias são atualizadas automaticamente com a conexão disponível.
+Estoque: importe Conexao_Estoque_10Sul.10sul em Integração ASN > Importar conexão
+do estoque. A chave de leitura é protegida por DPAPI no usuário Windows.
+cloud_estoque_reposicao e cloud_estoque_relatorio_meta: relatório consolidado
+MUC/COCB, com a data real da fonte. Não inclui o histórico integral de movimentos
+do estoque; esse histórico continua no aplicativo original. As permissões atuais
+impedem a leitura direta dessas tabelas pelo cliente desktop. Não foram ampliadas.
 cloud_finance_entries, cloud_finance_accounts, cloud_commercial_proposals,
 cloud_finance_receivables e cloud_finance_audit: financeiro/propostas.
 cloud_socorro_atendimentos: atendimentos e metadados de evidências do socorro.
@@ -81,7 +86,8 @@ SQL da base local não é SQL remoto do SharePoint/Supabase ou do Financeiro.
 
 BACKUP
 Backup e restauração inclui banco, trilhas, consultas salvas e anexos locais.
-Guarde uma cópia fora do computador. Cookies dos módulos não entram no ZIP.
+Guarde uma cópia fora do computador. Cookies dos módulos não entram no ZIP. A conexão protegida do estoque só pode
+ser decifrada pelo mesmo usuário Windows; em outro usuário, reimporte o arquivo.
 Restauração exige administrador e guarda uma cópia anterior automaticamente.
 Backups da versão 1.0 são aceitos; as tabelas novas são criadas após restaurar.
 Não compartilhe o SQLite entre computadores por pasta de sincronização.

@@ -8,6 +8,7 @@ if '--child' in sys.argv:
  from modules import MODULES,launch_module
  MODULES['Controle de veículos']['url']='data:text/html,<html><body><h1 id="ok">Modulo incorporado 10 Sul</h1></body></html>'
  os.environ['SUL_MANUTENCAO_DATA']=sys.argv[3]
+ os.environ['SUL_EMBED_PROBE']=str(Path(sys.argv[3])/'probe.txt')
  launch_module('Controle de veículos',int(sys.argv[2]))
 else:
  import tkinter as tk
@@ -15,17 +16,19 @@ else:
  from ctypes import wintypes
  ctypes.windll.user32.SetProcessDPIAware()
  root=tk.Tk();root.geometry('1000x720');host=tk.Frame(root,bg='white');host.pack(fill='both',expand=True);root.update()
- with tempfile.TemporaryDirectory() as tmp:
+ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
   p=subprocess.Popen([sys.executable,__file__,'--child',str(host.winfo_id()),tmp]);deadline=time.time()+45;children=[]
   callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
   @callback_type
   def enum(hwnd,param):children.append(hwnd);return True
   while time.time()<deadline:
    root.update();children.clear();ctypes.windll.user32.EnumChildWindows(host.winfo_id(),enum,0)
-   if children:break
+   if children and (Path(tmp)/'probe.txt').exists():
+    if (Path(tmp)/'probe.txt').read_text(encoding='utf-8')!='Modulo incorporado 10 Sul':raise RuntimeError('Conteúdo incorporado inválido')
+    break
    if p.poll() is not None:raise RuntimeError('WebView encerrou antes de incorporar')
    time.sleep(.1)
-  if not children:
+  if not children or not (Path(tmp)/'probe.txt').exists():
    p.terminate();raise RuntimeError('Nenhuma janela foi incorporada ao painel')
   print('OK WebView2 incorporado ao painel Tk:',len(children),'janela(s)')
   from PIL import ImageGrab

@@ -23,7 +23,7 @@ class IntegrationUI:
             try:self.sync_queue.put(('asn',fetch_snapshot()))
             except Exception as e:self.sync_queue.put(('error',str(e)))
             try:
-                outputs,errors=fetch_business_sources();self.sync_queue.put(('business',(outputs,errors)))
+                outputs,errors=fetch_business_sources(self.store.root);self.sync_queue.put(('business',(outputs,errors)))
             except Exception as e:self.sync_queue.put(('business',([], [str(e)])))
             finally:self.sync_queue.put(('done',None))
         threading.Thread(target=work,daemon=True).start();self.update_source_status()
@@ -70,7 +70,7 @@ class IntegrationUI:
                 frame=ttk.Frame(grid,padding=15);frame.pack(fill='x',pady=5);ttk.Label(frame,text=name,font=('Segoe UI',14,'bold')).pack(anchor='w');ttk.Label(frame,text=data['subtitle'],wraplength=750).pack(anchor='w',pady=5);self.button(frame,'Abrir no portal • conectado',lambda key=name:self.page(key),True).pack(anchor='w')
         elif name in MODULES:self.render_module(name)
         elif name=='Integração ASN':
-            self.actions([('Sincronizar agora',self.sync_begin),('Ver tabelas',lambda:self.page('Manutenção SQL'))])
+            self.actions([('Sincronizar agora',self.sync_begin),('Ver tabelas',lambda:self.page('Manutenção SQL')),('Importar conexão do estoque',self.import_stock_connection)])
             ttk.Label(self.area,text=self.source_text(),wraplength=900,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=12)
             ttk.Label(self.area,text='Origem: Lista ASN do SharePoint do cliente → integração existente → monitor_asn → cópia local.\nConsulta de leitura, atualização automática a cada minuto enquanto o portal está aberto.\nSem conexão, preserva a última base. A liberação 10 Sul não altera a OS do cliente.\nRegistros excluídos na origem saem do monitor, mantendo o histórico local.\nAs cópias dos demais aplicativos ficam em tabelas cloud_* com origem e data em source_catalog.',wraplength=900,justify='left').pack(anchor='w',pady=12)
             if self.sync_error:ttk.Label(self.area,text=self.sync_error,foreground='#a52935',wraplength=900).pack(anchor='w',pady=10)
@@ -82,6 +82,11 @@ class IntegrationUI:
             self.table(self.area,[dict(r) for r in self.store.db.execute('SELECT * FROM change_history ORDER BY id DESC LIMIT 10000')],['id','changed_at','actor','table_name','action','row_key'],self.history_detail)
         else:return False
         return True
+    def import_stock_connection(self):
+        from credentials import save_stock_profile
+        path=filedialog.askopenfilename(title='Conexão de leitura do estoque',filetypes=[('Conexão 10 Sul','*.10sul *.json')])
+        if path:
+            profile=json.loads(Path(path).read_text(encoding='utf-8-sig'));save_stock_profile(self.store,profile);messagebox.showinfo('Conexão do estoque','Conexão salva neste usuário Windows. Clique em Sincronizar agora.');self.sync_begin()
     def render_module(self,name):
         module=MODULES[name]
         ttk.Label(self.area,text='Aplicativo conectado • '+module['subtitle']+'\nUsa os mesmos dados e acessos do aplicativo original. A conexão é necessária para consultar e gravar no servidor.',wraplength=1050,justify='left').pack(anchor='w',pady=(0,10))

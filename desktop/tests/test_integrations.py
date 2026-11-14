@@ -1,4 +1,4 @@
-import json,tempfile,unittest
+import json,tempfile,unittest,sys
 from datetime import datetime
 from pathlib import Path
 from core import Store,is_open
@@ -55,6 +55,12 @@ class IntegrationTests(unittest.TestCase):
   with self.assertRaises(ValueError):execute_sql(self.s,'UPDATE cloud_teste SET valor=5',True)
  def test_password_not_in_history(self):
   events=self.s.db.execute('select after_json from change_history where table_name="users"').fetchall();self.assertTrue(events);self.assertNotIn('password',events[0][0])
+ @unittest.skipUnless(sys.platform=='win32','DPAPI disponível somente no Windows')
+ def test_connection_profile_encrypted_roundtrip(self):
+  from credentials import save_stock_profile,read_stock_profile
+  profile={'endpoint':'https://dezsul-estoque-api.peachycrown16.chatgpt.site/api/estoque.json','headers':{'X-API-Key':'test-read-only','OAI-Sites-Authorization':'Bearer test-only'}}
+  save_stock_profile(self.s,profile);self.assertEqual(read_stock_profile(self.s.root),profile)
+  stored=self.s.db.execute('select value from connection_profiles').fetchone()[0];self.assertNotIn('test-read-only',stored)
  def test_pragma_schema_readable(self):self.assertTrue(execute_sql(self.s,'PRAGMA table_info(orders)')['rows'])
 
 if __name__=='__main__':unittest.main()

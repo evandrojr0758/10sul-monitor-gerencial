@@ -1,8 +1,8 @@
 """Histórico de alterações e console SQL local com transações e auditoria."""
 import json,re,sqlite3,time
 from core import now,stamp
-PROTECTED={'change_history','sql_history','audit','users','sync_state','asn_cache','source_catalog','report_queries'}
-IGNORE={'sqlite_sequence','change_history','sql_history','audit','sync_state','asn_cache','source_catalog','report_queries'}
+PROTECTED={'change_history','sql_history','audit','users','sync_state','asn_cache','source_catalog','report_queries','connection_profiles'}
+IGNORE={'sqlite_sequence','change_history','sql_history','audit','sync_state','asn_cache','source_catalog','report_queries','connection_profiles'}
 
 def qi(name):return '"'+str(name).replace('"','""')+'"'
 
@@ -14,6 +14,7 @@ def setup_history(store):
     CREATE INDEX IF NOT EXISTS ix_history_table_at ON change_history(table_name,changed_at);
     CREATE TABLE IF NOT EXISTS sql_history(id INTEGER PRIMARY KEY,executed_at TEXT NOT NULL,actor TEXT NOT NULL,sql_text TEXT NOT NULL,mode TEXT NOT NULL,success INTEGER NOT NULL,rows_count INTEGER,error TEXT);
     CREATE TABLE IF NOT EXISTS report_queries(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,sql_text TEXT NOT NULL,created_by TEXT NOT NULL,updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS connection_profiles(name TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS source_catalog(table_name TEXT PRIMARY KEY,module TEXT NOT NULL,origin TEXT NOT NULL,updated_at TEXT NOT NULL,description TEXT);
     ''')
     install_triggers(store);db.commit()

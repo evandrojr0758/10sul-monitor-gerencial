@@ -111,16 +111,28 @@ def fetch_table(url,key,table,order,key_fields,page_size=500):
         if len(page)<page_size:return records
         if offset>1000000:raise ValueError('Consulta excessiva: '+table)
 
-def fetch_business_sources():
+def fetch_business_sources(root=None):
     from connection_defaults import VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY
     outputs=[];errors=[]
     sources=[
         (VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY,'veiculos','placa.asc',['placa'],'Controle de veículos'),
         (VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY,'movimentacoes','id.asc',['id'],'Controle de veículos'),
-        (VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY,'consumo_relatorios','periodo.asc,id.asc',['id'],'Consumo de veículos'),
-        (ASN_URL,ASN_PUBLISHABLE_KEY,'cocb_itens','id.asc',['id'],'Estoque do socorro'),
-        (ASN_URL,ASN_PUBLISHABLE_KEY,'cocb_movimentacoes','id.asc',['id'],'Estoque do socorro')]
+        (VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY,'consumo_relatorios','periodo.asc,id.asc',['id'],'Consumo de veículos')]
     for url,key,table,order,fields,module in sources:
         try:outputs.append({'table':'cloud_'+table,'module':module,'origin':url,'records':fetch_table(url,key,table,order,fields),'keys':fields})
         except Exception as e:errors.append(str(e))
+    if root:
+        try:
+            from credentials import read_stock_profile
+            profile=read_stock_profile(root)
+            if profile:
+                req=urllib.request.Request(profile['endpoint'],headers=profile['headers'])
+                with urllib.request.urlopen(req,timeout=25,context=ssl.create_default_context()) as response:report=json.load(response)
+                items=report.get('itens')
+                if not isinstance(items,list):raise ValueError('Relatório do estoque inválido.')
+                outputs.append({'table':'cloud_estoque_reposicao','module':'Estoque do socorro','origin':profile['endpoint'],'records':items,'keys':['ni']})
+                meta={k:v for k,v in report.items() if k!='itens'};meta['id']='atual'
+                outputs.append({'table':'cloud_estoque_relatorio_meta','module':'Estoque do socorro','origin':profile['endpoint'],'records':[meta],'keys':['id']})
+            else:errors.append('Estoque: importe a conexão de leitura para consultar a reposição nas tabelas locais. O aplicativo original continua disponível.')
+        except Exception:errors.append('Estoque: não foi possível atualizar a conexão de leitura; cópia anterior preservada.')
     return outputs,errors
