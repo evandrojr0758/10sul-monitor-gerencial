@@ -1,8 +1,8 @@
 """Histórico de alterações e console SQL local com transações e auditoria."""
 import json,re,sqlite3,time
 from core import now,stamp
-PROTECTED={'change_history','sql_history','audit','users','sync_state','asn_cache','source_catalog','report_queries','connection_profiles'}
-IGNORE={'sqlite_sequence','change_history','sql_history','audit','sync_state','asn_cache','source_catalog','report_queries','connection_profiles'}
+PROTECTED={'change_history','sql_history','audit','users','sync_state','asn_cache','source_catalog','report_queries','connection_profiles','access_profiles','module_tickets'}
+IGNORE={'sqlite_sequence','change_history','sql_history','audit','sync_state','asn_cache','source_catalog','report_queries','connection_profiles','module_tickets'}
 
 def qi(name):return '"'+str(name).replace('"','""')+'"'
 
@@ -43,7 +43,7 @@ def list_tables(store):
     return rows
 
 def execute_sql(store,sql,write=False,limit=20000):
-    if not store.admin():raise ValueError('A manutenção SQL é exclusiva do administrador.')
+    store.require('sql.write' if write else 'sql.read')
     sql=sql.strip()
     if not sql:raise ValueError('Digite uma consulta ou comando SQL.')
     if len(sql)>100000:raise ValueError('SQL acima do limite de 100 mil caracteres.')
@@ -84,6 +84,6 @@ def execute_sql(store,sql,write=False,limit=20000):
     return result
 
 def save_report(store,name,sql):
-    if not store.admin():raise ValueError('Apenas administrador pode salvar consultas.')
+    store.require('sql.read')
     if not name.strip() or not sql.strip():raise ValueError('Informe nome e SQL.')
     store.db.execute('INSERT INTO report_queries(name,sql_text,created_by,updated_at) VALUES (?,?,?,?) ON CONFLICT(name) DO UPDATE SET sql_text=excluded.sql_text,updated_at=excluded.updated_at',(name.strip(),sql.strip(),store.user,stamp(now())));store.log('Consulta salva',name);store.db.commit()

@@ -72,7 +72,7 @@ def duration(row, at=None):
 
 def is_open(row):
     if row.get('asn_managed'):
-        return 'MANUT' in str(row.get('asn_status','')).upper() and not row.get('fim_asn')
+        return 'MANUT' in str(row.get('asn_status','')).upper() and not row.get('fim_asn') and not row.get('asn_missing')
     return not (row.get('fim_asn') or row.get('fim_liberacao_10sul'))
 
 def hours(value):
@@ -83,6 +83,7 @@ def metric_rows(rows, kind, start=None, end=None, at=None):
     """Replica elegibilidade do monitor: abertas só após SLA; especiais excluídas."""
     at=at or now(); result=[]; sla=12 if kind=='ITR' else 24
     for r in rows:
+        if r.get('asn_missing') or r.get('status')=='Ausente na ASN':continue
         if group(r['evento'])!=kind or r['frota'] in SPECIAL or r.get('expurgo')=='Excluir': continue
         ini=date(r.get('inicio') or r.get('parada'))
         if not ini: continue
@@ -134,33 +135,51 @@ class Store:
         self.db.commit(); self.user=''
         from asn_sync import setup_tables
         setup_tables(self)
+        from access import setup_access
+        setup_access(self)
         from history import setup_history
         setup_history(self)
     def close(self): self.db.close()
     def log(self,action,entity='',detail=''):
         self.db.execute('INSERT INTO audit(at,username,action,entity,detail) VALUES (?,?,?,?,?)',(stamp(now()),self.user or 'sistema',action,entity,detail))
-    def users(self): return [dict(x) for x in self.db.execute('SELECT username,role,active FROM users ORDER BY username')]
-    def add_user(self,name,password,role='Operacional',active=True):
+    def can(self,permission):
+        from access import can
+        return can(self,permission)
+    def require(self,permission):
+        from access import require
+        return require(self,permission)
+    def users(self): return [dict(x) for x in self.db.execute('SELECT username,role,active,profile FROM users ORDER BY username')]
+    def add_user(self,name,password,role='Operacional',active=True,profile=None):
         if self.users() and not self.admin(): raise ValueError('Somente o administrador pode alterar usuários.')
-        name=text(name).lower()
-        if not name or len(password)<8: raise ValueError('Informe usuário e senha com pelo menos 8 caracteres.')
-        salt=secrets.token_hex(16); digest=hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),250000).hex()
-        self.db.execute('INSERT INTO users VALUES (?,?,?,?) ON CONFLICT(username) DO UPDATE SET password=excluded.password,role=excluded.role,active=excluded.active',(name,salt+':'+digest,role,int(active)))
-        self.log('Usuário salvo',name,role); self.db.commit()
+        name=text(name).lower();profile=profile or role
+        prof=self.db.execute('SELECT * FROM access_profiles WHERE name=? AND active=1',(profile,)).fetchone()
+        if not prof:raise ValueError('Selecione um perfil ativo.')
+        if not name:raise ValueError('Informe o usuário.')
+        existing=self.db.execute('SELECT * FROM users WHERE username=?',(name,)).fetchone()
+        if name==self.user and (profile!='Administrador' or not active):raise ValueError('Você não pode retirar seu próprio acesso de administrador.')
+        if not password and existing:encoded=existing['password']
+        else:
+            if len(password)<8:raise ValueError('Informe senha com pelo menos 8 caracteres.')
+            salt=secrets.token_hex(16);encoded=salt+':'+hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),250000).hex()
+        role='Administrador' if profile=='Administrador' else 'Operacional'
+        self.db.execute('INSERT INTO users(username,password,role,active,profile) VALUES (?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET password=excluded.password,role=excluded.role,active=excluded.active,profile=excluded.profile',(name,encoded,role,int(active),profile))
+        self.log('Usuário salvo',name,profile);self.db.commit()
     def admin(self):
-        r=self.db.execute('SELECT role FROM users WHERE username=? AND active=1',(self.user,)).fetchone()
-        return bool(r and r[0]=='Administrador')
+        return self.can('admin.users') and bool(self.db.execute("SELECT 1 FROM users WHERE username=? AND profile='Administrador' AND active=1",(self.user,)).fetchone())
     def login(self,name,password):
         r=self.db.execute('SELECT * FROM users WHERE username=? AND active=1',(text(name).lower(),)).fetchone()
         if r:
             salt,digest=r['password'].split(':'); actual=hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),250000).hex()
             if hmac.compare_digest(digest,actual):
+                profile=self.db.execute('SELECT active FROM access_profiles WHERE name=?',(r['profile'],)).fetchone()
+                if not profile or not profile[0]:return False
                 self.user=r['username']; self.log('Entrada no sistema'); self.db.commit(); return True
         return False
     def orders(self):
         from asn_sync import source_rows
         return source_rows(self,[dict(x) for x in self.db.execute('SELECT * FROM orders ORDER BY parada DESC')])
     def save_order(self,data,importing=False,source=False):
+        if not source:self.require('orders.import' if importing else 'orders.edit')
         r={k:text(data.get(k)) for k in FIELDS}
         r['os_id']=text(r['os_id']);r['frota']=fleet(r['frota']);r['unidade']=norm(r['unidade']) or 'ARA'
         if not r['os_id'] or not r['frota'] or not r['evento'] or (not r['parada'] and not source): raise ValueError('OS, frota, evento e parada são obrigatórios.')
@@ -169,7 +188,7 @@ class Store:
         for k in ('fim_asn','fim_liberacao_10sul'):
             if r[k] and r['inicio'] and date(r[k])<date(r['inicio']) and not (source and k=='fim_asn'): raise ValueError('Fim não pode ser anterior ao início.')
         if r['expurgo'] and not r['motivo_expurgo']: raise ValueError('Informe a justificativa do expurgo.')
-        if not importing and not self.admin():
+        if not importing and not self.can('expurgos.edit'):
             existing=self.db.execute('SELECT expurgo,motivo_expurgo FROM orders WHERE os_id=? AND frota=?',(r['os_id'],r['frota'])).fetchone()
             previous=(existing['expurgo'] or '',existing['motivo_expurgo'] or '') if existing else ('','')
             if (r['expurgo'],r['motivo_expurgo'])!=previous: raise ValueError('Expurgo requer administrador.')
@@ -181,6 +200,7 @@ class Store:
         if not importing: self.db.commit()
         return r
     def release(self,key,when):
+        self.require('orders.release')
         r=dict(self.db.execute('SELECT * FROM orders WHERE os_id=? AND frota=?',key).fetchone()); r['fim_liberacao_10sul']=stamp(when);return self.save_order(r)
     def import_orders(self,records,commit=True,source=False):
         aliases={'ID':'os_id','OS':'os_id','OS/ID':'os_id','GO':'frota','FROTA':'frota','UNIDADE':'unidade','UN':'unidade','EVENTO':'evento','STATUS':'status','PARADA':'parada','PARADA (DATA/HORA)':'parada','INICIO':'inicio','INICIO AJUSTADO':'inicio','FIM':'fim_asn','FIM (DATA/HORA)':'fim_asn','LOCAL':'local_manutencao','LOCAL DA MANUTENCAO':'local_manutencao','DESCRICAO':'descricao'}
@@ -209,6 +229,7 @@ class Store:
             raise
         return len(prepared)
     def plan(self,data):
+        self.require('plans.edit')
         d=date(data['data']).date().isoformat(); f=fleet(data['frota'])
         if not f: raise ValueError('Informe a frota.')
         self.db.execute('INSERT INTO plans(data,frota,evento,unidade,grupo) VALUES (?,?,?,?,?) ON CONFLICT(data,frota,evento,unidade) DO UPDATE SET grupo=excluded.grupo',(d,f,data['evento'],data['unidade'],data.get('grupo','')))
@@ -219,7 +240,8 @@ class Store:
             r=dict(p); matches=[o for o in rows if o['frota']==r['frota'] and o['unidade']==r['unidade'] and group(o['evento'])==group(r['evento']) and date(o['parada']).date().isoformat()==r['data']]
             r['situacao']='Atendida' if matches else 'Não atendida' if r['data']<now().date().isoformat() else 'Aguardando';result.append(r)
         return result
-    def add_activity(self,r,attachment=None):
+    def add_activity(self,r,attachment=None,from_inspection=False):
+        self.require('inspections.review' if from_inspection else 'activities.edit')
         if not text(r.get('atividade')): raise ValueError('Informe a atividade.')
         a=date(r.get('inicio'));b=date(r.get('fim'))
         if b and not a: raise ValueError('Informe o início da atividade.')
@@ -272,10 +294,12 @@ class Store:
                 self.db.commit()
                 from asn_sync import setup_tables
                 from history import setup_history
-                setup_tables(self);setup_history(self)
+                from access import setup_access
+                setup_tables(self);setup_access(self);setup_history(self)
                 self.log('Backup restaurado',Path(source).name);self.db.commit()
             finally: check.close()
     def catalog(self,kind,name,detail='',active=True):
+        self.require('catalogs.edit')
         if not text(name):raise ValueError('Informe o nome/código.')
         self.db.execute('INSERT INTO catalogs VALUES (?,?,?,?) ON CONFLICT(kind,name) DO UPDATE SET detail=excluded.detail,active=excluded.active',(kind,name,detail,int(active)));self.log('Cadastro salvo',kind,name);self.db.commit()
     def catalogs(self,kind):return [dict(x) for x in self.db.execute('SELECT * FROM catalogs WHERE kind=? ORDER BY name',(kind,))]

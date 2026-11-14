@@ -88,8 +88,9 @@ def source_rows(store,orders):
             a=source[key]
             if a.get('excluida_asn_em'):continue
             r['asn_managed']=True;r['asn_status']='Ausente na ASN' if a.get('snapshot_absent') else a.get('status') or '';r['asn_missing']=a.get('ausente_abertas_asn_em') or ''
-            r['status']='Ausente na ASN' if a.get('snapshot_absent') else 'Manutenção' if 'MANUT' in str(a.get('status','')).upper() and not a.get('fim') else 'Liberado' if a.get('fim') else a.get('status') or r['status']
-            r['asn_alert']='Sem data na origem' if not (a.get('parada') or a.get('inicio')) else 'Fim anterior ao início na origem' if a.get('fim') and date(a['fim'])<date(a.get('inicio') or a.get('parada')) else ''
+            r['status']='Conferir ASN' if a.get('ausente_abertas_asn_em') else 'Ausente na ASN' if a.get('snapshot_absent') else 'Manutenção' if 'MANUT' in str(a.get('status','')).upper() and not a.get('fim') else 'Liberado' if a.get('fim') else a.get('status') or r['status']
+            r['modal']=a.get('modal') or ''
+            r['asn_alert']='Ausente da lista atual de abertas; confirmar na origem' if a.get('ausente_abertas_asn_em') else 'Sem data na origem' if not (a.get('parada') or a.get('inicio')) else 'Fim anterior ao início na origem' if a.get('fim') and date(a['fim'])<date(a.get('inicio') or a.get('parada')) else ''
             r['liberacao_oficina']='Liberado 10 Sul' if r.get('fim_liberacao_10sul') else 'Em atuação'
         result.append(r)
     return result
@@ -113,15 +114,21 @@ def fetch_table(url,key,table,order,key_fields,page_size=500):
 
 def fetch_business_sources(root=None):
     from connection_defaults import VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY
-    outputs=[];errors=[]
+    outputs=[];errors=[];configured=set()
+    if root:
+        import sqlite3
+        from contextlib import closing
+        from pathlib import Path
+        with closing(sqlite3.connect(Path(root)/'manutencao.sqlite3')) as db:configured={r[0][5:] for r in db.execute("SELECT name FROM connection_profiles WHERE name LIKE 'feed:%'")}
     sources=[
         (VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY,'veiculos','placa.asc',['placa'],'Controle de veículos'),
         (VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY,'movimentacoes','id.asc',['id'],'Controle de veículos'),
         (VEHICLE_URL,VEHICLE_PUBLISHABLE_KEY,'consumo_relatorios','periodo.asc,id.asc',['id'],'Consumo de veículos')]
     for url,key,table,order,fields,module in sources:
+        if 'Controle de veículos' in configured:continue
         try:outputs.append({'table':'cloud_'+table,'module':module,'origin':url,'records':fetch_table(url,key,table,order,fields),'keys':fields})
         except Exception as e:errors.append(str(e))
-    if root:
+    if root and 'Estoque do socorro' not in configured:
         try:
             from credentials import read_stock_profile
             profile=read_stock_profile(root)
@@ -133,6 +140,6 @@ def fetch_business_sources(root=None):
                 outputs.append({'table':'cloud_estoque_reposicao','module':'Estoque do socorro','origin':profile['endpoint'],'records':items,'keys':['ni']})
                 meta={k:v for k,v in report.items() if k!='itens'};meta['id']='atual'
                 outputs.append({'table':'cloud_estoque_relatorio_meta','module':'Estoque do socorro','origin':profile['endpoint'],'records':[meta],'keys':['id']})
-            else:errors.append('Estoque: importe a conexão de leitura para consultar a reposição nas tabelas locais. O aplicativo original continua disponível.')
+            else:errors.append('Estoque: importe a conexão de leitura para consultar a reposição nas tabelas locais. A consulta local fica disponível após a primeira alimentação.')
         except Exception:errors.append('Estoque: não foi possível atualizar a conexão de leitura; cópia anterior preservada.')
     return outputs,errors

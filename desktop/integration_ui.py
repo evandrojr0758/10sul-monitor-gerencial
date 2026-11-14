@@ -10,10 +10,14 @@ from asn_sync import fetch_snapshot,apply_snapshot,sync_state,fetch_business_sou
 from mirrors import mirror_snapshot
 from history import list_tables,execute_sql,save_report,qi
 
-class IntegrationUI:
+from offline_ui import OfflineModulesUI
+
+class IntegrationUI(OfflineModulesUI):
     def init_integrations(self):
         self.sync_busy=False;self.sync_queue=queue.Queue();self.sync_error='';self.business_errors=[];self.active_modules=[]
         self.root.after(1000,self.sync_begin);self.root.after(200,self.sync_poll);self.root.after(60000,self.sync_cycle)
+    def manual_sync(self):
+        self.store.require('sync.run');self.sync_begin()
     def sync_cycle(self):
         self.sync_begin();self.root.after(60000,self.sync_cycle)
     def sync_begin(self):
@@ -25,6 +29,10 @@ class IntegrationUI:
             try:
                 outputs,errors=fetch_business_sources(self.store.root);self.sync_queue.put(('business',(outputs,errors)))
             except Exception as e:self.sync_queue.put(('business',([], [str(e)])))
+            try:
+                from offline_modules import fetch_configured
+                feeds,errors=fetch_configured(self.store.root);self.sync_queue.put(('feeds',(feeds,errors)))
+            except Exception:self.sync_queue.put(('feed_error','Não foi possível consultar as alimentações configuradas; bases locais preservadas.'))
             finally:self.sync_queue.put(('done',None))
         threading.Thread(target=work,daemon=True).start();self.update_source_status()
     def sync_poll(self):
@@ -42,13 +50,23 @@ class IntegrationUI:
                 elif kind=='business':
                     outputs,self.business_errors=data
                     for item in outputs:
+                        changed=True
                         actor=self.store.user;self.store.user='integração:'+item['module']
                         try:mirror_snapshot(self.store,item['table'],item['module'],item['origin'],item['records'],item['keys'])
                         except Exception as e:self.business_errors.append(str(e))
                         finally:self.store.user=actor
+                elif kind=='feeds':
+                    from offline_modules import apply_feed
+                    feeds,errors=data;self.business_errors.extend(errors)
+                    for module,payload,origin in feeds:
+                        try:apply_feed(self.store,module,payload,origin,automatic=True);changed=True
+                        except Exception:self.business_errors.append(module+': alimentação não aplicada; base local preservada.')
+                elif kind=='feed_error':self.business_errors.append(data)
                 elif kind=='done':self.sync_busy=False
         except queue.Empty:pass
         self.update_source_status()
+        if changed and self.store.user and self.current in MODULES:
+            if hasattr(self,'module_result') and self.module_result.winfo_exists():self.module_load(self.current)
         if changed and self.store.user and self.current in ('Monitor da oficina','Ordens de manutenção','Histórico por frota','Integração ASN'):
             if not any(isinstance(w,tk.Toplevel) for w in self.root.winfo_children()):self.refresh()
         self.root.after(200,self.sync_poll)
@@ -62,17 +80,19 @@ class IntegrationUI:
     def update_source_status(self):
         if hasattr(self,'source_label') and self.source_label.winfo_exists():self.source_label.configure(text=self.source_text())
         if hasattr(self,'asn_refresh_button') and self.asn_refresh_button.winfo_exists():
-            self.asn_refresh_button.configure(text='Atualizando…' if self.sync_busy else 'Atualizar ASN',state='disabled' if self.sync_busy else 'normal')
+            self.asn_refresh_button.configure(text='Atualizando…' if self.sync_busy else 'Atualizar ASN',state='disabled' if self.sync_busy or not self.store.can('sync.run') else 'normal')
     def render_integrations(self,name):
         if name=='Aplicativos integrados':
-            ttk.Label(self.area,text='Aplicativos originais dentro do portal. Mantêm os dados, acessos e regras já existentes.\nOs módulos conectados precisam de internet; a consulta da oficina usa também a cópia local.',wraplength=850,justify='left').pack(anchor='w',pady=(0,15))
+            ttk.Label(self.area,text='Todos os aplicativos consultam o banco local deste computador.\nA integração alimenta os dados e preserva o histórico; a internet é usada somente para atualizar.',wraplength=850,justify='left').pack(anchor='w',pady=(0,15))
             canvas=tk.Canvas(self.area,highlightthickness=0,bg='#edf2f7');vs=ttk.Scrollbar(self.area,orient='vertical',command=canvas.yview);canvas.configure(yscrollcommand=vs.set);vs.pack(side='right',fill='y');canvas.pack(fill='both',expand=True)
             grid=ttk.Frame(canvas);wid=canvas.create_window((0,0),window=grid,anchor='nw');grid.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')));canvas.bind('<Configure>',lambda e:canvas.itemconfigure(wid,width=e.width))
             for name,data in MODULES.items():
-                frame=ttk.Frame(grid,padding=15);frame.pack(fill='x',pady=5);ttk.Label(frame,text=name,font=('Segoe UI',14,'bold')).pack(anchor='w');ttk.Label(frame,text=data['subtitle'],wraplength=750).pack(anchor='w',pady=5);self.button(frame,'Abrir no portal • conectado',lambda key=name:self.page(key),True).pack(anchor='w')
+                from access import MODULE_PERMS
+                if not self.store.can(MODULE_PERMS[name]):continue
+                frame=ttk.Frame(grid,padding=15);frame.pack(fill='x',pady=5);ttk.Label(frame,text=name,font=('Segoe UI',14,'bold')).pack(anchor='w');ttk.Label(frame,text=data['subtitle'],wraplength=750).pack(anchor='w',pady=5);self.button(frame,'Consultar base local',lambda key=name:self.page(key),True).pack(anchor='w')
         elif name in MODULES:self.render_module(name)
         elif name=='Integração ASN':
-            self.actions([('Sincronizar agora',self.sync_begin),('Ver tabelas',lambda:self.page('Manutenção SQL')),('Importar conexão do estoque',self.import_stock_connection)])
+            self.actions([('Sincronizar agora',self.manual_sync),('Ver tabelas',lambda:self.page('Manutenção SQL')),('Importar conexão do estoque',self.import_stock_connection)])
             ttk.Label(self.area,text=self.source_text(),wraplength=900,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=12)
             quality=sum(bool(r.get('asn_alert')) for r in self.store.orders())
             if quality:ttk.Label(self.area,text=f'{quality} OS com datas incompletas ou inconsistentes na origem. Confira a coluna Conferência ASN em Ordens de manutenção.',wraplength=900,foreground='#a36d18').pack(anchor='w',pady=6)
@@ -91,21 +111,10 @@ class IntegrationUI:
         path=filedialog.askopenfilename(title='Conexão de leitura do estoque',filetypes=[('Conexão 10 Sul','*.10sul *.json')])
         if path:
             profile=json.loads(Path(path).read_text(encoding='utf-8-sig'));save_stock_profile(self.store,profile);messagebox.showinfo('Conexão do estoque','Conexão salva neste usuário Windows. Clique em Sincronizar agora.');self.sync_begin()
-    def render_module(self,name):
-        module=MODULES[name]
-        ttk.Label(self.area,text='Aplicativo conectado • '+module['subtitle']+'\nUsa os mesmos dados e acessos do aplicativo original. A conexão é necessária para consultar e gravar no servidor.',wraplength=1050,justify='left').pack(anchor='w',pady=(0,10))
-        if sys.platform!='win32':
-            ttk.Label(self.area,text='O navegador incorporado está disponível no instalador Windows.').pack(anchor='w');return
-        host=tk.Frame(self.area,bg='white');host.pack(fill='both',expand=True);self.root.update_idletasks()
-        cmd=[sys.executable]
-        if not getattr(sys,'frozen',False):cmd+=[str(Path(__file__).with_name('app.py'))]
-        cmd+=['--module',name,'--parent',str(host.winfo_id())]
-        process=subprocess.Popen(cmd,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0));self.active_modules.append(process)
-        self.module_host=host
     def sql_page(self):
-        if not self.store.admin():raise ValueError('Acesso exclusivo do administrador.')
+        self.store.require('sql.read')
         line=ttk.Frame(self.area);line.pack(fill='x',pady=(0,8));self.write_sql=tk.BooleanVar(value=False)
-        ttk.Checkbutton(line,text='Permitir comandos de alteração na base local',variable=self.write_sql).pack(side='top',anchor='w')
+        if self.store.can('sql.write'):ttk.Checkbutton(line,text='Permitir comandos de alteração na base local',variable=self.write_sql).pack(side='top',anchor='w')
         self.button(line,'Executar SQL',self.sql_run,True).pack(side='left',padx=8);self.button(line,'Salvar consulta',self.sql_save).pack(side='left',padx=3);self.button(line,'Exportar resultado',self.export).pack(side='left',padx=3)
         saved=[dict(r) for r in self.store.db.execute('SELECT * FROM report_queries ORDER BY name')];self.saved_queries={r['name']:r for r in saved};self.saved_choice=tk.StringVar()
         line2=ttk.Frame(self.area);line2.pack(fill='x',pady=(0,8));ttk.Label(line2,text='Consultas salvas:').pack(side='left');box=ttk.Combobox(line2,textvariable=self.saved_choice,values=list(self.saved_queries),state='readonly',width=40);box.pack(side='left',padx=8);box.bind('<<ComboboxSelected>>',lambda e:self.sql_load())

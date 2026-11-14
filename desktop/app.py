@@ -79,7 +79,7 @@ class App(IntegrationUI):
         tk.Label(head,text='● BASE LOCAL  |  '+now().strftime('%d/%m/%Y %H:%M'),bg=BG,fg=BLUE,font=('Segoe UI',10,'bold')).pack(side='right')
         tk.Label(self.body,text='Operação local • 10 Sul • Desenvolvido por Evandro Junior',bg=BG,fg='#697f91').pack(anchor='w',pady=(5,18))
         source_bar=tk.Frame(self.body,bg=BG);source_bar.pack(fill='x',pady=(0,8))
-        self.asn_refresh_button=self.button(source_bar,'Atualizar ASN',self.sync_begin,True);self.asn_refresh_button.pack(side='right',padx=(12,0))
+        self.asn_refresh_button=self.button(source_bar,'Atualizar ASN',self.manual_sync,True);self.asn_refresh_button.pack(side='right',padx=(12,0))
         self.source_label=tk.Label(source_bar,text=self.source_text(),bg=BG,fg='#697f91',anchor='w',justify='left',wraplength=1200);self.source_label.pack(side='left',fill='x',expand=True)
         source_bar.bind('<Configure>',lambda event,label=self.source_label,button=self.asn_refresh_button:label.configure(wraplength=max(250,event.width-button.winfo_reqwidth()-18)) if label.winfo_exists() and button.winfo_exists() else None)
         self.toolbar=tk.Frame(self.body,bg=BG);self.toolbar.pack(fill='x',pady=(0,12))
@@ -91,7 +91,7 @@ class App(IntegrationUI):
         ttk.Label(self.toolbar,text='Unidade').pack(side='left');box=ttk.Combobox(self.toolbar,textvariable=self.unit,values=['Todas']+self.units(),state='readonly',width=10);box.pack(side='left',padx=(6,14));box.bind('<<ComboboxSelected>>',lambda e:self.refresh())
         ttk.Entry(self.toolbar,textvariable=self.search,width=22).pack(side='left',padx=(0,8));self.button(self.toolbar,'Buscar',self.refresh).pack(side='left',padx=3)
         if with_status:
-            b=ttk.Combobox(self.toolbar,textvariable=self.status,values=['Todos','Manutenção','Liberado'],state='readonly',width=13);b.pack(side='left',padx=5);b.bind('<<ComboboxSelected>>',lambda e:self.refresh())
+            b=ttk.Combobox(self.toolbar,textvariable=self.status,values=['Todos','Manutenção','Liberado','Conferir ASN','Ausente na ASN'],state='readonly',width=13);b.pack(side='left',padx=5);b.bind('<<ComboboxSelected>>',lambda e:self.refresh())
             b=ttk.Combobox(self.toolbar,textvariable=self.kind,values=['Todos','ITR','REVISÃO','CNP','SOS','PIT STOP','OUTROS'],state='readonly',width=12);b.pack(side='left',padx=5);b.bind('<<ComboboxSelected>>',lambda e:self.refresh())
     def filtered(self):
         q=self.search.get().strip().lower();out=[]
@@ -355,6 +355,10 @@ def main():
         from modules import MODULES
         MODULES['Controle de veículos']['url']=os.environ.get('SUL_EMBED_TEST_URL','about:blank')
         args.module='Controle de veículos'
+    if args.module and not args.module_test:parser.error('Os aplicativos são consultados na base local. Abra o portal e selecione Aplicativos integrados.')
+    if args.module_test:
+        from urllib.parse import urlparse
+        if urlparse(os.environ.get('SUL_EMBED_TEST_URL','')).hostname!='127.0.0.1':parser.error('Teste permitido somente no servidor local.')
     if args.module:
         from modules import launch_module
         launch_module(args.module,args.parent);return

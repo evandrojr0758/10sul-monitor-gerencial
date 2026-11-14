@@ -25,6 +25,17 @@ def run():
                 from PIL import ImageGrab
                 out=Path('previews');out.mkdir(exist_ok=True);ImageGrab.grab().save(out/('monitor_windows.png' if name=='Monitor da oficina' else 'sql_windows.png' if name=='Manutenção SQL' else 'aplicativos_windows.png'))
             print('OK tela:',name)
+        # Cada aplicativo abre consulta SQLite mesmo com a rede desligada.
+        from offline_modules import DATASETS,apply_feed,local_rows
+        for module,datasets in DATASETS.items():
+            payload={'version':1,'module':module,'complete':True,'source_at':'2026-11-14T12:00:00-03:00','datasets':{label:[{**{k:'TESTE-1' for k in keys},'descricao':'Registro demonstrativo local'}] for label,(table,keys) in datasets.items()}}
+            apply_feed(s,module,payload);app.page(module);root.update()
+            assert app.rows and app.rows[0]['descricao']=='Registro demonstrativo local',module
+            assert not app.active_modules,'Consulta local abriu processo conectado'
+            if module=='Estoque do socorro':
+                from PIL import ImageGrab
+                ImageGrab.grab().save(Path('previews')/'estoque_local_windows.png')
+            print('OK aplicativo offline:',module)
         # Formulário de OS longo, programação, usuário e cadastro.
         for fn in (app.order_form,app.plan_form):
             fn();root.update()
