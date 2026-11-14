@@ -109,12 +109,12 @@ class IntegrationUI:
         line2=ttk.Frame(self.area);line2.pack(fill='x',pady=(0,8));ttk.Label(line2,text='Consultas salvas:').pack(side='left');box=ttk.Combobox(line2,textvariable=self.saved_choice,values=list(self.saved_queries),state='readonly',width=40);box.pack(side='left',padx=8);box.bind('<<ComboboxSelected>>',lambda e:self.sql_load())
         ttk.Label(self.area,text='Conexão: banco local SQLite. cloud_* são cópias de consulta; não executa comandos no SharePoint ou nos servidores.\nCada alteração local gera histórico. Comandos de escrita criam backup antes de executar. Uma instrução por execução.',wraplength=1050,foreground='#697f91').pack(anchor='w',pady=(0,8))
         upper=ttk.Panedwindow(self.area,orient='horizontal');upper.pack(fill='x');schema=ttk.Frame(upper);editor=ttk.Frame(upper);upper.add(schema,weight=1);upper.add(editor,weight=3)
-        self.schema_tree=ttk.Treeview(schema,show='tree',height=9);self.schema_tree.pack(fill='both',expand=True)
+        self.schema_tree=ttk.Treeview(schema,show='tree',height=4);self.schema_tree.pack(fill='both',expand=True)
         for table in list_tables(self.store):
             node=self.schema_tree.insert('','end',text=table['table']+' ('+str(table['rows'])+')',values=(table['table'],))
             for c in table['columns']:self.schema_tree.insert(node,'end',text=c['name']+' • '+c['type'])
         self.schema_tree.bind('<Double-1>',lambda e:self.sql_pick_table())
-        self.sql_editor=tk.Text(editor,height=10,font=('Consolas',11),wrap='none',undo=True);self.sql_editor.pack(fill='both',expand=True);self.sql_editor.insert('1.0','SELECT * FROM orders LIMIT 100;')
+        self.sql_editor=tk.Text(editor,height=6,font=('Consolas',11),wrap='none',undo=True);self.sql_editor.pack(fill='both',expand=True);self.sql_editor.insert('1.0','SELECT * FROM orders LIMIT 100;')
         self.sql_result_frame=ttk.Frame(self.area);self.sql_result_frame.pack(fill='both',expand=True,pady=(10,0));self.table(self.sql_result_frame,[],['resultado'])
     def sql_pick_table(self):
         ids=self.schema_tree.selection()
