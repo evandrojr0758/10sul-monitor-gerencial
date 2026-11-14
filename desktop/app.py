@@ -349,7 +349,7 @@ def main():
         ctypes.windll.user32.SetProcessDPIAware()
     if args.module_test:
         from modules import MODULES
-        MODULES['Controle de veículos']['url']='data:text/html,<html><body><h1 id="ok">Modulo incorporado 10 Sul</h1></body></html>'
+        MODULES['Controle de veículos']['url']=os.environ.get('SUL_EMBED_TEST_URL','about:blank')
         args.module='Controle de veículos'
     if args.module:
         from modules import launch_module

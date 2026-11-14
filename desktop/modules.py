@@ -37,9 +37,9 @@ def launch_module(name,parent_hwnd=None):
         setlong=user.SetWindowLongW;setlong.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_long];setlong.restype=ctypes.c_long
         style=getlong(hwnd,-16);setlong(hwnd,-16,(style&~0x80CF0000)|0x40000000|0x10000000)
         user.SetParent(hwnd,int(parent_hwnd))
-        if os.environ.get('SUL_EMBED_PROBE') and module['url'].startswith('data:'):
+        if os.environ.get('SUL_EMBED_PROBE') and (module['url'].startswith('data:') or module['url'].startswith('http://127.0.0.1:')):
             value=window.evaluate_js("document.getElementById('ok')?.textContent")
-            Path(os.environ['SUL_EMBED_PROBE']).write_text(str(value),encoding='utf-8')
+            probe=Path(os.environ['SUL_EMBED_PROBE']);tmp=probe.with_suffix('.tmp');tmp.write_text(str(value),encoding='utf-8');tmp.replace(probe)
         while user.IsWindow(int(parent_hwnd)) and user.IsWindow(hwnd):
             rect=wintypes.RECT();user.GetClientRect(int(parent_hwnd),ctypes.byref(rect));user.MoveWindow(hwnd,0,0,rect.right,rect.bottom,True);time.sleep(.15)
         try:window.destroy()
