@@ -15,7 +15,7 @@ DATE_FIELDS={'parada','inicio','fim_asn','fim_liberacao_10sul','previsao','data'
 class App:
     def __init__(self,root,store):
         self.root=root;self.store=store;self.current=''; self.unit=tk.StringVar(value='Todas');self.search=tk.StringVar();self.status=tk.StringVar(value='Todos');self.kind=tk.StringVar(value='Todos');self.rows=[];self.cols=[]
-        root.title('10 Sul • Portal da Manutenção • Offline '+VERSION);root.geometry('1360x820');root.minsize(1000,650);root.configure(bg=BG)
+        root.title('10 Sul • Portal da Manutenção • Offline '+VERSION);root.geometry(f'{min(1360,root.winfo_screenwidth()-40)}x{min(820,root.winfo_screenheight()-80)}');root.minsize(1000,650);root.configure(bg=BG)
         st=ttk.Style();st.theme_use('clam');st.configure('.',font=('Segoe UI',10),background=BG,foreground=INK)
         st.configure('Treeview',background='white',fieldbackground='white',rowheight=32,borderwidth=0);st.configure('Treeview.Heading',font=('Segoe UI',10,'bold'),background='#dce7ee',padding=9)
         st.map('Treeview',background=[('selected','#087f8c')],foreground=[('selected','white')]);st.configure('TButton',padding=(12,9));st.configure('Accent.TButton',background=BLUE,foreground='white');st.map('Accent.TButton',background=[('active','#05636d')]);st.configure('TEntry',padding=6);st.configure('TCombobox',padding=5)
@@ -54,7 +54,7 @@ class App:
         menus=['Monitor da oficina','Ordens de manutenção','Histórico por frota','Programação preventiva','Laudos e atividades','Indicadores e SLA','Expurgos de SLA','Cadastros','Relatórios','Backup e restauração']
         if self.store.admin():menus+=['Usuários e acessos','Auditoria']
         for name in menus:
-            tk.Button(nav,text=name,anchor='w',bg=NAV,fg='#e0edf5',activebackground=BLUE,activeforeground='white',relief='flat',padx=24,pady=11,bd=0,command=lambda n=name:self.page(n)).pack(fill='x')
+            tk.Button(nav,text=name,anchor='w',bg=NAV,fg='#e0edf5',activebackground=BLUE,activeforeground='white',relief='flat',padx=24,pady=8,bd=0,command=lambda n=name:self.page(n)).pack(fill='x')
         tk.Button(nav,text='Sair • '+self.store.user,bg=NAV,fg='#9ab5c9',relief='flat',command=self.login).pack(side='bottom',fill='x',pady=18)
         self.body=tk.Frame(self.root,bg=BG);self.body.pack(side='left',fill='both',expand=True,padx=25,pady=22)
         self.page('Monitor da oficina')
@@ -137,7 +137,7 @@ class App:
                 if name=='Histórico por frota':
                     info=tk.Frame(self.area,bg='white',padx=15,pady=12);info.pack(fill='x',pady=(0,12))
                     labels=[]
-                    for k,interval in [('ITR',20),('REVISÃO',None),('PIT STOP',None)]:
+                    for k,interval in ([('ITR',20),('REVISÃO',None),('PIT STOP',None)] if self.search.get().strip() and len({r['frota'] for r in rows})==1 else []):
                         rs=[r for r in rows if group(r['evento'])==k and not is_open(r)]
                         if rs:
                             r=max(rs,key=lambda x:date(x['fim_asn'] or x['fim_liberacao_10sul']));d=date(r['fim_asn'] or r['fim_liberacao_10sul']);s=f'Último {k}: {d:%d/%m/%Y} • há {(now().date()-d.date()).days} dias'
