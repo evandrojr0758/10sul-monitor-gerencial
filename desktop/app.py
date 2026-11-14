@@ -343,10 +343,14 @@ class App(IntegrationUI):
 
 def main():
     import argparse
-    parser=argparse.ArgumentParser();parser.add_argument('--module',choices=list(__import__('modules').MODULES));parser.add_argument('--parent',type=int);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--module',choices=list(__import__('modules').MODULES));parser.add_argument('--parent',type=int);parser.add_argument('--module-test',action='store_true');args=parser.parse_args()
     if sys.platform=='win32':
         import ctypes
         ctypes.windll.user32.SetProcessDPIAware()
+    if args.module_test:
+        from modules import MODULES
+        MODULES['Controle de veículos']['url']='data:text/html,<html><body><h1 id="ok">Modulo incorporado 10 Sul</h1></body></html>'
+        args.module='Controle de veículos'
     if args.module:
         from modules import launch_module
         launch_module(args.module,args.parent);return

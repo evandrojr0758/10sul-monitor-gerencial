@@ -53,6 +53,11 @@ class IntegrationTests(unittest.TestCase):
   mirror_snapshot(self.s,'cloud_teste','Teste','origem',[{'id':1,'valor':20}],['id']);mirror_snapshot(self.s,'cloud_teste','Teste','origem',[],['id'])
   self.assertEqual(self.s.db.execute('select _source_present from cloud_teste').fetchone()[0],0)
   with self.assertRaises(ValueError):execute_sql(self.s,'UPDATE cloud_teste SET valor=5',True)
+ def test_repeated_source_snapshot_not_duplicate_history(self):
+  snap=self.snap([self.row()]);apply_snapshot(self.s,snap)
+  count=self.s.db.execute('select count(*) from change_history').fetchone()[0]
+  apply_snapshot(self.s,snap)
+  self.assertEqual(self.s.db.execute('select count(*) from change_history').fetchone()[0],count)
  def test_password_not_in_history(self):
   events=self.s.db.execute('select after_json from change_history where table_name="users"').fetchall();self.assertTrue(events);self.assertNotIn('password',events[0][0])
  @unittest.skipUnless(sys.platform=='win32','DPAPI disponível somente no Windows')

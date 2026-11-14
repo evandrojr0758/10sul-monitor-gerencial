@@ -29,6 +29,10 @@ jobs:
         run: python tests/smoke_embed.py
       - name: Gerar executavel independente
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name 10SulManutencao --hidden-import openpyxl --collect-all webview app.py
+      - name: Verificar navegador do executavel empacotado
+        run: |
+          $env:SUL_PACKAGED_EXE = (Resolve-Path 'dist/10SulManutencao.exe').Path
+          python tests/smoke_embed.py
       - name: Gerar instalador
         run: |
           $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"

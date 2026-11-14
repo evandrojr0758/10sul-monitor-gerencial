@@ -17,7 +17,9 @@ else:
  ctypes.windll.user32.SetProcessDPIAware()
  root=tk.Tk();root.geometry('1000x720');host=tk.Frame(root,bg='white');host.pack(fill='both',expand=True);root.update()
  with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-  p=subprocess.Popen([sys.executable,__file__,'--child',str(host.winfo_id()),tmp]);deadline=time.time()+45;children=[]
+  env=os.environ.copy();env['SUL_MANUTENCAO_DATA']=tmp;env['SUL_EMBED_PROBE']=str(Path(tmp)/'probe.txt')
+  command=[os.environ['SUL_PACKAGED_EXE'],'--module-test','--parent',str(host.winfo_id())] if os.environ.get('SUL_PACKAGED_EXE') else [sys.executable,__file__,'--child',str(host.winfo_id()),tmp]
+  p=subprocess.Popen(command,env=env);deadline=time.time()+60;children=[]
   callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
   @callback_type
   def enum(hwnd,param):children.append(hwnd);return True

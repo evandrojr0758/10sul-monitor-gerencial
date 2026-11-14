@@ -177,7 +177,7 @@ class Store:
         r['updated_at']=stamp(now())
         cols=FIELDS+['updated_at']; sql=','.join(f'{c}=excluded.{c}' for c in cols if c not in ('os_id','frota'))
         self.db.execute(f"INSERT INTO orders ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)}) ON CONFLICT(os_id,frota) DO UPDATE SET {sql}",[r[c] for c in cols])
-        self.log('Importação OS' if importing else 'OS salva',r['os_id']+'/'+r['frota'],json.dumps(r,ensure_ascii=False))
+        if not source:self.log('Importação OS' if importing else 'OS salva',r['os_id']+'/'+r['frota'],json.dumps(r,ensure_ascii=False))
         if not importing: self.db.commit()
         return r
     def release(self,key,when):
