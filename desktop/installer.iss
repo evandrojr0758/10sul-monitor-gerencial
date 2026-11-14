@@ -1,13 +1,13 @@
 [Setup]
 AppId={{17C2F95A-E918-43BD-BB6B-9C2EAF930A10}
 AppName=10 Sul - Portal da Manutenção
-AppVersion=1.0.0
+AppVersion=1.1.0
 AppPublisher=Evandro Junior
 DefaultDirName={localappdata}\Programs\10SulManutencao
 DefaultGroupName=10 Sul
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=Instalar_10Sul_Manutencao_Offline_1_0_0
+OutputBaseFilename=Instalar_10Sul_Manutencao_Integrado_1_1_0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

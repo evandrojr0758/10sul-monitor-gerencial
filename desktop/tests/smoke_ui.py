@@ -1,5 +1,6 @@
 """Smoke real de todas as telas em ambiente gráfico; base temporária."""
-import sys,tempfile
+import sys,tempfile,os
+os.environ["SUL_DISABLE_NETWORK"]="1"
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import tkinter as tk
@@ -13,11 +14,11 @@ def run():
         for i,event in enumerate(['ITR','REVISÃO 60','CORRETIVA Ñ PROG.','SOS MECÂNICA']):
             s.save_order({'os_id':str(1000+i),'frota':str(12000+i),'unidade':'ARA','evento':event,'parada':stamp(now()-timedelta(hours=14+i*3)),'local_manutencao':'Oficina Aracruz','descricao':'Registro demonstrativo de teste'})
         s.plan({'data':stamp(now()),'frota':'12000','evento':'ITR','unidade':'ARA','grupo':'A'})
-        root=tk.Tk();app=App(root,s);app.shell();root.update()
+        root=tk.Tk();app=App(root,s);s.login('teste','senha-teste-123');app.shell();root.update()
         errors=[]
         root.report_callback_exception=lambda *args:errors.append(str(args))
         app.error=lambda fn:fn()
-        names=['Monitor da oficina','Ordens de manutenção','Histórico por frota','Programação preventiva','Laudos e atividades','Indicadores e SLA','Expurgos de SLA','Cadastros','Relatórios','Backup e restauração','Usuários e acessos','Auditoria']
+        names=['Monitor da oficina','Ordens de manutenção','Histórico por frota','Programação preventiva','Laudos e atividades','Indicadores e SLA','Expurgos de SLA','Cadastros','Relatórios','Backup e restauração','Usuários e acessos','Auditoria','Aplicativos integrados','Integração ASN','Manutenção SQL','Histórico do sistema']
         for name in names:
             app.page(name);root.update()
             if name=='Monitor da oficina':

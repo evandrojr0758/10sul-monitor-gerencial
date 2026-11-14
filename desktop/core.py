@@ -14,7 +14,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
 EVENTS = ['ITR', 'REVISÃO 60', 'REVISÃO 120', 'REVISÃO TRIMESTRAL', 'CORRETIVA Ñ PROG.', 'SOS MECÂNICA', 'PIT STOP', 'OUTROS']
 UNITS = ['ARA', 'MUC', 'TLS']
 SPECIAL = {'13169','13241','11003','11001','11007','11009'}
@@ -71,6 +71,8 @@ def duration(row, at=None):
     return max(0,(end-start).total_seconds()/3600) if start else 0
 
 def is_open(row):
+    if row.get('asn_managed'):
+        return 'MANUT' in str(row.get('asn_status','')).upper() and not row.get('fim_asn')
     return not (row.get('fim_asn') or row.get('fim_liberacao_10sul'))
 
 def hours(value):
@@ -114,8 +116,11 @@ class Store:
         (self.root/'anexos').mkdir(exist_ok=True)
         self.path=self.root/'manutencao.sqlite3'
         self.db=sqlite3.connect(self.path)
+        self.user=''
+        self.db.create_function('current_actor',0,lambda:self.user or 'sistema')
         self.db.row_factory=sqlite3.Row
         self.db.execute('PRAGMA foreign_keys=ON')
+        self.db.execute('PRAGMA busy_timeout=10000')
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript('''
         CREATE TABLE IF NOT EXISTS users(username TEXT PRIMARY KEY,password TEXT NOT NULL,role TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1);
@@ -127,6 +132,10 @@ class Store:
         ''')
         for u in UNITS: self.db.execute('INSERT OR IGNORE INTO catalogs(kind,name) VALUES (?,?)',('Unidades',u))
         self.db.commit(); self.user=''
+        from asn_sync import setup_tables
+        setup_tables(self)
+        from history import setup_history
+        setup_history(self)
     def close(self): self.db.close()
     def log(self,action,entity='',detail=''):
         self.db.execute('INSERT INTO audit(at,username,action,entity,detail) VALUES (?,?,?,?,?)',(stamp(now()),self.user or 'sistema',action,entity,detail))
@@ -148,15 +157,17 @@ class Store:
             if hmac.compare_digest(digest,actual):
                 self.user=r['username']; self.log('Entrada no sistema'); self.db.commit(); return True
         return False
-    def orders(self): return [dict(x) for x in self.db.execute('SELECT * FROM orders ORDER BY parada DESC')]
-    def save_order(self,data,importing=False):
+    def orders(self):
+        from asn_sync import source_rows
+        return source_rows(self,[dict(x) for x in self.db.execute('SELECT * FROM orders ORDER BY parada DESC')])
+    def save_order(self,data,importing=False,source=False):
         r={k:text(data.get(k)) for k in FIELDS}
         r['os_id']=text(r['os_id']);r['frota']=fleet(r['frota']);r['unidade']=norm(r['unidade']) or 'ARA'
-        if not r['os_id'] or not r['frota'] or not r['evento'] or not r['parada']: raise ValueError('OS, frota, evento e parada são obrigatórios.')
+        if not r['os_id'] or not r['frota'] or not r['evento'] or (not r['parada'] and not source): raise ValueError('OS, frota, evento e parada são obrigatórios.')
         for k in ('parada','inicio','fim_asn','fim_liberacao_10sul','previsao'): r[k]=stamp(r[k])
         if not r['inicio']: r['inicio']=r['parada']
         for k in ('fim_asn','fim_liberacao_10sul'):
-            if r[k] and date(r[k])<date(r['inicio']): raise ValueError('Fim não pode ser anterior ao início.')
+            if r[k] and r['inicio'] and date(r[k])<date(r['inicio']) and not (source and k=='fim_asn'): raise ValueError('Fim não pode ser anterior ao início.')
         if r['expurgo'] and not r['motivo_expurgo']: raise ValueError('Informe a justificativa do expurgo.')
         if not importing and not self.admin():
             existing=self.db.execute('SELECT expurgo,motivo_expurgo FROM orders WHERE os_id=? AND frota=?',(r['os_id'],r['frota'])).fetchone()
@@ -171,7 +182,7 @@ class Store:
         return r
     def release(self,key,when):
         r=dict(self.db.execute('SELECT * FROM orders WHERE os_id=? AND frota=?',key).fetchone()); r['fim_liberacao_10sul']=stamp(when);return self.save_order(r)
-    def import_orders(self,records):
+    def import_orders(self,records,commit=True,source=False):
         aliases={'ID':'os_id','OS':'os_id','OS/ID':'os_id','GO':'frota','FROTA':'frota','UNIDADE':'unidade','UN':'unidade','EVENTO':'evento','STATUS':'status','PARADA':'parada','PARADA (DATA/HORA)':'parada','INICIO':'inicio','INICIO AJUSTADO':'inicio','FIM':'fim_asn','FIM (DATA/HORA)':'fim_asn','LOCAL':'local_manutencao','LOCAL DA MANUTENCAO':'local_manutencao','DESCRICAO':'descricao'}
         prepared=[]
         for i,r in enumerate(records,2):
@@ -188,12 +199,14 @@ class Store:
                 merged['fim_asn']=''
             prepared.append((i,merged))
         try:
-            self.db.execute('BEGIN')
+            if commit: self.db.execute('BEGIN')
             for line,r in prepared:
-                try: self.save_order(r,True)
+                try: self.save_order(r,True,source=source)
                 except ValueError as e: raise ValueError(f'Linha {line}: {e}')
-            self.db.commit()
-        except Exception: self.db.rollback(); raise
+            if commit: self.db.commit()
+        except Exception:
+            if commit: self.db.rollback()
+            raise
         return len(prepared)
     def plan(self,data):
         d=date(data['data']).date().isoformat(); f=fleet(data['frota'])
@@ -257,6 +270,10 @@ class Store:
                 check.backup(self.db)
                 for p in (tmp/'anexos').glob('*'): shutil.copy2(p,self.root/'anexos'/p.name)
                 self.db.commit()
+                from asn_sync import setup_tables
+                from history import setup_history
+                setup_tables(self);setup_history(self)
+                self.log('Backup restaurado',Path(source).name);self.db.commit()
             finally: check.close()
     def catalog(self,kind,name,detail='',active=True):
         if not text(name):raise ValueError('Informe o nome/código.')

@@ -7,7 +7,7 @@ if errorlevel 1 goto erro
 if errorlevel 1 goto erro
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 if errorlevel 1 goto erro
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name 10SulManutencao --hidden-import openpyxl app.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name 10SulManutencao --hidden-import openpyxl --collect-all webview app.py
 if errorlevel 1 goto erro
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
  "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer.iss

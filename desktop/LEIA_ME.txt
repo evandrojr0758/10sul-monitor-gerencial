@@ -1,75 +1,95 @@
-10 SUL - PORTAL DA MANUTENÇÃO OFFLINE 1.0.0
+10 SUL - PORTAL DA MANUTENÇÃO INTEGRADO 1.1.0
 Desenvolvido por Evandro Junior
 
-INSTALAÇÃO
-Execute Instalar_10Sul_Manutencao_Offline_1_0_0.exe.
-Não precisa instalar Python, abrir navegador ou manter internet para operar.
-No primeiro acesso, crie seu administrador e uma senha com 8 ou mais caracteres.
+INSTALAÇÃO E ATUALIZAÇÃO
+Execute Instalar_10Sul_Manutencao_Integrado_1_1_0.exe no Windows 10/11.
+Instala na mesma pasta do aplicativo 1.0, preservando seu banco e anexos.
+No primeiro acesso, crie seu administrador. A instalação existente conserva o login.
+O navegador incorporado usa Microsoft Edge WebView2 Runtime.
+Os aplicativos conectados mantêm seus próprios logins, permissões e dados.
+Não abre as páginas no navegador externo: elas são incorporadas ao painel do portal.
 
-DADOS
-Banco: %LOCALAPPDATA%\10Sul\Manutencao\manutencao.sqlite3
-Evidências: subpasta anexos, junto do banco.
-Atualizações e desinstalação não removem a pasta dos dados.
-Cada computador possui sua própria base. Não há sincronização automática nem
-compartilhamento simultâneo entre computadores nesta versão.
+APLICATIVOS INCORPORADOS
+Controle de veículos, Financeiro 10 Sul, Estoque do socorro, Gestão do socorro,
+Atendimento do socorrista, Estoque de pneus, Propostas comerciais, Solicitações
+PCM e Projeto Lean. São os aplicativos originais, com as funcionalidades atuais.
 
-IMPORTAR A BASE EXISTENTE
-Ordens de manutenção > Importar base: Excel tabular .xlsx, CSV ou JSON.
-Relatórios > Salvar modelo de importação mostra os nomes aceitos.
-Obrigatórios: os_id (ou OS/ID), frota (ou GO), evento, parada.
-Também aceita: unidade, inicio, fim_asn (ou FIM), local_manutencao, descricao.
-Datas: DD/MM/AAAA HH:MM ou ISO 8601. Unidade padrão ARA.
-Importações repetidas atualizam OS + frota, sem duplicar o atendimento.
-A base de origem atualiza seus campos, preservando início ajustado, liberação
-10 Sul, previsão, espera por peça e expurgos já registrados localmente.
-A importação é atômica: uma linha inválida cancela todo o arquivo.
-Um backup completo é criado antes da importação.
-Não traz os dados da nuvem sozinho; importe o arquivo exportado da operação.
+ATENÇÃO AO MODO DE TRABALHO
+Esta é uma central HÍBRIDA. A oficina e as cópias de consulta ficam no computador.
+Os aplicativos originais incorporados continuam conectados aos seus servidores;
+financeiro, veículos e estoque não foram convertidos para gravação integral offline.
+O Atendimento do socorrista conserva o recurso offline do aplicativo original.
+Não há sincronização de comandos SQL locais de volta aos servidores.
+Esta versão não unifica fisicamente todos os bancos de produção.
 
-ROTINAS DISPONÍVEIS
-- Login local; administrador e operacional; usuários e auditoria.
-- Monitor com ITR, Revisão, CNP e SOS; filtros clicáveis e tempo em manutenção.
-- OS com local, previsão, justificativa sem previsão, aguardando peça,
-  início ajustado e liberação 10 Sul separada do fim do cliente.
-- Histórico por frota com última ITR, Revisão, Pit Stop e próximo vencimento.
-- Programação preventiva por frota/data/evento/unidade/grupo A ou B.
-- Aderência por parada na data, evento e unidade correspondentes.
-- Importação de programação tabular DATA, FROTA, EVENTO, UNIDADE, GRUPO.
-- Atividades vinculadas à OS e frota, responsável, início/fim e evidência.
-- Anexos PDF, fotos e vídeos copiados para a base local.
-- Indicadores ITR/Revisão, composição por início, médias diárias e gráfico.
-- SLA 12h ITR / 24h Revisão. Abertas entram na média após atingir o SLA.
-- Frotas especiais excluídas: 13169, 13241, 11003, 11001, 11007, 11009.
-- Expurgos com motivo e administrador: excluir ou limitar ao SLA.
-- Cadastro de frotas, colaboradores e unidades; exportação CSV/Excel.
-- Relatório da oficina para impressão ou salvar PDF pelo diálogo de impressão.
-- Backup completo ZIP; restauração validada e cópia anterior preservada.
+OS ABERTAS DO CLIENTE
+O portal consulta, somente para leitura, monitor_asn, alimentada pela integração
+já existente com a Lista ASN do SharePoint do cliente. Não grava no SharePoint.
+A atualização automática ocorre a cada minuto com o portal aberto e conectado.
+A primeira consulta pode levar alguns segundos. Confira Integração ASN.
+São mostradas a data da origem e a data da cópia no computador.
+Sem conexão, a base anterior é preservada e identificada como cópia local.
+A liberação 10 Sul permanece separada da baixa do cliente. Uma OS aberta na ASN
+continua no monitor até a situação do cliente mudar, mesmo já liberada pela 10 Sul.
+OS excluídas ou ausentes na última consulta deixam de contar como abertas;
+o registro e seu histórico permanecem no computador.
+Inconsistências de horário da origem são sinalizadas, sem inventar correções.
+A integração usa chave PUBLICÁVEL; nenhuma chave de serviço foi embutida.
 
-REGRAS E LIMITES DESTA PRIMEIRA VERSÃO
-O aplicativo desktop é uma implementação local nova baseada no escopo e nas
-regras identificadas no projeto existente, não uma cópia integral de todas as
-telas online. A versão online continua independente.
-Ainda não inclui OCR de laudos, disparos automáticos de e-mail/WhatsApp,
-integração SharePoint/ASN em tempo real, publicação da consulta do gerente,
-cruzamento automático com o app socorrista, ranking de reincidências ou
-reprovações MEGA. Evidências e atividades podem ser lançadas manualmente.
-O Excel de programação deve ser tabular; o layout especial Cronograma.Novo
-não é interpretado por esta versão.
-Início ajustado é informado ou importado; não aplica ajuste de turno sozinho.
-Próxima ITR: 20 dias após conclusão; revisão 60/120/trimestral: 60/120/90 dias.
-O sistema não inventa prazo para Pit Stop nem revisão sem tipo definido.
-O gráfico diário divide os intervalos à meia-noite, sem perder minutos.
-Expurgo por limite é distribuído proporcionalmente nos segmentos diários.
-O local da manutenção consta da relação e do relatório de impressão.
-Não há base de produção, credenciais padrão nem dados demonstrativos no pacote.
+DADOS E HISTÓRICO
+Banco local: %LOCALAPPDATA%\10Sul\Manutencao\manutencao.sqlite3
+Anexos: subpasta anexos. Sessões dos aplicativos: subpasta aplicativos.
+change_history: alterações locais e mudanças detectadas nas cópias importadas,
+com tabela, chave, usuário/origem, data/hora, antes e depois em JSON.
+Os horários de change_history são UTC; demais datas de operação são Brasília.
+As alterações feitas pela tela SQL também disparam os registros de histórico.
+Senhas/hashes e tokens não são copiados para a trilha de alterações.
+Histórico de capturas começa nesta versão; não recria mudanças antigas já perdidas.
+Movimentações já registradas na origem são copiadas quando disponíveis.
+Em aplicativos conectados, duas alterações entre capturas podem aparecer apenas
+como a diferença entre o estado anterior e o novo. Esta cópia NÃO equivale a
+uma auditoria global, contínua e transacional de todos os servidores externos.
+
+TABELAS DOS APLICATIVOS CONECTADOS
+cloud_monitor_asn: consulta da origem ASN.
+cloud_veiculos, cloud_movimentacoes, cloud_consumo_relatorios: veículos.
+cloud_cocb_itens, cloud_cocb_movimentacoes: estoque do socorro.
+Estas cópias são atualizadas automaticamente com a conexão disponível.
+cloud_finance_entries, cloud_finance_accounts, cloud_commercial_proposals,
+cloud_finance_receivables e cloud_finance_audit: financeiro/propostas.
+cloud_socorro_atendimentos: atendimentos e metadados de evidências do socorro.
+Financeiro e socorro são copiados enquanto o aplicativo está aberto dentro
+do portal, após seu acesso original permitir a consulta. Respeitam o perfil.
+As propostas da API original limitam a listagem a 500: se atingir esse limite,
+a cópia das propostas não é atualizada, evitando tratar uma lista parcial como total.
+A trilha finance_audit é recebida por lançamento conforme a consulta autorizada.
+As tabelas cloud_* são cópias de leitura. _source_present=1 indica registros atuais;
+registros removidos são preservados com _source_present=0.
+source_catalog informa aplicativo, origem e data de atualização de cada cópia.
+Falhas de conexão não apagam as cópias anteriores.
+Não baixa arquivos binários dos aplicativos externos nem seus bancos completos.
+
+MANUTENÇÃO SQL - ADMINISTRADOR
+Mostra tabelas, campos, quantidade de registros, editor SQL, consultas salvas,
+resultado em tabela e exportação CSV para Excel. Exemplos em CONSULTAS_EXEMPLOS.sql.
+Por padrão executa somente consultas. Ative a opção de alterações para comandos
+locais; o sistema mostra a confirmação e gera backup completo antes de executar.
+Executa uma instrução por vez, em transação, e registra sucesso/erro em sql_history.
+Uma consulta pode retornar até 20 mil linhas; refine os filtros para exportar.
+Auditoria, usuários, credenciais e cópias cloud_* não são alterados por essa tela.
+SQL da base local não é SQL remoto do SharePoint/Supabase ou do Financeiro.
 
 BACKUP
-Use Backup e restauração > Criar backup completo e guarde fora do computador.
-Restauração substitui a base local; exige administrador e novo login.
-Não coloque o arquivo SQLite em pasta de sincronização para acesso simultâneo.
+Backup e restauração inclui banco, trilhas, consultas salvas e anexos locais.
+Guarde uma cópia fora do computador. Cookies dos módulos não entram no ZIP.
+Restauração exige administrador e guarda uma cópia anterior automaticamente.
+Backups da versão 1.0 são aceitos; as tabelas novas são criadas após restaurar.
+Não compartilhe o SQLite entre computadores por pasta de sincronização.
 
 CÓDIGO-FONTE
-app.py: interface nativa Tkinter.
-core.py: banco SQLite, regras, importação/exportação e backup.
-tests/: testes de regressão das regras e persistência.
-COMPILAR_WINDOWS.bat: compila e empacota no Windows com Python 3.12/Inno Setup 6.
+app.py/core.py: oficina local, login, regras, importação e backup.
+asn_sync.py/connection_defaults.py: consulta e cópia ASN/veículos/estoque.
+modules.py/integration_ui.py: aplicativos incorporados, conexão e tela SQL.
+history.py/mirrors.py: histórico, comandos e cópias dos aplicativos.
+COMPILAR_WINDOWS.bat: compila o executável e o instalador.
+tests/: testes das regras, dados, integração e telas Windows/WebView2.

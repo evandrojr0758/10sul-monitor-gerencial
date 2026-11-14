@@ -10,20 +10,24 @@ from tkinter import ttk,messagebox,filedialog
 from core import Store,EVENTS,FIELDS,VERSION,now,date,stamp,shown,duration,hours,group,is_open,metric_rows,daily_metrics,read_records,export_csv
 
 BG='#edf2f7'; NAV='#10283f'; BLUE='#087f8c'; INK='#17334a'
-LABELS={'os_id':'OS / ID','frota':'Frota','unidade':'Unidade','evento':'Evento','status':'Situação','parada':'Parada','inicio':'Início ajustado','fim_asn':'Fim do cliente','fim_liberacao_10sul':'Liberação 10 Sul','local_manutencao':'Local da manutenção','descricao':'Descrição','previsao':'Previsão de liberação','justificativa_previsao':'Justificativa sem previsão','aguardando_peca':'Aguardando peça','expurgo':'Expurgo','motivo_expurgo':'Motivo do expurgo','data':'Data','grupo':'Grupo','situacao':'Aderência','atividade':'Atividade','responsavel':'Responsável','fim':'Fim','arquivo':'Evidência','name':'Nome / código','detail':'Descrição','active':'Ativo','at':'Data/hora','username':'Usuário','action':'Ação','entity':'Registro','role':'Perfil','id':'ID','horas':'Horas','media':'Média (h)','quantidade':'Quantidade'}
+LABELS={'os_id':'OS / ID','frota':'Frota','unidade':'Unidade','evento':'Evento','status':'Situação','parada':'Parada','inicio':'Início ajustado','fim_asn':'Fim do cliente','fim_liberacao_10sul':'Liberação 10 Sul','local_manutencao':'Local da manutenção','descricao':'Descrição','previsao':'Previsão de liberação','justificativa_previsao':'Justificativa sem previsão','aguardando_peca':'Aguardando peça','expurgo':'Expurgo','motivo_expurgo':'Motivo do expurgo','data':'Data','grupo':'Grupo','situacao':'Aderência','atividade':'Atividade','responsavel':'Responsável','fim':'Fim','arquivo':'Evidência','name':'Nome / código','detail':'Descrição','active':'Ativo','at':'Data/hora','username':'Usuário','action':'Ação','entity':'Registro','role':'Perfil','id':'ID','horas':'Horas','changed_at':'Data/hora da alteração','actor':'Usuário / origem','table_name':'Tabela','row_key':'Chave do registro','module':'Aplicativo','updated_at':'Última cópia','liberacao_oficina':'Situação 10 Sul','asn_alert':'Conferência ASN','media':'Média (h)','quantidade':'Quantidade'}
 DATE_FIELDS={'parada','inicio','fim_asn','fim_liberacao_10sul','previsao','data','fim','at'}
-class App:
+from integration_ui import IntegrationUI
+
+class App(IntegrationUI):
     def __init__(self,root,store):
         self.root=root;self.store=store;self.current=''; self.unit=tk.StringVar(value='Todas');self.search=tk.StringVar();self.status=tk.StringVar(value='Todos');self.kind=tk.StringVar(value='Todos');self.rows=[];self.cols=[]
         root.title('10 Sul • Portal da Manutenção • Offline '+VERSION);root.geometry(f'{min(1360,root.winfo_screenwidth()-40)}x{min(820,root.winfo_screenheight()-80)}');root.minsize(1000,650);root.configure(bg=BG)
         st=ttk.Style();st.theme_use('clam');st.configure('.',font=('Segoe UI',10),background=BG,foreground=INK)
         st.configure('Treeview',background='white',fieldbackground='white',rowheight=32,borderwidth=0);st.configure('Treeview.Heading',font=('Segoe UI',10,'bold'),background='#dce7ee',padding=9)
         st.map('Treeview',background=[('selected','#087f8c')],foreground=[('selected','white')]);st.configure('TButton',padding=(12,9));st.configure('Accent.TButton',background=BLUE,foreground='white');st.map('Accent.TButton',background=[('active','#05636d')]);st.configure('TEntry',padding=6);st.configure('TCombobox',padding=5)
+        self.init_integrations()
         self.login()
     def error(self,fn):
         try:return fn()
         except Exception as e:messagebox.showerror('Não foi possível concluir',str(e),parent=self.root)
     def login(self):
+        self.store.user='';self.current=''
         for w in self.root.winfo_children():w.destroy()
         outer=tk.Frame(self.root,bg=NAV);outer.pack(fill='both',expand=True)
         card=tk.Frame(outer,bg='white',padx=52,pady=36);card.place(relx=.5,rely=.5,anchor='center')
@@ -51,13 +55,16 @@ class App:
         nav=tk.Frame(self.root,bg=NAV,width=238);nav.pack(side='left',fill='y');nav.pack_propagate(False)
         tk.Label(nav,text='10 SUL',bg=NAV,fg='white',font=('Segoe UI',27,'bold')).pack(anchor='w',padx=25,pady=(28,0))
         tk.Label(nav,text='GESTÃO DA MANUTENÇÃO',bg=NAV,fg='#9ab5c9',font=('Segoe UI',9,'bold')).pack(anchor='w',padx=25,pady=(3,28))
-        menus=['Monitor da oficina','Ordens de manutenção','Histórico por frota','Programação preventiva','Laudos e atividades','Indicadores e SLA','Expurgos de SLA','Cadastros','Relatórios','Backup e restauração']
-        if self.store.admin():menus+=['Usuários e acessos','Auditoria']
+        menus=['Aplicativos integrados','Monitor da oficina','Ordens de manutenção','Histórico por frota','Programação preventiva','Laudos e atividades','Indicadores e SLA','Expurgos de SLA','Cadastros','Relatórios','Backup e restauração']
+        if self.store.admin():menus+=['Manutenção SQL','Histórico do sistema','Usuários e acessos','Auditoria']
+        menus.insert(1,'Integração ASN')
+        canvas=tk.Canvas(nav,bg=NAV,highlightthickness=0);scroll=ttk.Scrollbar(nav,orient='vertical',command=canvas.yview);canvas.configure(yscrollcommand=scroll.set);scroll.pack(side='right',fill='y');canvas.pack(side='top',fill='both',expand=True);nav_items=tk.Frame(canvas,bg=NAV);nav_window=canvas.create_window((0,0),window=nav_items,anchor='nw');nav_items.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')));canvas.bind('<Configure>',lambda e:canvas.itemconfigure(nav_window,width=e.width))
         for name in menus:
-            tk.Button(nav,text=name,anchor='w',bg=NAV,fg='#e0edf5',activebackground=BLUE,activeforeground='white',relief='flat',padx=24,pady=8,bd=0,command=lambda n=name:self.page(n)).pack(fill='x')
+            tk.Button(nav_items,text=name,anchor='w',bg=NAV,fg='#e0edf5',activebackground=BLUE,activeforeground='white',relief='flat',padx=24,pady=8,bd=0,command=lambda n=name:self.page(n)).pack(fill='x')
         tk.Button(nav,text='Sair • '+self.store.user,bg=NAV,fg='#9ab5c9',relief='flat',command=self.login).pack(side='bottom',fill='x',pady=18)
         self.body=tk.Frame(self.root,bg=BG);self.body.pack(side='left',fill='both',expand=True,padx=25,pady=22)
         self.page('Monitor da oficina')
+        self.root.after(100,self.sync_begin)
         self.root.after(60000,self.tick)
     def tick(self):
         if self.current=='Monitor da oficina' and hasattr(self,'body') and self.body.winfo_exists():self.page(self.current)
@@ -69,8 +76,9 @@ class App:
         for w in self.body.winfo_children():w.destroy()
         head=tk.Frame(self.body,bg=BG);head.pack(fill='x')
         tk.Label(head,text=name,bg=BG,fg=INK,font=('Segoe UI',23,'bold')).pack(side='left')
-        tk.Label(head,text='● OFFLINE  |  '+now().strftime('%d/%m/%Y %H:%M'),bg=BG,fg=BLUE,font=('Segoe UI',10,'bold')).pack(side='right')
+        tk.Label(head,text='● BASE LOCAL  |  '+now().strftime('%d/%m/%Y %H:%M'),bg=BG,fg=BLUE,font=('Segoe UI',10,'bold')).pack(side='right')
         tk.Label(self.body,text='Operação local • 10 Sul • Desenvolvido por Evandro Junior',bg=BG,fg='#697f91').pack(anchor='w',pady=(5,18))
+        self.source_label=tk.Label(self.body,text=self.source_text(),bg=BG,fg='#697f91',anchor='w',wraplength=1200);self.source_label.pack(fill='x',pady=(0,8))
         self.toolbar=tk.Frame(self.body,bg=BG);self.toolbar.pack(fill='x',pady=(0,12))
         self.area=tk.Frame(self.body,bg=BG);self.area.pack(fill='both',expand=True)
         self.footer=tk.Label(self.body,text='',bg=BG,fg='#64798a',anchor='w');self.footer.pack(fill='x',pady=(10,0))
@@ -118,6 +126,7 @@ class App:
         f=tk.Frame(self.area,bg=BG);f.pack(fill='x',pady=(0,12))
         for i,(title,fn) in enumerate(items):self.button(f,title,fn,i==0).pack(side='left',padx=(0,7))
     def render(self,name):
+        if self.render_integrations(name):return
         if name in ('Monitor da oficina','Ordens de manutenção','Histórico por frota'):
             self.filters();self.actions([('Nova manutenção',lambda:self.order_form()),('Editar / abrir',lambda:self.order_form(self.selected())),('Liberar 10 Sul',self.release_form),('Importar base',self.import_base),('Exportar',self.export)])
             rows=self.filtered()
@@ -131,8 +140,8 @@ class App:
                     tk.Button(c,text='Ver relação',bg='white',fg=BLUE,relief='flat',command=lambda kind=k:self.card_filter(kind)).pack(anchor='w')
                 for r in rows:
                     sla=3 if group(r['evento'])=='SOS' else 12 if group(r['evento'])=='ITR' else 24 if group(r['evento'])=='REVISÃO' else None
-                    r['horas']=hours(duration(r));r['_late']=sla is not None and duration(r)>sla
-                self.table(self.area,rows,['frota','os_id','evento','parada','horas','local_manutencao','previsao','aguardando_peca'],lambda:self.order_form(self.selected()))
+                    r['horas']=hours(duration(r));r['_late']=bool(r.get('asn_alert')) or (sla is not None and duration(r)>sla)
+                self.table(self.area,rows,['frota','os_id','evento','parada','horas','local_manutencao','fim_liberacao_10sul','previsao','aguardando_peca'],lambda:self.order_form(self.selected()))
             else:
                 if name=='Histórico por frota':
                     info=tk.Frame(self.area,bg='white',padx=15,pady=12);info.pack(fill='x',pady=(0,12))
@@ -208,6 +217,7 @@ class App:
         self.form('Editar manutenção' if r else 'Nova manutenção',[(c,opts.get(c)) for c in cols],initial,save)
     def release_form(self):
         r=self.selected()
+        if r.get('fim_liberacao_10sul'):raise ValueError('A liberação 10 Sul já foi registrada. Confira o fim do cliente separadamente.')
         if not is_open(r):raise ValueError('Esta manutenção já possui fim registrado.')
         self.form('Liberação 10 Sul • '+r['frota'],[('fim_liberacao_10sul',None)],{'fim_liberacao_10sul':stamp(now())},lambda v:self.store.release((r['os_id'],r['frota']),v['fim_liberacao_10sul']) if v['fim_liberacao_10sul'] else (_ for _ in ()).throw(ValueError('Informe a data de liberação.')))
     def import_base(self):
@@ -332,6 +342,14 @@ class App:
             self.store.restore(p);self.store.user='';self.current='';self.login()
 
 def main():
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('--module',choices=list(__import__('modules').MODULES));parser.add_argument('--parent',type=int);args=parser.parse_args()
+    if sys.platform=='win32':
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+    if args.module:
+        from modules import launch_module
+        launch_module(args.module,args.parent);return
     root=tk.Tk();store=Store();App(root,store)
     def close():store.close();root.destroy()
     root.protocol('WM_DELETE_WINDOW',close);root.mainloop()
