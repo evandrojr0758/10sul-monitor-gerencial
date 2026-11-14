@@ -51,7 +51,7 @@ def execute_sql(store,sql,write=False,limit=20000):
     read_ops={sqlite3.SQLITE_SELECT,sqlite3.SQLITE_READ,sqlite3.SQLITE_FUNCTION,sqlite3.SQLITE_RECURSIVE}
     ddl={sqlite3.SQLITE_CREATE_INDEX,sqlite3.SQLITE_CREATE_TABLE,sqlite3.SQLITE_DROP_INDEX,sqlite3.SQLITE_DROP_TABLE,sqlite3.SQLITE_ALTER_TABLE,sqlite3.SQLITE_CREATE_VIEW,sqlite3.SQLITE_DROP_VIEW}
     def auth(action,a,b,d,trigger):
-        if action in (sqlite3.SQLITE_ATTACH,sqlite3.SQLITE_DETACH,sqlite3.SQLITE_TRANSACTION,sqlite3.SQLITE_SAVEPOINT):return sqlite3.SQLITE_DENY
+        if action in (sqlite3.SQLITE_ATTACH,sqlite3.SQLITE_DETACH,sqlite3.SQLITE_TRANSACTION,sqlite3.SQLITE_SAVEPOINT,sqlite3.SQLITE_CREATE_VTABLE,sqlite3.SQLITE_DROP_VTABLE):return sqlite3.SQLITE_DENY
         if action==sqlite3.SQLITE_FUNCTION and str(b or a).lower() in ('load_extension','writefile','readfile'):return sqlite3.SQLITE_DENY
         if action==sqlite3.SQLITE_PRAGMA:return sqlite3.SQLITE_OK if str(a).lower() in ('table_info','index_list','index_info','foreign_key_list','integrity_check','foreign_key_check','database_list','table_list') else sqlite3.SQLITE_DENY
         if action in (sqlite3.SQLITE_INSERT,sqlite3.SQLITE_UPDATE,sqlite3.SQLITE_DELETE):
@@ -66,9 +66,14 @@ def execute_sql(store,sql,write=False,limit=20000):
     try:
         db.execute('BEGIN');db.set_authorizer(auth);db.set_progress_handler(lambda:1 if time.monotonic()-started>10 else 0,10000)
         cur=db.execute(sql)
-        columns=[c[0] for c in cur.description] if cur.description else []
+        columns=[];used=set()
+        for index,description in enumerate(cur.description or []):
+            base=description[0] or 'coluna_'+str(index+1);name=base;suffix=2
+            while name in used:name=base+'_'+str(suffix);suffix+=1
+            used.add(name);columns.append(name)
         rows=cur.fetchmany(limit+1) if columns else [];truncated=len(rows)>limit;rows=rows[:limit]
         result={'columns':columns,'rows':[dict(zip(columns,r)) for r in rows],'affected':cur.rowcount if not columns else len(rows),'truncated':truncated}
+        cur.close()
         db.set_authorizer(None);db.set_progress_handler(None,0)
         if write:install_triggers(store)
         db.commit();success=True

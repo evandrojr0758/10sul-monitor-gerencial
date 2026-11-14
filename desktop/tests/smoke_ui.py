@@ -21,9 +21,9 @@ def run():
         names=['Monitor da oficina','Ordens de manutenção','Histórico por frota','Programação preventiva','Laudos e atividades','Indicadores e SLA','Expurgos de SLA','Cadastros','Relatórios','Backup e restauração','Usuários e acessos','Auditoria','Aplicativos integrados','Integração ASN','Manutenção SQL','Histórico do sistema']
         for name in names:
             app.page(name);root.update()
-            if name=='Monitor da oficina':
+            if name in ('Monitor da oficina','Manutenção SQL','Aplicativos integrados'):
                 from PIL import ImageGrab
-                out=Path('previews');out.mkdir(exist_ok=True);ImageGrab.grab().save(out/'monitor_windows.png')
+                out=Path('previews');out.mkdir(exist_ok=True);ImageGrab.grab().save(out/('monitor_windows.png' if name=='Monitor da oficina' else 'sql_windows.png' if name=='Manutenção SQL' else 'aplicativos_windows.png'))
             print('OK tela:',name)
         # Formulário de OS longo, programação, usuário e cadastro.
         for fn in (app.order_form,app.plan_form):

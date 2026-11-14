@@ -58,6 +58,9 @@ class IntegrationTests(unittest.TestCase):
   count=self.s.db.execute('select count(*) from change_history').fetchone()[0]
   apply_snapshot(self.s,snap)
   self.assertEqual(self.s.db.execute('select count(*) from change_history').fetchone()[0],count)
+ def test_join_duplicate_columns_preserves_values(self):
+  result=execute_sql(self.s,'SELECT 1 AS id,2 AS id,3 AS id_2')
+  self.assertEqual(result['columns'],['id','id_2','id_2_2']);self.assertEqual(list(result['rows'][0].values()),[1,2,3])
  def test_password_not_in_history(self):
   events=self.s.db.execute('select after_json from change_history where table_name="users"').fetchall();self.assertTrue(events);self.assertNotIn('password',events[0][0])
  @unittest.skipUnless(sys.platform=='win32','DPAPI disponível somente no Windows')
