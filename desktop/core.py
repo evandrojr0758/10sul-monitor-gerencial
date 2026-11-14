@@ -14,7 +14,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
-VERSION = '1.1.0'
+VERSION = '1.1.1'
 EVENTS = ['ITR', 'REVISÃO 60', 'REVISÃO 120', 'REVISÃO TRIMESTRAL', 'CORRETIVA Ñ PROG.', 'SOS MECÂNICA', 'PIT STOP', 'OUTROS']
 UNITS = ['ARA', 'MUC', 'TLS']
 SPECIAL = {'13169','13241','11003','11001','11007','11009'}

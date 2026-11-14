@@ -1,8 +1,8 @@
-10 SUL - PORTAL DA MANUTENÇÃO INTEGRADO 1.1.0
+10 SUL - PORTAL DA MANUTENÇÃO INTEGRADO 1.1.1
 Desenvolvido por Evandro Junior
 
 INSTALAÇÃO E ATUALIZAÇÃO
-Execute Instalar_10Sul_Manutencao_Integrado_1_1_0.exe no Windows 10/11.
+Execute Instalar_10Sul_Manutencao_Integrado_1_1_1.exe no Windows 10/11.
 Instala na mesma pasta do aplicativo 1.0, preservando seu banco e anexos.
 No primeiro acesso, crie seu administrador. A instalação existente conserva o login.
 O navegador incorporado usa Microsoft Edge WebView2 Runtime.
@@ -26,6 +26,10 @@ OS ABERTAS DO CLIENTE
 O portal consulta, somente para leitura, monitor_asn, alimentada pela integração
 já existente com a Lista ASN do SharePoint do cliente. Não grava no SharePoint.
 A atualização automática ocorre a cada minuto com o portal aberto e conectado.
+O botão Atualizar ASN aparece no topo de todas as telas, junto à data da origem.
+Durante a consulta, muda para Atualizando e fica desabilitado para evitar pedidos
+simultâneos. O botão consulta a última carga disponível, sem disparar o fluxo
+original do SharePoint. A data da origem pode ser anterior à data da cópia local.
 A primeira consulta pode levar alguns segundos. Confira Integração ASN.
 São mostradas a data da origem e a data da cópia no computador.
 Sem conexão, a base anterior é preservada e identificada como cópia local.

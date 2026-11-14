@@ -54,13 +54,15 @@ class IntegrationUI:
         self.root.after(200,self.sync_poll)
     def source_text(self):
         s=sync_state(self.store)
-        if not s:return 'ASN: aguardando primeira conexão'+(' • '+self.sync_error if self.sync_error else '')
+        if not s:return ('ASN: consultando primeira carga…' if self.sync_busy else 'ASN: aguardando primeira conexão')+(' • '+self.sync_error if self.sync_error else '')
         text='ASN: origem '+(shown(s.get('source_at')) or 'não informada')+' • cópia no computador '+shown(s.get('applied_at'))
         if self.sync_busy:text+=' • atualizando'
         if self.sync_error:text+=' • sem nova atualização; usando cópia local'
         return text
     def update_source_status(self):
         if hasattr(self,'source_label') and self.source_label.winfo_exists():self.source_label.configure(text=self.source_text())
+        if hasattr(self,'asn_refresh_button') and self.asn_refresh_button.winfo_exists():
+            self.asn_refresh_button.configure(text='Atualizando…' if self.sync_busy else 'Atualizar ASN',state='disabled' if self.sync_busy else 'normal')
     def render_integrations(self,name):
         if name=='Aplicativos integrados':
             ttk.Label(self.area,text='Aplicativos originais dentro do portal. Mantêm os dados, acessos e regras já existentes.\nOs módulos conectados precisam de internet; a consulta da oficina usa também a cópia local.',wraplength=850,justify='left').pack(anchor='w',pady=(0,15))

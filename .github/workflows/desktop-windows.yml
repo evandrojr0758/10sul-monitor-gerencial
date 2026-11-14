@@ -50,7 +50,7 @@ jobs:
           Stop-Process -Id $p.Id
       - uses: actions/upload-artifact@v4
         with:
-          name: 10Sul_Manutencao_Integrado_1_1_0
+          name: 10Sul_Manutencao_Integrado_1_1_1
           path: |
             desktop/output/*.exe
             desktop/dist/*.exe
