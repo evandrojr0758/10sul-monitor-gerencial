@@ -42,6 +42,13 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(self.s.login('admin','wrong'));self.s.add_user('operador','senha-operador');self.assertTrue(self.s.login('operador','senha-operador'))
         with self.assertRaises(ValueError):self.s.add_user('intruso','12345678','Administrador')
         with self.assertRaises(ValueError):self.s.save_order(self.row(expurgo='Excluir',motivo_expurgo='teste'))
+    def test_operator_can_edit_without_changing_existing_expurgo(self):
+        self.s.save_order(self.row(expurgo='Limitar ao SLA',motivo_expurgo='Decisão do gestor'))
+        self.s.add_user('operador','senha-operador');self.s.login('operador','senha-operador')
+        r=self.s.orders()[0];r['descricao']='Serviço executado';self.s.save_order(r)
+        self.assertEqual(self.s.orders()[0]['expurgo'],'Limitar ao SLA')
+        r['motivo_expurgo']='alterado'
+        with self.assertRaises(ValueError):self.s.save_order(r)
     def test_plan_matches_unit_fleet_event_day(self):
         self.s.save_order(self.row());self.s.plan({'data':'14/11/2026','frota':'GO 12345','evento':'ITR','unidade':'ARA'});self.s.plan({'data':'14/11/2026','frota':'12345','evento':'ITR','unidade':'MUC'})
         result=self.s.plans();self.assertEqual([r['situacao'] for r in result if r['unidade']=='ARA'],['Atendida']);self.assertNotEqual([r['situacao'] for r in result if r['unidade']=='MUC'],['Atendida'])

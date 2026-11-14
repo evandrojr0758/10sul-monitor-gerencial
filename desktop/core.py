@@ -10,7 +10,7 @@ import shutil
 import sqlite3
 import unicodedata
 import zipfile
-from contextlib import contextmanager
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -158,7 +158,10 @@ class Store:
         for k in ('fim_asn','fim_liberacao_10sul'):
             if r[k] and date(r[k])<date(r['inicio']): raise ValueError('Fim não pode ser anterior ao início.')
         if r['expurgo'] and not r['motivo_expurgo']: raise ValueError('Informe a justificativa do expurgo.')
-        if r['expurgo'] and not importing and not self.admin(): raise ValueError('Expurgo requer administrador.')
+        if not importing and not self.admin():
+            existing=self.db.execute('SELECT expurgo,motivo_expurgo FROM orders WHERE os_id=? AND frota=?',(r['os_id'],r['frota'])).fetchone()
+            previous=(existing['expurgo'] or '',existing['motivo_expurgo'] or '') if existing else ('','')
+            if (r['expurgo'],r['motivo_expurgo'])!=previous: raise ValueError('Expurgo requer administrador.')
         r['status']='Manutenção' if is_open(r) else 'Liberado'
         r['updated_at']=stamp(now())
         cols=FIELDS+['updated_at']; sql=','.join(f'{c}=excluded.{c}' for c in cols if c not in ('os_id','frota'))
@@ -221,7 +224,9 @@ class Store:
     def backup(self,target):
         self.db.commit()
         tmp=self.root/'backup_tmp.sqlite3'
-        with sqlite3.connect(tmp) as dst: self.db.backup(dst)
+        with closing(sqlite3.connect(tmp)) as dst:
+            self.db.backup(dst)
+            dst.commit()
         try:
             with zipfile.ZipFile(target,'w',zipfile.ZIP_DEFLATED) as z:
                 z.write(tmp,'manutencao.sqlite3')
