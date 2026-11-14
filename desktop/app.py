@@ -156,7 +156,7 @@ class App(IntegrationUI):
                             if n:s+=f' • Próximo: {d+timedelta(days=n):%d/%m/%Y}'
                             labels.append(s)
                     tk.Label(info,text='\n'.join(labels) if labels else 'Pesquise a frota para consultar as últimas manutenções concluídas.',bg='white',fg=INK,justify='left').pack(anchor='w')
-                self.table(self.area,rows,['os_id','frota','unidade','evento','status','parada','fim_liberacao_10sul','local_manutencao'],lambda:self.order_form(self.selected()))
+                self.table(self.area,rows,['os_id','frota','unidade','evento','status','parada','fim_liberacao_10sul','local_manutencao','asn_alert'],lambda:self.order_form(self.selected()))
         elif name=='Programação preventiva':
             self.filters(False);self.actions([('Programar frota',self.plan_form),('Importar programação',self.import_plans),('Excluir programação',self.delete_plan),('Exportar',self.export)])
             rows=[r for r in self.store.plans() if (self.unit.get()=='Todas' or r['unidade']==self.unit.get()) and (not self.search.get() or self.search.get().lower() in r['frota'].lower())]

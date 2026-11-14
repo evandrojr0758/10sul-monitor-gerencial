@@ -72,6 +72,8 @@ class IntegrationUI:
         elif name=='Integração ASN':
             self.actions([('Sincronizar agora',self.sync_begin),('Ver tabelas',lambda:self.page('Manutenção SQL')),('Importar conexão do estoque',self.import_stock_connection)])
             ttk.Label(self.area,text=self.source_text(),wraplength=900,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=12)
+            quality=sum(bool(r.get('asn_alert')) for r in self.store.orders())
+            if quality:ttk.Label(self.area,text=f'{quality} OS com datas incompletas ou inconsistentes na origem. Confira a coluna Conferência ASN em Ordens de manutenção.',wraplength=900,foreground='#a36d18').pack(anchor='w',pady=6)
             ttk.Label(self.area,text='Origem: Lista ASN do SharePoint do cliente → integração existente → monitor_asn → cópia local.\nConsulta de leitura, atualização automática a cada minuto enquanto o portal está aberto.\nSem conexão, preserva a última base. A liberação 10 Sul não altera a OS do cliente.\nRegistros excluídos na origem saem do monitor, mantendo o histórico local.\nAs cópias dos demais aplicativos ficam em tabelas cloud_* com origem e data em source_catalog.',wraplength=900,justify='left').pack(anchor='w',pady=12)
             if self.sync_error:ttk.Label(self.area,text=self.sync_error,foreground='#a52935',wraplength=900).pack(anchor='w',pady=10)
             if self.business_errors:ttk.Label(self.area,text='\n'.join(self.business_errors),foreground='#a36d18',wraplength=900).pack(anchor='w',pady=10)
@@ -101,7 +103,7 @@ class IntegrationUI:
     def sql_page(self):
         if not self.store.admin():raise ValueError('Acesso exclusivo do administrador.')
         line=ttk.Frame(self.area);line.pack(fill='x',pady=(0,8));self.write_sql=tk.BooleanVar(value=False)
-        ttk.Checkbutton(line,text='Permitir comandos de alteração na base local',variable=self.write_sql).pack(side='left')
+        ttk.Checkbutton(line,text='Permitir comandos de alteração na base local',variable=self.write_sql).pack(side='top',anchor='w')
         self.button(line,'Executar SQL',self.sql_run,True).pack(side='left',padx=8);self.button(line,'Salvar consulta',self.sql_save).pack(side='left',padx=3);self.button(line,'Exportar resultado',self.export).pack(side='left',padx=3)
         saved=[dict(r) for r in self.store.db.execute('SELECT * FROM report_queries ORDER BY name')];self.saved_queries={r['name']:r for r in saved};self.saved_choice=tk.StringVar()
         line2=ttk.Frame(self.area);line2.pack(fill='x',pady=(0,8));ttk.Label(line2,text='Consultas salvas:').pack(side='left');box=ttk.Combobox(line2,textvariable=self.saved_choice,values=list(self.saved_queries),state='readonly',width=40);box.pack(side='left',padx=8);box.bind('<<ComboboxSelected>>',lambda e:self.sql_load())
