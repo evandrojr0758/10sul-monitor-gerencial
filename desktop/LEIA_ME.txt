@@ -1,0 +1,75 @@
+10 SUL - PORTAL DA MANUTENÇÃO OFFLINE 1.0.0
+Desenvolvido por Evandro Junior
+
+INSTALAÇÃO
+Execute Instalar_10Sul_Manutencao_Offline_1_0_0.exe.
+Não precisa instalar Python, abrir navegador ou manter internet para operar.
+No primeiro acesso, crie seu administrador e uma senha com 8 ou mais caracteres.
+
+DADOS
+Banco: %LOCALAPPDATA%\10Sul\Manutencao\manutencao.sqlite3
+Evidências: subpasta anexos, junto do banco.
+Atualizações e desinstalação não removem a pasta dos dados.
+Cada computador possui sua própria base. Não há sincronização automática nem
+compartilhamento simultâneo entre computadores nesta versão.
+
+IMPORTAR A BASE EXISTENTE
+Ordens de manutenção > Importar base: Excel tabular .xlsx, CSV ou JSON.
+Relatórios > Salvar modelo de importação mostra os nomes aceitos.
+Obrigatórios: os_id (ou OS/ID), frota (ou GO), evento, parada.
+Também aceita: unidade, inicio, fim_asn (ou FIM), local_manutencao, descricao.
+Datas: DD/MM/AAAA HH:MM ou ISO 8601. Unidade padrão ARA.
+Importações repetidas atualizam OS + frota, sem duplicar o atendimento.
+A base de origem atualiza seus campos, preservando início ajustado, liberação
+10 Sul, previsão, espera por peça e expurgos já registrados localmente.
+A importação é atômica: uma linha inválida cancela todo o arquivo.
+Um backup completo é criado antes da importação.
+Não traz os dados da nuvem sozinho; importe o arquivo exportado da operação.
+
+ROTINAS DISPONÍVEIS
+- Login local; administrador e operacional; usuários e auditoria.
+- Monitor com ITR, Revisão, CNP e SOS; filtros clicáveis e tempo em manutenção.
+- OS com local, previsão, justificativa sem previsão, aguardando peça,
+  início ajustado e liberação 10 Sul separada do fim do cliente.
+- Histórico por frota com última ITR, Revisão, Pit Stop e próximo vencimento.
+- Programação preventiva por frota/data/evento/unidade/grupo A ou B.
+- Aderência por parada na data, evento e unidade correspondentes.
+- Importação de programação tabular DATA, FROTA, EVENTO, UNIDADE, GRUPO.
+- Atividades vinculadas à OS e frota, responsável, início/fim e evidência.
+- Anexos PDF, fotos e vídeos copiados para a base local.
+- Indicadores ITR/Revisão, composição por início, médias diárias e gráfico.
+- SLA 12h ITR / 24h Revisão. Abertas entram na média após atingir o SLA.
+- Frotas especiais excluídas: 13169, 13241, 11003, 11001, 11007, 11009.
+- Expurgos com motivo e administrador: excluir ou limitar ao SLA.
+- Cadastro de frotas, colaboradores e unidades; exportação CSV/Excel.
+- Relatório da oficina para impressão ou salvar PDF pelo diálogo de impressão.
+- Backup completo ZIP; restauração validada e cópia anterior preservada.
+
+REGRAS E LIMITES DESTA PRIMEIRA VERSÃO
+O aplicativo desktop é uma implementação local nova baseada no escopo e nas
+regras identificadas no projeto existente, não uma cópia integral de todas as
+telas online. A versão online continua independente.
+Ainda não inclui OCR de laudos, disparos automáticos de e-mail/WhatsApp,
+integração SharePoint/ASN em tempo real, publicação da consulta do gerente,
+cruzamento automático com o app socorrista, ranking de reincidências ou
+reprovações MEGA. Evidências e atividades podem ser lançadas manualmente.
+O Excel de programação deve ser tabular; o layout especial Cronograma.Novo
+não é interpretado por esta versão.
+Início ajustado é informado ou importado; não aplica ajuste de turno sozinho.
+Próxima ITR: 20 dias após conclusão; revisão 60/120/trimestral: 60/120/90 dias.
+O sistema não inventa prazo para Pit Stop nem revisão sem tipo definido.
+O gráfico diário divide os intervalos à meia-noite, sem perder minutos.
+Expurgo por limite é distribuído proporcionalmente nos segmentos diários.
+O local da manutenção consta da relação e do relatório de impressão.
+Não há base de produção, credenciais padrão nem dados demonstrativos no pacote.
+
+BACKUP
+Use Backup e restauração > Criar backup completo e guarde fora do computador.
+Restauração substitui a base local; exige administrador e novo login.
+Não coloque o arquivo SQLite em pasta de sincronização para acesso simultâneo.
+
+CÓDIGO-FONTE
+app.py: interface nativa Tkinter.
+core.py: banco SQLite, regras, importação/exportação e backup.
+tests/: testes de regressão das regras e persistência.
+COMPILAR_WINDOWS.bat: compila e empacota no Windows com Python 3.12/Inno Setup 6.
