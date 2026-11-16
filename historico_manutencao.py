@@ -5,7 +5,7 @@ import streamlit as st
 
 def situacao_pit_stop(hist, pit, agora):
     """Conta oito dias desde o último Pit Stop, ITR ou revisão efetivamente iniciado."""
-    lib, entrada = pit['_lib'], pit['_entrada']
+    lib, entrada = (pit['_lib'], pit['_entrada']) if pit is not None else (pd.NaT, pd.NaT)
     data = lib if pd.notna(lib) else entrada
     if pd.isna(data):
         data = pd.NaT
@@ -28,6 +28,23 @@ def situacao_pit_stop(hist, pit, agora):
     referencia = max(datas)
     dias = max(0, (agora.normalize() - referencia.normalize()).days)
     return dias, referencia, dias >= 8
+
+
+def listar_frotas_atrasadas(df, agora):
+    """Uma linha por frota, usando o mesmo prazo do card de Pit Stop."""
+    linhas = []
+    base = df.copy()
+    base['excluida_asn'] = base.get('excluida_asn_em', pd.Series(None, index=base.index)).notna()
+    for frota, hist in base.groupby('frota', sort=False):
+        if not str(frota).strip():
+            continue
+        dias, referencia, atrasado = situacao_pit_stop(hist, None, agora)
+        if atrasado:
+            linhas.append({'Frota': str(frota), 'Último serviço válido': referencia,
+                           'Dias sem serviço': dias, 'Dias de atraso': dias - 7})
+    colunas = ['Frota', 'Último serviço válido', 'Dias sem serviço', 'Dias de atraso']
+    return pd.DataFrame(linhas, columns=colunas).sort_values(
+        ['Dias sem serviço', 'Frota'], ascending=[False, True], ignore_index=True)
 
 
 def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
@@ -53,6 +70,7 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
     df = df.loc[~mascara_excluidas].copy()
     inconsistencias_asn = _inconsistencias_asn(df)
     agora = pd.Timestamp.now(tz='America/Sao_Paulo').tz_localize(None)
+    atrasadas = listar_frotas_atrasadas(df, agora)
 
     @st.dialog('🔎 Histórico da frota', width='large')
     def modal_historico_frota(fq):
@@ -127,12 +145,15 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
             with st.container(border=True):
                 dias_pit, referencia_pit, pit_atrasado = (
                     situacao_pit_stop(hist, r_pit, agora)
-                    if r_pit is not None else (None, pd.NaT, False)
                 )
                 st.markdown('**:red[🔴 ÚLTIMO PIT STOP]**' if pit_atrasado else '**🟢 ÚLTIMO PIT STOP**')
                 if r_pit is None:
                     st.markdown('**Não encontrado**')
                     st.caption('Nenhum Pit Stop no histórico sincronizado.')
+                    if dias_pit is not None:
+                        st.caption(f"Última parada programada: {referencia_pit.strftime('%d/%m/%Y')} • há {dias_pit} dia(s)")
+                    if pit_atrasado:
+                        st.error(f'Pit Stop atrasado — {dias_pit} dias sem Pit Stop, ITR ou revisão.')
                 else:
                     lib, entrada = r_pit['_lib'], r_pit['_entrada']
                     data = lib if pd.notna(lib) else entrada
@@ -167,13 +188,36 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
 
     @st.fragment
     def render_consulta_rapida():
-        q1, q2 = st.columns([5, 1])
+        q1, q2, q3 = st.columns([5, 2, 3])
         with q1:
             frota_q = st.text_input('Frota', placeholder='Ex.: 13725', label_visibility='collapsed')
         with q2:
             pesquisar = st.button('🔎 Pesquisar', use_container_width=True)
+        with q3:
+            if st.button(f'Pit Stop atrasado · {len(atrasadas)}', use_container_width=True):
+                st.session_state['historico_mostrar_atrasadas'] = not st.session_state.get('historico_mostrar_atrasadas', False)
+        if st.session_state.get('historico_mostrar_atrasadas', False):
+            if atrasadas.empty:
+                st.success('Nenhuma frota com Pit Stop atrasado na base sincronizada.')
+            else:
+                st.caption('Maior tempo primeiro • Selecione uma frota para abrir o histórico.')
+                tabela = atrasadas.copy()
+                tabela['Último serviço válido'] = tabela['Último serviço válido'].dt.strftime('%d/%m/%Y')
+
+                def selecionar_atrasada():
+                    estado = st.session_state.get('historico_tabela_atrasadas', {})
+                    selecionadas = estado.get('selection', {}).get('rows', [])
+                    if selecionadas and selecionadas[0] < len(atrasadas):
+                        st.session_state['historico_frota_selecionada'] = atrasadas.iloc[selecionadas[0]]['Frota']
+
+                st.dataframe(tabela, hide_index=True, use_container_width=True,
+                             key='historico_tabela_atrasadas', on_select=selecionar_atrasada,
+                             selection_mode='single-row', height=min(420, 38 + 35 * len(tabela)))
+        selecionada = st.session_state.pop('historico_frota_selecionada', None)
         if pesquisar and frota_q.strip():
             modal_historico_frota(norm_frota(frota_q))
+        elif selecionada:
+            modal_historico_frota(selecionada)
 
     render_consulta_rapida()
     st.markdown(
