@@ -3,6 +3,33 @@ import pandas as pd
 import streamlit as st
 
 
+def situacao_pit_stop(hist, pit, agora):
+    """Conta oito dias desde o último Pit Stop, ITR ou revisão efetivamente iniciado."""
+    lib, entrada = pit['_lib'], pit['_entrada']
+    data = lib if pd.notna(lib) else entrada
+    if pd.isna(data):
+        data = pd.NaT
+    # Corretivas e SOS não reiniciam o prazo de manutenção programada.
+    # Uma programação futura sem entrada efetiva também não reinicia o prazo.
+    paradas = pd.to_datetime(hist['parada'], errors='coerce').fillna(
+        pd.to_datetime(hist['inicio'], errors='coerce'))
+    liberacoes = pd.to_datetime(hist['fim'], errors='coerce')
+    referencias = liberacoes.fillna(paradas)
+    eventos = hist['evento'].fillna('').astype(str).str.upper().str.strip()
+    programadas = (eventos.eq('ITR') | eventos.str.contains('REVIS', na=False)
+                   | eventos.str.replace(r'[^A-Z0-9]', '', regex=True).str.contains('PITSTOP', na=False))
+    validos = ~hist['excluida_asn'].fillna(False).astype(bool)
+    realizadas = validos & programadas & paradas.le(agora) & referencias.le(agora)
+    datas = referencias.loc[realizadas].dropna().tolist()
+    if pd.notna(data) and data <= agora:
+        datas.append(data)
+    if not datas:
+        return None, pd.NaT, False
+    referencia = max(datas)
+    dias = max(0, (agora.normalize() - referencia.normalize()).days)
+    return dias, referencia, dias >= 8
+
+
 def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
     try:
         df = carregar().copy()
@@ -98,7 +125,11 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
         card_preventiva(c2, 'ÚLTIMA REVISÃO', r_rev, '🟣', intervalo_revisao(r_rev))
         with c3:
             with st.container(border=True):
-                st.markdown('**🟢 ÚLTIMO PIT STOP**')
+                dias_pit, referencia_pit, pit_atrasado = (
+                    situacao_pit_stop(hist, r_pit, agora)
+                    if r_pit is not None else (None, pd.NaT, False)
+                )
+                st.markdown('**:red[🔴 ÚLTIMO PIT STOP]**' if pit_atrasado else '**🟢 ÚLTIMO PIT STOP**')
                 if r_pit is None:
                     st.markdown('**Não encontrado**')
                     st.caption('Nenhum Pit Stop no histórico sincronizado.')
@@ -108,6 +139,12 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
                     st.caption(f"OS/ID: {r_pit['os_id']}")
                     st.markdown(f"### {data.strftime('%d/%m/%Y') if pd.notna(data) else 'Data não informada'}")
                     st.caption(f"Liberação: {lib.strftime('%d/%m/%Y %H:%M') if pd.notna(lib) else 'Ainda não confirmada'}")
+                    if dias_pit is not None:
+                        st.caption(f"Última parada programada/Pit Stop: {referencia_pit.strftime('%d/%m/%Y')} • há {dias_pit} dia(s)")
+                    if pit_atrasado:
+                        st.error(f'Pit Stop atrasado — {dias_pit} dias sem Pit Stop, ITR ou revisão.')
+                    elif dias_pit is not None:
+                        st.caption('Dentro do prazo: alerta a partir do 8º dia sem Pit Stop, ITR ou revisão.')
                     with st.expander('Ver atendimento'):
                         st.write(f"OS/ID: {r_pit['os_id']}")
                         st.write(f"Evento: {r_pit['evento']}")
