@@ -30,11 +30,35 @@ def situacao_pit_stop(hist, pit, agora):
     return dias, referencia, dias >= 8
 
 
+def frotas_validas_recentes(df, agora):
+    """Valida o GO por ITR recente e pelo menos seis OS nos últimos 60 dias."""
+    datas = pd.to_datetime(df['parada'], errors='coerce').fillna(
+        pd.to_datetime(df['inicio'], errors='coerce'))
+    excluidas = df.get('excluida_asn_em', pd.Series(None, index=df.index)).notna()
+    recentes = df.loc[~excluidas & datas.ge(agora.normalize() - pd.Timedelta(days=60))
+                      & datas.le(agora)].copy()
+    eventos = recentes['evento'].fillna('').astype(str).str.upper().str.strip()
+    com_itr = set(recentes.loc[eventos.eq('ITR'), 'frota'].dropna())
+    ids = recentes.get('os_id', pd.Series('', index=recentes.index)).fillna('').astype(str).str.strip()
+    ids = ids.str.replace(r'\.0$', '', regex=True)
+    identificadas = ids.ne('') & ~ids.str.lower().isin(['nan', 'none', 'nat', '<na>'])
+    recentes['_os_validacao'] = ids
+    com_os = recentes.loc[identificadas].drop_duplicates(['frota', '_os_validacao'])
+    # Sem OS/ID, eliminar cópias do mesmo atendimento pelas informações disponíveis.
+    campos = [c for c in ['frota', 'evento', 'parada', 'inicio', 'fim', 'descricao'] if c in recentes.columns]
+    sem_os = recentes.loc[~identificadas].drop_duplicates(campos)
+    atendimentos = pd.concat([com_os, sem_os], ignore_index=True)
+    contagem = atendimentos.groupby('frota').size()
+    return com_itr.intersection(contagem.loc[contagem.gt(5)].index)
+
+
 def listar_frotas_atrasadas(df, agora):
     """Uma linha por frota, usando o mesmo prazo do card de Pit Stop."""
     linhas = []
     base = df.copy()
     base['excluida_asn'] = base.get('excluida_asn_em', pd.Series(None, index=base.index)).notna()
+    frotas_validas = frotas_validas_recentes(base, agora)
+    base = base.loc[base['frota'].isin(frotas_validas)]
     for frota, hist in base.groupby('frota', sort=False):
         if not str(frota).strip():
             continue
@@ -200,7 +224,8 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
             if atrasadas.empty:
                 st.success('Nenhuma frota com Pit Stop atrasado na base sincronizada.')
             else:
-                st.caption('Maior tempo primeiro • Selecione uma frota para abrir o histórico.')
+                st.caption('Frotas com ITR e pelo menos 6 atendimentos nos últimos 60 dias • Maior tempo primeiro.')
+                st.caption('Selecione uma frota para abrir o histórico.')
                 tabela = atrasadas.copy()
                 tabela['Último serviço válido'] = tabela['Último serviço válido'].dt.strftime('%d/%m/%Y')
 
