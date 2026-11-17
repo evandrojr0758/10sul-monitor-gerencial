@@ -3,6 +3,30 @@ import pandas as pd
 import streamlit as st
 
 
+# Relação oficial de frotas ativas informada em 17/11/2026.
+FROTAS_ATIVAS = frozenset('''
+13441 13449 13455 13461 13463 13477 13479 13481 13483 13485
+13491 13505 13517 13519 13533 13539 13541 13543 13545 13555
+13559 13561 13565 13569 13579 13585 13589 13591 13593 13595
+13597 13599 13601 13605 13607 13609 13611 13613 13617 13623
+13625 13627 13629 13631 13633 13635 13637 13639 13641 13643
+13645 13647 13649 13651 13653 13655 13657 13659 13661 13663
+13665 13667 13669 13671 13673 13675 13677 13679 13681 13683
+13685 13687 13689 13693 13695 13697 13699 13701 13703 13705
+13707 13709 13711 13715 13717 13719 13721 13723 13725 13727
+13729 13731 13733 13737 13739 13741 13743 13745 13747 13749
+13751 13761 13763 13765 13767 13769 13771 13773 13775 13777
+13779 13781 13783 13785 13787 13789 13791 13793 13795 13797
+13799 13801 13803 13805 13807 13809 13811 13813 13815 13817
+13819 13821 13823 13825 13827 13829 13831 13833 13835 13837
+13839 13841 13843 13845 13847 13849 13851 13853 13855 13857
+13859 13863 13865 13867 13869 13871 13873 13875 13877 13879
+13881 13883 13885 13887 13889 13891 13893 13895 23276 23298
+23300 23338 23340 23341 23361 23362 23370 23373 23374 23384
+23385 23386 13897 23365 23376 23354 13861
+'''.split())
+
+
 def situacao_pit_stop(hist, pit, agora):
     """Conta oito dias desde o último Pit Stop, ITR ou revisão efetivamente iniciado."""
     lib, entrada = (pit['_lib'], pit['_entrada']) if pit is not None else (pd.NaT, pd.NaT)
@@ -30,35 +54,15 @@ def situacao_pit_stop(hist, pit, agora):
     return dias, referencia, dias >= 8
 
 
-def frotas_validas_recentes(df, agora):
-    """Valida o GO por ITR recente e pelo menos seis OS nos últimos 60 dias."""
-    datas = pd.to_datetime(df['parada'], errors='coerce').fillna(
-        pd.to_datetime(df['inicio'], errors='coerce'))
-    excluidas = df.get('excluida_asn_em', pd.Series(None, index=df.index)).notna()
-    recentes = df.loc[~excluidas & datas.ge(agora.normalize() - pd.Timedelta(days=60))
-                      & datas.le(agora)].copy()
-    eventos = recentes['evento'].fillna('').astype(str).str.upper().str.strip()
-    com_itr = set(recentes.loc[eventos.eq('ITR'), 'frota'].dropna())
-    ids = recentes.get('os_id', pd.Series('', index=recentes.index)).fillna('').astype(str).str.strip()
-    ids = ids.str.replace(r'\.0$', '', regex=True)
-    identificadas = ids.ne('') & ~ids.str.lower().isin(['nan', 'none', 'nat', '<na>'])
-    recentes['_os_validacao'] = ids
-    com_os = recentes.loc[identificadas].drop_duplicates(['frota', '_os_validacao'])
-    # Sem OS/ID, eliminar cópias do mesmo atendimento pelas informações disponíveis.
-    campos = [c for c in ['frota', 'evento', 'parada', 'inicio', 'fim', 'descricao'] if c in recentes.columns]
-    sem_os = recentes.loc[~identificadas].drop_duplicates(campos)
-    atendimentos = pd.concat([com_os, sem_os], ignore_index=True)
-    contagem = atendimentos.groupby('frota').size()
-    return com_itr.intersection(contagem.loc[contagem.gt(5)].index)
-
-
 def listar_frotas_atrasadas(df, agora):
     """Uma linha por frota, usando o mesmo prazo do card de Pit Stop."""
     linhas = []
     base = df.copy()
+    base['frota'] = (base['frota'].fillna('').astype(str).str.strip().str.upper()
+                     .str.replace(r'^GO\s*', '', regex=True)
+                     .str.replace(r'\.0$', '', regex=True))
     base['excluida_asn'] = base.get('excluida_asn_em', pd.Series(None, index=base.index)).notna()
-    frotas_validas = frotas_validas_recentes(base, agora)
-    base = base.loc[base['frota'].isin(frotas_validas)]
+    base = base.loc[base['frota'].isin(FROTAS_ATIVAS)]
     for frota, hist in base.groupby('frota', sort=False):
         if not str(frota).strip():
             continue
@@ -224,7 +228,7 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
             if atrasadas.empty:
                 st.success('Nenhuma frota com Pit Stop atrasado na base sincronizada.')
             else:
-                st.caption('Frotas com ITR e pelo menos 6 atendimentos nos últimos 60 dias • Maior tempo primeiro.')
+                st.caption(f'Somente frotas da relação oficial de {len(FROTAS_ATIVAS)} ativas • Maior tempo primeiro.')
                 st.caption('Selecione uma frota para abrir o histórico.')
                 tabela = atrasadas.copy()
                 tabela['Último serviço válido'] = tabela['Último serviço válido'].dt.strftime('%d/%m/%Y')
