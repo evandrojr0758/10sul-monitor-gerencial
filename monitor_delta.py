@@ -1,5 +1,6 @@
 """Shared incremental snapshots; unchanged rows never travel back to the Monitor."""
 from threading import RLock
+from time import monotonic
 
 import pandas as pd
 
@@ -8,6 +9,7 @@ class MonitorDeltaCache:
     def __init__(self):
         self._lock = RLock()
         self._snapshots = {}
+        self._quota_retry_after = 0.0
 
     def read(self, fetch, table, since, open_ids):
         # Serialize readers: a second Streamlit session reuses the first snapshot.
@@ -15,10 +17,26 @@ class MonitorDeltaCache:
             key = (table, since, tuple(sorted(open_ids)))
             snapshot = self._snapshots.get(key, {})
             known = {k: v['hash'] for k, v in snapshot.items()}
-            delta = fetch('rpc/monitor_web_delta', {
-                'p_table': table, 'p_since': since,
-                'p_known': known, 'p_open_ids': list(open_ids),
-            })
+            if monotonic() < self._quota_retry_after:
+                if snapshot:
+                    frame = pd.DataFrame([v['row'] for v in snapshot.values()])
+                    frame.attrs['dados_desatualizados'] = True
+                    return frame
+                raise RuntimeError('Supabase HTTP 402: cota excedida; aguarde liberacao.')
+            try:
+                delta = fetch('rpc/monitor_web_delta', {
+                    'p_table': table, 'p_since': since,
+                    'p_known': known, 'p_open_ids': list(open_ids),
+                })
+            except RuntimeError as exc:
+                if 'HTTP 402' not in str(exc) and 'exceed_egress_quota' not in str(exc):
+                    raise
+                self._quota_retry_after = monotonic() + 900
+                if not snapshot:
+                    raise
+                frame = pd.DataFrame([v['row'] for v in snapshot.values()])
+                frame.attrs['dados_desatualizados'] = True
+                return frame
             if not isinstance(delta, dict) or not isinstance(delta.get('changed'), list) or not isinstance(delta.get('removed'), list):
                 raise RuntimeError('Resposta incremental inválida; a base anterior foi preservada.')
             # Commit only after a complete, valid response. Failed requests retain prior state.
