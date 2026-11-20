@@ -28,6 +28,7 @@ def _secret(nome):
 
 SUPABASE_URL = _secret("SUPABASE_URL").rstrip("/")
 SUPABASE_KEY = _secret("SUPABASE_KEY")
+HISTORICO_NEON_DATABASE_URL = _secret("HISTORICO_NEON_DATABASE_URL")
 
 ESPECIAIS = {"13169","13241","11003","11001","11007","11009"}
 
@@ -574,6 +575,17 @@ def carregar():
     unidade = base["unidade"].fillna("").astype(str).str.strip().str.upper()
     return base.loc[unidade.eq("ARA")].copy().reset_index(drop=True)
 
+@st.cache_data(ttl=60, show_spinner=False)
+def carregar_historico_neon():
+    from historico_neon import ler_historico
+
+    historico, asn = ler_historico(HISTORICO_NEON_DATABASE_URL)
+    base = _combinar_base_asn(historico, asn)
+    ultima_sincronizacao = pd.to_datetime(asn["sincronizado_em"], utc=True).max()
+    base.attrs["sincronizado_em"] = ultima_sincronizacao.isoformat() if pd.notna(ultima_sincronizacao) else None
+    return base
+
+
 def norm_frota(v):
     s=str(v or "").strip()
     return re.sub(r"\.0$","",s)
@@ -1046,7 +1058,8 @@ def evento_flags(s):
 # Link independente de leitura: encerra a página antes dos painéis gerenciais.
 if HISTORICO_ONLY:
     from historico_manutencao import render_consulta
-    render_consulta(carregar, _hora_brasilia, norm_frota, _inconsistencias_asn)
+    carregar_historico = carregar_historico_neon if HISTORICO_NEON_DATABASE_URL else carregar
+    render_consulta(carregar_historico, _hora_brasilia, norm_frota, _inconsistencias_asn)
 
 # Consulta de leitura por GO para o aplicativo do socorro, usando os Secrets existentes.
 if st.query_params.get("socorro_historico", "0") == "1":

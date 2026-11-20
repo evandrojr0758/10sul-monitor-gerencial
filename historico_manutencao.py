@@ -84,6 +84,7 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
     if df.empty:
         st.warning('A base do monitor está vazia. Confira a sincronização da Lista ASN.')
         st.stop()
+    sincronizado_em = converter_hora(df.attrs.get('sincronizado_em'))
     for c in ['parada', 'inicio', 'fim', 'fim_asn', 'fim_liberacao_10sul', 'previsao_liberacao_10sul']:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].map(converter_hora), errors='coerce')
@@ -249,6 +250,8 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
             modal_historico_frota(selecionada)
 
     render_consulta_rapida()
+    if pd.notna(sincronizado_em):
+        st.caption(f"Última atualização da Lista ASN: {sincronizado_em:%d/%m/%Y às %H:%M} (horário de Brasília)")
     st.markdown(
         """
         <div style="margin-top:48px;padding:18px 0 12px;border-top:1px solid #e5e7eb;
