@@ -430,28 +430,29 @@ def _mensagem_previsoes_card(previsoes):
     return "\n".join(linhas)
 
 
-def _combinar_base_asn(historico, asn):
+def _combinar_base_asn(historico, asn, *, permitir_sem_asn=False):
     """ASN prevalece nos dados da cliente; início salvo continua preservado."""
     def preparar(d):
         d = d.copy()
         for c in ["os_id", "frota"]:
             d[c] = d[c].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
         return d.drop_duplicates(["os_id", "frota"], keep="last").set_index(["os_id", "frota"])
-    if asn.empty:
+    if asn.empty and not permitir_sem_asn:
         raise RuntimeError("monitor_asn não retornou registros. Confira a permissão de leitura dessa tabela.")
-    a = preparar(asn)
-    if "local_manutencao" not in a.columns:
-        a["local_manutencao"] = None
-    if "excluida_asn_em" not in a.columns:
-        a["excluida_asn_em"] = None
-    if "ausente_abertas_asn_em" not in a.columns:
-        a["ausente_abertas_asn_em"] = None
-    a["inicio_asn"] = a["inicio"]
-    a["inicio_suzano"] = a["parada"]
-    a["fim_asn"] = a["fim"]
-    a["fim"] = pd.to_datetime(a["fim_asn"], errors="coerce")
+    a = pd.DataFrame() if asn.empty else preparar(asn)
+    if not a.empty:
+        if "local_manutencao" not in a.columns:
+            a["local_manutencao"] = None
+        if "excluida_asn_em" not in a.columns:
+            a["excluida_asn_em"] = None
+        if "ausente_abertas_asn_em" not in a.columns:
+            a["ausente_abertas_asn_em"] = None
+        a["inicio_asn"] = a["inicio"]
+        a["inicio_suzano"] = a["parada"]
+        a["fim_asn"] = a["fim"]
+        a["fim"] = pd.to_datetime(a["fim_asn"], errors="coerce")
     if historico.empty:
-        return a.reset_index()
+        return a.reset_index() if not a.empty else a
     h = preparar(historico)
     coluna_fim_existente = _nome_coluna_fim_10sul(h.columns)
     if coluna_fim_existente and coluna_fim_existente != "fim_liberacao_10sul":
@@ -462,6 +463,8 @@ def _combinar_base_asn(historico, asn):
         if c not in h.columns:
             h[c] = pd.NaT
     h["fim"] = pd.to_datetime(h["fim_asn"], errors="coerce").fillna(pd.to_datetime(h["fim_liberacao_10sul"].map(_hora_brasilia), errors="coerce"))
+    if a.empty:
+        return h.reset_index()
     resultado = h.reindex(h.index.union(a.index)).copy()
     # Os valores nulos da ASN também prevalecem: uma OS reaberta perde o fim.
     for c in ["evento", "status", "parada", "fim", "descricao", "modal", "unidade", "inicio_suzano", "inicio_asn", "fim_asn", "sincronizado_em", "excluida_asn_em", "local_manutencao", "ausente_abertas_asn_em"]:
@@ -575,15 +578,21 @@ def carregar():
     unidade = base["unidade"].fillna("").astype(str).str.strip().str.upper()
     return base.loc[unidade.eq("ARA")].copy().reset_index(drop=True)
 
-@st.cache_data(ttl=60, show_spinner=False)
-def carregar_historico_neon():
+@st.cache_data(ttl=60, show_spinner=False, max_entries=256)
+def carregar_historico_neon(frota):
     from historico_neon import ler_historico
 
-    historico, asn = ler_historico(HISTORICO_NEON_DATABASE_URL)
-    base = _combinar_base_asn(historico, asn)
-    ultima_sincronizacao = pd.to_datetime(asn["sincronizado_em"], utc=True).max()
-    base.attrs["sincronizado_em"] = ultima_sincronizacao.isoformat() if pd.notna(ultima_sincronizacao) else None
-    return base
+    historico, asn = ler_historico(HISTORICO_NEON_DATABASE_URL, frota)
+    return _combinar_base_asn(historico, asn, permitir_sem_asn=True)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def carregar_resumo_historico_neon():
+    from historico_manutencao import FROTAS_ATIVAS
+    from historico_neon import ler_resumo
+
+    agora = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
+    return ler_resumo(HISTORICO_NEON_DATABASE_URL, FROTAS_ATIVAS, agora)
 
 
 def norm_frota(v):
@@ -1059,7 +1068,10 @@ def evento_flags(s):
 if HISTORICO_ONLY:
     from historico_manutencao import render_consulta
     carregar_historico = carregar_historico_neon if HISTORICO_NEON_DATABASE_URL else carregar
-    render_consulta(carregar_historico, _hora_brasilia, norm_frota, _inconsistencias_asn)
+    render_consulta(
+        carregar_historico, _hora_brasilia, norm_frota, _inconsistencias_asn,
+        carregar_resumo=carregar_resumo_historico_neon if HISTORICO_NEON_DATABASE_URL else None,
+    )
 
 # Consulta de leitura por GO para o aplicativo do socorro, usando os Secrets existentes.
 if st.query_params.get("socorro_historico", "0") == "1":

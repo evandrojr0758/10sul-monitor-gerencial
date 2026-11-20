@@ -75,16 +75,8 @@ def listar_frotas_atrasadas(df, agora):
         ['Dias sem serviço', 'Frota'], ascending=[False, True], ignore_index=True)
 
 
-def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
-    try:
-        df = carregar().copy()
-    except Exception:
-        st.error('Não foi possível carregar o histórico. Tente novamente.')
-        st.stop()
-    if df.empty:
-        st.warning('A base do monitor está vazia. Confira a sincronização da Lista ASN.')
-        st.stop()
-    sincronizado_em = converter_hora(df.attrs.get('sincronizado_em'))
+def _preparar_historico(df, converter_hora, norm_frota):
+    df = df.copy()
     for c in ['parada', 'inicio', 'fim', 'fim_asn', 'fim_liberacao_10sul', 'previsao_liberacao_10sul']:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].map(converter_hora), errors='coerce')
@@ -94,22 +86,44 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
         if c not in df.columns:
             df[c] = ''
     df['frota'] = df['frota'].apply(norm_frota)
-    mascara_excluidas = df.get('excluida_asn_em', pd.Series(None, index=df.index)).notna()
-    os_excluidas = df.loc[mascara_excluidas].copy()
-    df = df.loc[~mascara_excluidas].copy()
-    inconsistencias_asn = _inconsistencias_asn(df)
+    df['excluida_asn'] = df.get('excluida_asn_em', pd.Series(None, index=df.index)).notna()
+    return df
+
+
+def render_consulta(carregar, converter_hora, norm_frota, inconsistencias_asn, *, carregar_resumo=None):
     agora = pd.Timestamp.now(tz='America/Sao_Paulo').tz_localize(None)
-    atrasadas = listar_frotas_atrasadas(df, agora)
+    try:
+        if carregar_resumo is None:
+            base = carregar()
+            if base.empty:
+                st.warning('A base do monitor está vazia. Confira a sincronização da Lista ASN.')
+                st.stop()
+            atualizado_em = base.attrs.get('sincronizado_em')
+            df = _preparar_historico(base, converter_hora, norm_frota)
+            atrasadas = listar_frotas_atrasadas(df, agora)
+        else:
+            atrasadas, atualizado_em = carregar_resumo()
+    except Exception:
+        st.error('Não foi possível carregar o histórico. Tente novamente.')
+        st.stop()
+    sincronizado_em = converter_hora(atualizado_em)
 
     @st.dialog('🔎 Histórico da frota', width='large')
     def modal_historico_frota(fq):
-        hist = pd.concat([df[df['frota'].eq(fq)], os_excluidas[os_excluidas['frota'].eq(fq)]], ignore_index=True)
-        hist = hist.sort_values('inicio', ascending=False).reset_index(drop=True)
-        hist['excluida_asn'] = hist.get('excluida_asn_em', pd.Series(None, index=hist.index)).notna()
         st.markdown(f'### Frota {fq}')
+        try:
+            if carregar_resumo is None:
+                hist = df.loc[df['frota'].eq(fq)].copy()
+            else:
+                hist = _preparar_historico(carregar(fq), converter_hora, norm_frota)
+        except Exception:
+            st.error('Não foi possível consultar esta frota. Tente novamente.')
+            return
         if hist.empty:
             st.warning('Frota não encontrada na base sincronizada.')
             return
+        # Mantém OS excluídas depois das ativas em caso de empate no início.
+        hist = hist.sort_values(['inicio', 'excluida_asn'], ascending=[False, True]).reset_index(drop=True)
         hev = hist['evento'].fillna('').astype(str).str.upper().str.strip()
         validos = ~hist['excluida_asn']
         itr = hist[hev.eq('ITR') & validos].copy()
@@ -203,7 +217,7 @@ def render_consulta(carregar, converter_hora, norm_frota, _inconsistencias_asn):
                         st.write(f"Início: {entrada.strftime('%d/%m/%Y %H:%M') if pd.notna(entrada) else 'Não informado'}")
                         st.write(f"Liberação: {lib.strftime('%d/%m/%Y %H:%M') if pd.notna(lib) else 'Não informada'}")
 
-        conferir = inconsistencias_asn.loc[inconsistencias_asn['FROTA'].eq(fq)]
+        conferir = inconsistencias_asn(hist.loc[validos])
         if not conferir.empty:
             with st.expander(f'⚠️ Conferência ASN ({len(conferir)} registro(s))'):
                 st.warning('OS pendente não confirma atendimento ainda em andamento.')
