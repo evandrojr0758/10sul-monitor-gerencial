@@ -61,7 +61,7 @@ def _ler_cronograma(conteudo):
         raise ValueError("Nenhuma frota encontrada na aba Cronograma.Novo.")
     return pd.DataFrame(itens).drop_duplicates(subset=["GO", "DATA", "TIPO"])
 
-def render_programacao_semanal(base, integrado=False):
+def render_programacao_semanal(base, integrado=False, somente_leitura=False):
     with (nullcontext() if integrado else st.expander("📅 CONFERÊNCIA DA PROGRAMAÇÃO SEMANAL", expanded=False)):
         st.caption("Importe o Excel da programação. A programação oficial é a aba Cronograma.Novo. A ASN confirma os atendimentos.")
         arquivo = st.file_uploader("Programação semanal (.xlsx)", type=["xlsx"], key="programacao_semanal_excel")
@@ -85,7 +85,7 @@ def render_programacao_semanal(base, integrado=False):
         except Exception as exc:
             st.error(f"Não foi possível carregar o histórico salvo: {exc}")
             return
-        if arquivo is not None:
+        if arquivo is not None and not somente_leitura:
             conteudo = arquivo.getvalue()
             digest = hashlib.sha256(conteudo + b":cronograma_oficial_v1").hexdigest()
             if not any(x["hash_arquivo"] == digest for x in salvas):

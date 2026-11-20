@@ -29,6 +29,8 @@ def _secret(nome):
 SUPABASE_URL = _secret("SUPABASE_URL").rstrip("/")
 SUPABASE_KEY = _secret("SUPABASE_KEY")
 HISTORICO_NEON_DATABASE_URL = _secret("HISTORICO_NEON_DATABASE_URL")
+MONITOR_NEON_LEITURA = bool(HISTORICO_NEON_DATABASE_URL)
+GRAVACAO_BLOQUEADA = MOBILE_READ_ONLY or MONITOR_NEON_LEITURA
 
 ESPECIAIS = {"13169","13241","11003","11001","11007","11009"}
 
@@ -91,6 +93,10 @@ def api_get(table, params=None):
     return r.json()
 
 def api_post(path, payload):
+    if MONITOR_NEON_LEITURA and path == "rpc/monitor_web_delta":
+        from monitor_neon import ler_delta
+
+        return ler_delta(HISTORICO_NEON_DATABASE_URL, payload)
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("SUPABASE_URL/SUPABASE_KEY não configurados nos Secrets.")
     r = requests.post(f"{SUPABASE_URL}/rest/v1/{path}",
@@ -211,6 +217,8 @@ def _erro_gravacao_liberacao(resposta):
 
 
 def _salvar_liberacao_10sul(registro, quando):
+    if MONITOR_NEON_LEITURA:
+        raise RuntimeError("O Monitor está em modo de consulta durante a migração.")
     """Grava somente o fim da 10 Sul; não altera status nem baixa ASN."""
     quando = _hora_brasilia(quando)
     agora_local = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
@@ -265,6 +273,8 @@ def _salvar_liberacao_10sul(registro, quando):
 
 
 def _desfazer_liberacao_10sul(registro):
+    if MONITOR_NEON_LEITURA:
+        raise RuntimeError("O Monitor está em modo de consulta durante a migração.")
     """Retira somente a liberação manual da OS selecionada, mantendo a ASN intacta."""
     os_id, frota = str(registro["os_id"]), norm_frota(registro["frota"])
     filtros = {"os_id": f"eq.{os_id}", "frota": f"eq.{frota}"}
@@ -327,6 +337,8 @@ def _erro_gravacao_previsao(resposta):
 
 
 def _salvar_previsao_10sul(registro, quando, observacao=""):
+    if MONITOR_NEON_LEITURA:
+        raise RuntimeError("O Monitor está em modo de consulta durante a migração.")
     """Grava somente a previsão; não altera fim, status nem cálculo de tempo."""
     sem_previsao = quando is None
     quando = _hora_brasilia(quando)
@@ -532,6 +544,10 @@ def _inicio_tres_meses(agora=None):
 @st.cache_data(show_spinner=False, max_entries=6)
 def _historico_fixo(table, inicio_recentes):
     """Dados anteriores à janela: uma carga por tabela e janela mensal."""
+    if MONITOR_NEON_LEITURA:
+        from monitor_neon import ler_historico_fixo
+
+        return ler_historico_fixo(HISTORICO_NEON_DATABASE_URL, table, inicio_recentes)
     return _ler_atendimentos(table, {
         "and": f"(or(parada.lt.{inicio_recentes},and(parada.is.null,inicio.lt.{inicio_recentes})))"
     })
@@ -675,7 +691,7 @@ def baixar_evidencia_laudo_web(path):
 
 def atualizar_atividade_laudo_web(atividade_id, dados):
     """Atualiza uma atividade já conferida na tabela public.laudos_monitor."""
-    if MOBILE_READ_ONLY:
+    if GRAVACAO_BLOQUEADA:
         return False, "Esta versão permite somente consulta."
     chave_escrita=_secret("SUPABASE_SERVICE_KEY")
     if not SUPABASE_URL or not chave_escrita:
@@ -696,7 +712,7 @@ def atualizar_atividade_laudo_web(atividade_id, dados):
 
 def atualizar_datas_laudo_web(ids, inicio, fim):
     """Atualiza somente o período 10 Sul das linhas do laudo selecionado."""
-    if MOBILE_READ_ONLY:
+    if GRAVACAO_BLOQUEADA:
         return False, "Esta versão permite somente consulta."
     chave_escrita=_secret("SUPABASE_SERVICE_KEY")
     if not SUPABASE_URL or not chave_escrita:
@@ -891,7 +907,7 @@ def render_laudos_web():
     det["_AID_SEL"]=[str(v).strip() if str(v).strip() and str(v).strip().lower()!="nan" else f"{reg}_{idx}" for idx,v in zip(det.index,det["ATIVIDADE_ID"])]
 
     st.markdown(f"**Frota {det.iloc[0]['FROTA']} — detalhamento**")
-    if MOBILE_READ_ONLY:
+    if GRAVACAO_BLOQUEADA:
         liberacoes=pd.DataFrame({
             "FIM INFORMADO — 10 SUL":pd.to_datetime(det["FIM_MANUTENCAO"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("Não informado"),
             "FIM CLIENTE":pd.to_datetime(det["FIM_CLIENTE"],errors="coerce").dt.strftime("%d/%m/%Y %H:%M").fillna("OS ainda sem baixa"),
@@ -980,7 +996,7 @@ def render_laudos_web():
         st.session_state["waid"]=str(det.reset_index(drop=True).iloc[int(rows2[0])]["_AID_SEL"])
 
     # Edição controlada do laudo já publicado.
-    if not MOBILE_READ_ONLY:
+    if not GRAVACAO_BLOQUEADA:
         with st.expander("✏️ Editar laudo", expanded=False):
             edit_base=det.reset_index(drop=True).copy()
             edit_view=pd.DataFrame({
@@ -1112,7 +1128,8 @@ _atualizar_monitor_automaticamente()
 try:
     df=carregar()
 except Exception as e:
-    st.error(f"Não foi possível carregar o monitor: {e}")
+    st.error("Não foi possível carregar o monitor. Tente atualizar novamente." if MONITOR_NEON_LEITURA
+             else f"Não foi possível carregar o monitor: {e}")
     st.stop()
 
 if df.empty:
@@ -1669,7 +1686,7 @@ def apurar_tempos_justificados(manut,piv,justificativas):
 
 
 def salvar_justificativa_laudo(osid,frota,minutos,motivo,observacao,responsavel,inicio=None,fim=None):
-    if MOBILE_READ_ONLY:
+    if GRAVACAO_BLOQUEADA:
         raise PermissionError("Esta versão permite somente consulta.")
     import uuid
     registro={"versao":1,"id":uuid.uuid4().hex,"os_id":_chave_vinculo_laudo(osid),
@@ -1704,7 +1721,7 @@ def modal_justificativas_laudos(manut,piv,os_validas,consulta=False):
                 if _c not in hist.columns: hist[_c]=None
             st.markdown("**Justificativas registradas**")
             st.dataframe(hist[["os_id","frota","inicio","fim","TEMPO","motivo","observacao","responsavel","registrado_em"]].rename(columns={"os_id":"OS/ID","frota":"FROTA","inicio":"INÍCIO","fim":"FIM","motivo":"MOTIVO","observacao":"OBSERVAÇÃO","responsavel":"RESPONSÁVEL INFORMADO","registrado_em":"REGISTRO"}),hide_index=True,use_container_width=True)
-    if consulta or MOBILE_READ_ONLY: return
+    if consulta or GRAVACAO_BLOQUEADA: return
     op=base[base["PENDENTE"]>0].copy()
     op=op[[(_chave_vinculo_laudo(o),_chave_vinculo_laudo(f)) in os_validas for o,f in zip(op.CHAVE_OS,op.FROTA)]] if len(op) else op
     if op.empty:
@@ -1805,7 +1822,7 @@ def pendentes_da_frota_monitor(registros, laudos, frota):
 
 
 def vincular_evidencia_no_monitor(atividade, path):
-    if MOBILE_READ_ONLY:
+    if GRAVACAO_BLOQUEADA:
         return False,"Esta versão permite somente consulta."
     key=_secret("SUPABASE_WRITE_KEY") or _secret("SUPABASE_SERVICE_KEY") or SUPABASE_KEY
     if not SUPABASE_URL or not key:
@@ -1856,7 +1873,7 @@ def render_vinculo_pendente_monitor(atividades, frota, contexto, atividade_selec
         else: st.download_button("Abrir evidência",data,file_name=item.get("arquivo","evidencia"),key=f"rg_pendente_arquivo_{contexto}")
         st.write(item.get("legenda") or "Sem descrição na conversa.")
         st.caption(f"Registro: {item.get('data','')} · Frota {frota}. Confira a data, o compartimento e a atividade antes de confirmar.")
-        if MOBILE_READ_ONLY:
+        if GRAVACAO_BLOQUEADA:
             st.info("Esta versão permite somente consultar as evidências."); return
         choices=[None]+list(range(len(atividades)))
         initial=atividade_selecionada+1 if atividade_selecionada is not None else 0
@@ -2012,8 +2029,8 @@ def render_relatorio_gerencial_laudos():
         st.warning("As justificativas não puderam ser consultadas. Os saldos estão indisponíveis até restabelecer a leitura.")
     cpend,cjust=st.columns(2,gap="small")
     with cpend:
-        if st.button(f"🔴 Tempo sem justificativa\n\n{hhmm(pendente) if not erro_justificativas else '--:--'}\n\n{"Consultar saldo ›" if MOBILE_READ_ONLY else "Justificar tempo ›"}",key="rg_justificar_tempo",use_container_width=True,disabled=erro_justificativas):
-            modal_justificativas_laudos(manut,piv,os_validas,consulta=MOBILE_READ_ONLY)
+        if st.button(f"🔴 Tempo sem justificativa\n\n{hhmm(pendente) if not erro_justificativas else '--:--'}\n\n{"Consultar saldo ›" if GRAVACAO_BLOQUEADA else "Justificar tempo ›"}",key="rg_justificar_tempo",use_container_width=True,disabled=erro_justificativas):
+            modal_justificativas_laudos(manut,piv,os_validas,consulta=GRAVACAO_BLOQUEADA)
     with cjust:
         if st.button(f"🔵 Tempo justificado\n\n{hhmm(justificado) if not erro_justificativas else '--:--'}\n\nConsultar justificativas ›",key="rg_consultar_justificativas",use_container_width=True,disabled=erro_justificativas):
             modal_justificativas_laudos(manut,piv,os_validas,consulta=True)
@@ -2354,12 +2371,17 @@ if not MOBILE_READ_ONLY:
     )
 st.markdown(f"<div class='mon-sub'>Monitor Gerencial Web • Atualizado em {agora.strftime('%d/%m/%Y %H:%M')}</div>",unsafe_allow_html=True)
 
-if MOBILE_READ_ONLY:
-    st.caption("Somente consulta • Unidade ARA")
+if MONITOR_NEON_LEITURA:
+    st.info("Painel em modo de consulta. A gravação de alterações e a integração com a Lista ASN estão em migração.")
+if MOBILE_READ_ONLY or MONITOR_NEON_LEITURA:
+    if MOBILE_READ_ONLY:
+        st.caption("Somente consulta • Unidade ARA")
     sync = pd.to_datetime(df.attrs.get("sincronizado_em"), errors="coerce", utc=True)
     if pd.isna(sync):
         sync = pd.to_datetime(df.get("sincronizado_em", pd.Series(dtype=str)), errors="coerce", utc=True).max()
     st.caption("Última sincronização da base: " + (sync.tz_convert("America/Sao_Paulo").strftime("%d/%m/%Y %H:%M") if pd.notna(sync) else "não informada pela origem"))
+    if MONITOR_NEON_LEITURA and (pd.isna(sync) or pd.Timestamp.now(tz="UTC") - sync > pd.Timedelta(hours=1)):
+        st.warning("A base da Lista ASN está desatualizada. Confirme as OS em aberto diretamente na Lista ASN.")
     st.markdown("""<style>
     @media(max-width:768px){
       div[class*="st-key-card_oficina_"],.st-key-card_sos{height:100%}
@@ -2597,7 +2619,7 @@ def modal_os_abertas(titulo, dados, card_id):
     imprimir_relacao_card(titulo, dados)
     st.caption("Verde: concluída pela 10 Sul, aguardando baixa ASN. O tempo considera a conclusão informada.")
     st.caption("🟡 Frota em mais de um tipo: a coluna CARDS COM OS ABERTA mostra todos os tipos envolvidos.")
-    if not MOBILE_READ_ONLY:
+    if not GRAVACAO_BLOQUEADA:
         st.markdown("#### Previsão e liberação 10 Sul")
         opcoes = list(range(len(dados)))
         pos = st.selectbox("Frota / atendimento", opcoes,
@@ -2912,8 +2934,8 @@ def _descricao_contem_termo(valor, termos):
 
 mot=[]
 for cat,termos in familias.items():
-    qa=int(atual["desc_norm"].apply(lambda z: _descricao_contem_termo(z, termos)).sum())
-    qb=int(anterior["desc_norm"].apply(lambda z: _descricao_contem_termo(z, termos)).sum())
+    qa=sum(_descricao_contem_termo(descricao, termos) for descricao in atual["desc_norm"])
+    qb=sum(_descricao_contem_termo(descricao, termos) for descricao in anterior["desc_norm"])
     mot.append((cat,qa,qa-qb))
 mot=sorted(mot,key=lambda x:(x[1],x[2]),reverse=True)
 
@@ -3176,7 +3198,7 @@ def render_reprovacoes_mega():
     from reprovacoes_whatsapp import render_relatorio
     with st.expander("🚫 RELATÓRIO DE REPROVAÇÕES — MEGA", expanded=False):
         if st.checkbox("Abrir relatório de reprovações", key="abrir_reprovacoes_mega"):
-            render_relatorio(SUPABASE_URL, SUPABASE_KEY, MOBILE_READ_ONLY)
+            render_relatorio(SUPABASE_URL, SUPABASE_KEY, GRAVACAO_BLOQUEADA)
 
 render_reprovacoes_mega()
 
@@ -3204,7 +3226,7 @@ def render_carretas_atendidas_periodo():
         st.caption("Consulte atendimentos pela data de início, incluindo OS abertas. Cada OS conta uma vez; uma frota pode ter vários atendimentos.")
         from programacao_semanal import render_programacao_semanal
         with st.expander("📅 Importar programação semanal (somente cadastro)", expanded=False):
-            render_programacao_semanal(df, integrado=True)
+            render_programacao_semanal(df, integrado=True, somente_leitura=GRAVACAO_BLOQUEADA)
         hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
         c1, c2 = st.columns(2)
         with c1:
