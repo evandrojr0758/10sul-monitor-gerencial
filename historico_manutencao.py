@@ -1,4 +1,6 @@
 """Consulta independente do historico de manutencao da frota."""
+import unicodedata
+
 import pandas as pd
 import streamlit as st
 
@@ -223,7 +225,50 @@ def render_consulta(carregar, converter_hora, norm_frota, inconsistencias_asn, *
                 st.warning('OS pendente não confirma atendimento ainda em andamento.')
                 st.dataframe(conferir, hide_index=True, use_container_width=True)
         st.markdown('#### Histórico de atendimentos')
-        show = hist[['os_id', 'evento', 'descricao', 'parada', 'inicio', 'fim', 'status']].copy()
+        col_periodo, col_busca = st.columns([1, 2])
+        with col_periodo:
+            periodo = st.selectbox(
+                'Período',
+                ['Todo período', 'Últimos 7 dias', 'Últimos 15 dias', 'Mês atual', 'Mês anterior'],
+                key=f'historico_periodo_{fq}',
+            )
+        with col_busca:
+            termos = st.text_input(
+                'Pesquisar na descrição',
+                placeholder='Digite um ou mais termos',
+                key=f'historico_descricao_{fq}',
+            )
+
+        filtrado = hist.copy()
+        data_referencia = pd.to_datetime(filtrado['parada'], errors='coerce').fillna(
+            pd.to_datetime(filtrado['inicio'], errors='coerce')
+        )
+        inicio_mes = agora.normalize().replace(day=1)
+        if periodo == 'Últimos 7 dias':
+            filtrado = filtrado.loc[data_referencia.ge(agora - pd.Timedelta(days=7))]
+        elif periodo == 'Últimos 15 dias':
+            filtrado = filtrado.loc[data_referencia.ge(agora - pd.Timedelta(days=15))]
+        elif periodo == 'Mês atual':
+            filtrado = filtrado.loc[data_referencia.ge(inicio_mes) & data_referencia.lt(inicio_mes + pd.offsets.MonthBegin(1))]
+        elif periodo == 'Mês anterior':
+            inicio_mes_anterior = inicio_mes - pd.offsets.MonthBegin(1)
+            filtrado = filtrado.loc[data_referencia.ge(inicio_mes_anterior) & data_referencia.lt(inicio_mes)]
+
+        termos_busca = [
+            unicodedata.normalize('NFKD', termo).encode('ascii', 'ignore').decode().casefold()
+            for termo in str(termos or '').split() if termo.strip()
+        ]
+        if termos_busca:
+            descricoes = filtrado['descricao'].fillna('').astype(str).map(
+                lambda valor: unicodedata.normalize('NFKD', valor).encode('ascii', 'ignore').decode().casefold()
+            )
+            corresponde = pd.Series(True, index=filtrado.index)
+            for termo in termos_busca:
+                corresponde &= descricoes.str.contains(termo, regex=False, na=False)
+            filtrado = filtrado.loc[corresponde]
+
+        st.caption(f'{len(filtrado)} atendimento(s) encontrados.')
+        show = filtrado[['os_id', 'evento', 'descricao', 'parada', 'inicio', 'fim', 'status']].copy()
         show.columns = ['OS/ID', 'EVENTO', 'DESCRIÇÃO', 'PARADA', 'INÍCIO', 'FIM', 'STATUS']
         show.loc[hist['excluida_asn'], 'STATUS'] = 'Excluída na Lista ASN'
         estilos = show.style.apply(lambda row: ['text-decoration:line-through;color:#6b7280' if hist.loc[row.name, 'excluida_asn'] else '' for _ in row], axis=1)
