@@ -2252,6 +2252,7 @@ def _motivos_parada_alerta(descricao):
     texto = "" if pd.isna(descricao) else str(descricao)
     texto = unicodedata.normalize("NFKD", texto.upper()).encode("ascii", "ignore").decode()
     regras = {
+        "intervenções em ponta de lona": r"\bPONT\w*\b.{0,25}\bLONAS?\b|\bLONAS?\b.{0,25}\bPONT\w*\b",
         "travamento de rodeiro": r"\b(?:RODEIR\w*|RODAS?|CUBOS?)\b.{0,45}\b(?:TRAV\w*|BLOQUE\w*)\b|\b(?:TRAV\w*|BLOQUE\w*)\b.{0,45}\b(?:RODEIR\w*|RODAS?|CUBOS?)\b",
         "problemas no sistema de freio": r"\b(?:FREI\w*|CATRACA\w*|CUICA\w*|LONAS?\b.{0,15}\bFREIO)\b",
         "problemas no rodeiro / cubo / rolamento": r"\b(?:RODEIR\w*|CUBOS?|ROLAMENT\w*)\b",
@@ -2262,6 +2263,8 @@ def _motivos_parada_alerta(descricao):
         "problemas nos pneus": r"\b(?:PNEUS?|BORRACH\w*)\b",
     }
     motivos = [nome for nome, padrao in regras.items() if re.search(padrao, texto)]
+    if "intervenções em ponta de lona" in motivos and "problemas no sistema de freio" in motivos:
+        motivos.remove("problemas no sistema de freio")
     if "travamento de rodeiro" in motivos and "problemas no rodeiro / cubo / rolamento" in motivos:
         motivos.remove("problemas no rodeiro / cubo / rolamento")
     return motivos or ["outros motivos / descrição a conferir"]
@@ -2316,7 +2319,15 @@ def render_alertas_paradas_sete_dias(base, agora_local):
     if detalhes.empty:
         st.caption("Alertas CNP / SOS • últimos 7 dias: nenhuma parada de carreta registrada no período.")
         return
-    resumo = detalhes.groupby("motivo_alerta")["frota"].nunique().sort_values(ascending=False)
+    resumo = detalhes.groupby("motivo_alerta")["frota"].nunique()
+    motivo_ponta_lona = "intervenções em ponta de lona"
+    if motivo_ponta_lona in resumo.index:
+        resumo.loc[motivo_ponta_lona] = len(detalhes.loc[detalhes["motivo_alerta"].eq(motivo_ponta_lona)])
+    ordem_motivos = [motivo_ponta_lona] if motivo_ponta_lona in resumo.index else []
+    ordem_motivos += sorted(
+        [motivo for motivo in resumo.index if motivo != motivo_ponta_lona],
+        key=lambda motivo: (-int(resumo.loc[motivo]), str(motivo)),
+    )
     st.markdown("""
     <style>
     .st-key-alertas_paradas_7d div[data-testid="stButton"] > button {
@@ -2340,11 +2351,16 @@ def render_alertas_paradas_sete_dias(base, agora_local):
     st.markdown("### 🚨 ATENÇÃO, LIDERANÇA — PARADAS NOS ÚLTIMOS 7 DIAS")
     st.caption("Clique em um alerta para ver as carretas e as descrições das paradas.")
     with st.container(key="alertas_paradas_7d"):
-        for motivo, quantidade in resumo.items():
-            verbo = "parou" if quantidade == 1 else "pararam"
-            carreta = "carreta" if quantidade == 1 else "carretas"
+        for motivo in ordem_motivos:
+            quantidade = int(resumo.loc[motivo])
+            if motivo == motivo_ponta_lona:
+                texto_alerta = f"🚨 ATENÇÃO: {quantidade} intervenções em ponta de lona nos últimos sete dias.  ›"
+            else:
+                verbo = "parou" if quantidade == 1 else "pararam"
+                carreta = "carreta" if quantidade == 1 else "carretas"
+                texto_alerta = f"🚨 ATENÇÃO: {quantidade} {carreta} {verbo} por {motivo} nos últimos sete dias.  ›"
             if st.button(
-                f"🚨 ATENÇÃO: {quantidade} {carreta} {verbo} por {motivo} nos últimos sete dias.  ›",
+                texto_alerta,
                 key=f"alerta_paradas_7d_{motivo}", use_container_width=True,
                 help="Abrir ID, frota, data da parada e descrição",
             ):
