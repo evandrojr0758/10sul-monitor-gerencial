@@ -1,9 +1,31 @@
 """Consulta independente do historico de manutencao da frota."""
 import unicodedata
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
+
+CREDITO_HISTORICO = 'Desenvolvido por Evandro Junior - Analista de manutenção'
+_ESTILO_CREDITO_DIALOGO = '''
+<style>
+.historico-credit-row { position: relative; }
+.historico-credit {
+    display: block;
+    color: #344b5b;
+    color: color-mix(in srgb, currentColor 85%, #52738a);
+    font-size: .8125rem;
+    line-height: 1.4;
+}
+@media (min-width: 52rem) {
+    .historico-credit {
+        position: absolute;
+        inset-block-start: -3.625rem;
+        inset-inline-end: 1.75rem;
+    }
+}
+</style>
+'''
 
 # Relação oficial de frotas ativas informada em 17/11/2026.
 FROTAS_ATIVAS = frozenset('''
@@ -112,7 +134,13 @@ def render_consulta(carregar, converter_hora, norm_frota, inconsistencias_asn, *
 
     @st.dialog('🔎 Histórico da frota', width='large')
     def modal_historico_frota(fq):
-        st.markdown(f'### Frota {fq}')
+        st.markdown(
+            f'{_ESTILO_CREDITO_DIALOGO}'
+            '<div class="historico-credit-row">'
+            f'<span class="historico-credit">{CREDITO_HISTORICO}</span></div>'
+            f'\n\n### Frota {escape(str(fq))}',
+            unsafe_allow_html=True,
+        )
         try:
             if carregar_resumo is None:
                 hist = df.loc[df['frota'].eq(fq)].copy()
